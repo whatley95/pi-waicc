@@ -39,7 +39,7 @@ try {
       output = createSession(cwd, args.slice(1).join(" "));
       break;
     case "status":
-      output = status(cwd, id);
+      output = status(cwd, id === "all" ? undefined : id);
       break;
     case "prepare": {
       const s = loadSession(projectRoot(cwd), id);
@@ -91,6 +91,8 @@ try {
       output = { recovered: true };
       break;
     default:
+      if (command && command !== "help" && command !== "--help")
+        process.exitCode = 2;
       output = {
         usage:
           "waicc [--root project] start <requirements> | status [session] | prepare <session> <contract.json> [planning|review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review <focus> | cancel <session> <reason> | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",

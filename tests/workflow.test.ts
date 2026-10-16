@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -597,4 +597,17 @@ test("CLI can create and recover sessions without a Pi process", (t) => {
   const recovered = invoke("status", s.id);
   assert.equal(recovered.sessionId, s.id);
   assert.equal(recovered.verified, false);
+  assert.equal(invoke("status", "all").sessions.length, 1);
+  const bad = spawnSync(
+    process.execPath,
+    [cli, "--root", root, "status", "0000-missing"],
+    { encoding: "utf8", windowsHide: true },
+  );
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /Unknown WAICC session 0000-missing/);
+  const unknown = spawnSync(process.execPath, [cli, "bogus"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(unknown.status, 2);
 });
