@@ -1,0 +1,62 @@
+{
+  "name": "pi-waicc",
+  "version": "0.1.0",
+  "description": "Whatley AI Communication Contract — project-local contracts, agent handoffs, replies, and evidence for Pi.",
+  "author": "Whatley",
+  "homepage": "https://github.com/whatley95/pi-waicc#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whatley95/pi-waicc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/whatley95/pi-waicc/issues"
+  },
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "contracts",
+    "handoff"
+  ],
+  "bin": {
+    "waicc": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "skills",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "waicc": "node src/cli.ts",
+    "prepack": "npm run check"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@types/node": "^22.19.0",
+    "typebox": "1.3.27",
+    "typescript": "^6.0.3",
+    "yaml": "^2.9.0"
+  }
+}

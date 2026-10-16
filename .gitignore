@@ -1,0 +1,4 @@
+node_modules/
+.pi/pi-waicc/
+coverage/
+*.tgz
