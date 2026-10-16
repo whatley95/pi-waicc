@@ -154,6 +154,10 @@ export const sessionRelative = (id: string): string =>
   `${runtimePath}/sessions/${identifier(id, "Session ID")}`;
 export function loadSession(root: string, id: string): Session {
   const path = safePath(root, `${sessionRelative(id)}/journal`);
+  ensure(
+    existsSync(path),
+    `Unknown WAICC session ${id}. List sessions with /waicc-status all (CLI: status).`,
+  );
   const commits = readdirSync(path)
     .filter((name) => /^\d{8}-[a-f0-9-]+\.json$/.test(name))
     .sort();
