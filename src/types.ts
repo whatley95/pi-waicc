@@ -1,4 +1,4 @@
-export type Mode = "planning" | "review" | "implementation";
+export type Mode = "planning" | "review" | "implementation" | "advisor";
 export type SessionStatus =
   | "DRAFT"
   | "WAITING_FOR_REPLY"
@@ -8,7 +8,25 @@ export type SessionStatus =
   | "STALE"
   | "BLOCKED"
   | "READY_FOR_HANDOFF"
+  | "ADVICE_READY"
+  | "READY_TO_CLOSE"
+  | "CLOSED"
   | "NEEDS_REVIEW";
+export type ContractReview =
+  "NOT_REVIEWED" | "PENDING" | "PASS" | "NEEDS_CHANGES" | "BLOCKED" | "STALE";
+export interface ReviewApproval {
+  requestId: string;
+  contractVersion: number;
+  requirementsDigest: string;
+  sourceFingerprint: string;
+  assessedAt: string;
+}
+export interface Closure {
+  id: string;
+  closedAt: string;
+  reason: string;
+  approval: ReviewApproval;
+}
 export interface Requirement {
   id: string;
   text: string;
@@ -82,12 +100,26 @@ export interface Reply {
     evidence: string;
   }[];
   proposedContract?: Contract;
+  advice?: {
+    question: string;
+    options: {
+      id: string;
+      title: string;
+      benefits: string[];
+      tradeoffs: string[];
+      evidence: string[];
+    }[];
+    recommendation: { optionId: string; rationale: string } | null;
+    assumptions: string[];
+    proposedAmendments: string[];
+  };
 }
 export interface Round {
   id: string;
   mode: Mode;
   contractVersion: number;
   taskId: string | null;
+  advisor?: { question: string; requirementIds: string[] };
   source: SourceSnapshot;
   requirementsDigest: string;
   status: "WAITING" | "RECEIVED" | "ASSESSED" | "STALE" | "CANCELLED";
@@ -106,6 +138,7 @@ export interface Session {
   id: string;
   projectRoot: string;
   createdAt: string;
+  updatedAt: string;
   sequence: number;
   requirements: string[];
   contractVersion: number;
@@ -113,6 +146,10 @@ export interface Session {
   rounds: Round[];
   artifacts: Record<string, string>;
   maxRounds: number;
+  contractReview: ContractReview;
+  reviewApproval?: ReviewApproval;
+  closure?: Closure;
+  deliveryVerified: false;
   verified: false;
 }
 export interface MemoryEntry {

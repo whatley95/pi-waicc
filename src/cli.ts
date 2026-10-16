@@ -9,15 +9,17 @@ import {
   assess,
   amend,
   cancel,
+  closeSession,
   createSession,
   exportHandoff,
   ingest,
   issue,
   prepare,
+  reopenSession,
   setRoundLimit,
   status,
 } from "./workflow.ts";
-import { ensure } from "./validation.ts";
+import { advisorInput, ensure } from "./validation.ts";
 import type { Assessment } from "./workflow.ts";
 import type { Mode } from "./types.ts";
 
@@ -63,8 +65,26 @@ try {
     case "request":
       output = issue(cwd, id, rest[0] as Mode, rest.slice(1).join(" "));
       break;
+    case "advisor": {
+      const input = advisorInput(rest.join(" "));
+      output = issue(
+        cwd,
+        id,
+        "advisor",
+        input.question,
+        undefined,
+        input.requirementIds,
+      );
+      break;
+    }
     case "cancel":
       output = cancel(cwd, id, rest.join(" "));
+      break;
+    case "close":
+      output = closeSession(cwd, id, rest.join(" "));
+      break;
+    case "reopen":
+      output = reopenSession(cwd, id, rest.join(" "));
       break;
     case "amend":
       output = amend(cwd, id, rest.join(" "));
@@ -95,7 +115,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start <requirements> | status [session] | prepare <session> <contract.json> [planning|review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review <focus> | cancel <session> <reason> | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start <requirements> | status [session] | prepare <session> <contract.json> [planning|review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | reopen <session> <reason> | cancel <session> <reason> | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));

@@ -5,7 +5,7 @@ _Clear contracts. Connected agents._
 `pi-waicc` is a Pi extension that turns a development request into versioned
 contracts, agent handoff prompts, and a durable conversation inside your project.
 It is designed for complicated work that needs explicit requirements, task
-dependencies, independent planning or review, and continuity across agents.
+dependencies, focused design advice, independent planning or review, and continuity across agents.
 
 The contract defines the job. The handoff prompt tells an agent how to perform it
 and where to reply. Pi validates that reply, assesses the evidence, and prepares
@@ -69,6 +69,9 @@ criteria, and planned verification. Missing decisions remain visible as question
 5. **Request independent review.** Use `/waicc-review Review authorization, regressions and test evidence`
    in the same session. Send that handoff to a reviewer, then run `/waicc-continue`
    when its reply is ready.
+6. **Close explicitly.** A passing full-contract assessment shows `READY_TO_CLOSE`
+   and `contractReview: PASS`. Run `/waicc-close <reason>` only when you decide the
+   contract discussion is finished. This does not certify code delivery.
 
 ```mermaid
 flowchart TD
@@ -81,6 +84,8 @@ flowchart TD
     D --> G[Blocker or clarification]
     F --> H[Human submits implementation prompt]
     H --> I[Implementation reply and independent review]
+    I --> J[Review PASS: READY_TO_CLOSE]
+    J --> K[Human runs waicc-close: CLOSED]
 ```
 
 Use one session for one development objective, with multiple request/reply rounds.
@@ -111,6 +116,7 @@ schedule parallel implementations or certify that dependent tasks are complete.
 
 - Generates versioned JSON contracts and readable Markdown from the same data.
 - Produces starter prompts, detailed handoffs and matching reply templates.
+- Supports focused contract-advisor questions without implying planning readiness.
 - Validates and freezes replies before Pi assesses them.
 - Preserves original requirements, amendments, contract history and decisions.
 - Detects stale source, incomplete coverage and changes outside implementation scope.
@@ -121,31 +127,138 @@ External agents run when you submit their prompts. Preparation and assessment us
 your existing Pi agent and configured model. This release does not launch native
 Claude/Codex processes, edit application source, commit, push or deploy.
 
-Planning and review handoffs instruct agents to inspect source and write only their
+Planning, review and advisor handoffs instruct agents to inspect source and write only their
 designated reply. Their actual permissions remain the responsibility of the invoking
 environment; prompt instructions are not an OS sandbox. A ready contract or passing
 model assessment is not proof of tested delivery.
 
 ## Commands
 
-| Command                              | Purpose                                                                                               |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `/waicc-planning <requirements>`     | Start a new durable task/session and ask Pi to prepare its contract                                   |
-| `/waicc-review <focus>`              | Prepare review in this chat's selected session; without a selection, start from supplied requirements |
-| `/waicc-continue`                    | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
-| `/waicc-status [all\|session-id]`    | Show selected progress or list project sessions                                                       |
-| `/waicc-use <session-id>`            | Resume an existing project session in this Pi chat                                                    |
-| `/waicc-amend <requirement change>`  | Append original-scope amendments and invalidate pending requests                                      |
-| `/waicc-cancel <reason>`             | Cancel an outstanding handoff without deleting history                                                |
-| `/waicc-export`                      | Package the pending handoff, requirements, contract and selected skill references                     |
-| `/waicc-limit <2–20>`                | Explicitly adjust the default 12-round limit                                                          |
-| `/waicc-memory [query]`              | Inspect candidate/active/stale memory                                                                 |
-| `/waicc-memory confirm\|revoke <id>` | Human curation of a memory entry                                                                      |
-| `/waicc-ignore`                      | Configure SVN ignore rules explicitly; Git is automatic                                               |
+| Command                                          | Purpose                                                                                               |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `/waicc-planning <requirements>`                 | Start a new durable task/session and ask Pi to prepare its contract                                   |
+| `/waicc-review <focus>`                          | Prepare review in this chat's selected session; without a selection, start from supplied requirements |
+| `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
+| `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
+| `/waicc-status [all\|session-id]`                | Show selected progress or list project sessions                                                       |
+| `/waicc-use <session-id>`                        | Resume an existing project session in this Pi chat                                                    |
+| `/waicc-close <reason>`                          | Explicitly close a fresh, passing full-contract review in READY_TO_CLOSE                              |
+| `/waicc-reopen <reason>`                         | Reopen a closed contract; clears PASS and requires a fresh review                                     |
+| `/waicc-amend <requirement change>`              | Append original-scope amendments and invalidate pending requests                                      |
+| `/waicc-cancel <reason>`                         | Cancel an outstanding handoff without deleting history                                                |
+| `/waicc-export`                                  | Package the pending handoff, requirements, contract and selected skill references                     |
+| `/waicc-limit <2–20>`                            | Explicitly adjust the default 12-round limit                                                          |
+| `/waicc-memory [query]`                          | Inspect candidate/active/stale memory                                                                 |
+| `/waicc-memory confirm\|revoke <id>`             | Human curation of a memory entry                                                                      |
+| `/waicc-ignore`                                  | Configure SVN ignore rules explicitly; Git is automatic                                               |
 
 Bindings are per Pi chat and repository, persisted in Pi's session entries. Multiple
 sessions are never silently resolved by choosing the newest. `/waicc-use` provides
 explicit recovery if Pi's history is unavailable.
+
+`/waicc-status all` lists each session's ID, status, `createdAt` and `updatedAt`,
+plus `contractReview` and `deliveryVerified`, sorted by most recent activity first.
+Both timestamps also appear in single-session
+status. Times are UTC: creation stays fixed; update time is the latest committed
+session event (including handoffs, reply intake, assessments, amendments, exports
+and round-limit changes). Reading status or waiting for a reply does not update it;
+neither do unrelated file edits or writing an external reply before intake. Older
+sessions recover their update time from the existing journal without migration.
+
+## Finish a contract discussion
+
+`READY_TO_CLOSE` means **review passed; waiting for your final decision**.
+`CLOSED` means **you explicitly finished the contract discussion**. Review agents
+recommend readiness; only an assessed full-contract review can record PASS. No
+assessment closes the contract automatically.
+
+```text
+/waicc-close Contract accepted for implementation
+```
+
+The resulting status includes:
+
+```json
+{
+  "status": "CLOSED",
+  "contractReview": "PASS",
+  "deliveryVerified": false
+}
+```
+
+To finish at contract generation rather than implementation, do not submit the
+implementation handoff. If one is pending, explicitly `/waicc-cancel Pause implementation for contract-only review`,
+then `/waicc-review Check full-contract requirements, dependencies, acceptance criteria and planned verification`.
+Send that handoff to a reviewer. When its reply is ready, `/waicc-continue` starts
+assessment; close only after it reaches `READY_TO_CLOSE`.
+
+Closure requires the latest passing review to match the current contract,
+requirements and source, with no reply pending. A changed source makes status show
+`STALE` instead, without rewriting history or update time. A revised contract must
+be reviewed in a new round; task-only reviews, planning readiness and advice cannot
+close the whole contract. `/waicc-review` on a saved contract targets its current
+version without silently creating a revision.
+
+Closed sessions remain selectable and readable, but their mutations are blocked.
+To reconsider one:
+
+```text
+/waicc-reopen Reconsider pagination requirements
+```
+
+Reopening records the reason and resets it to `NEEDS_REVIEW` with
+`contractReview: NOT_REVIEWED`. Revise or amend as needed, then obtain a fresh review
+before closing again. Closure/reopening history is retained. Closing, reopening
+and a review PASS never set `deliveryVerified` (or legacy `verified`) to true.
+These commands are explicit user actions, not agent tools; they are not an OS-level
+permission boundary against an agent with shell/filesystem access.
+
+The CLI equivalents are `close <session-id> <reason>` and `reopen <session-id> <reason>`
+with `--root <project>`. Older `READY_FOR_HANDOFF` records are preserved, not silently
+upgraded to PASS; request a fresh review to use closure.
+
+## Ask a contract advisor
+
+Use an advisor for a focused decision on an **existing saved contract**, such as
+architecture, a risky assumption, or choosing between approaches:
+
+```text
+/waicc-advisor Should we use cursor or offset pagination for this contract?
+```
+
+Optionally select requirement IDs for the advice's coverage rows:
+
+```text
+/waicc-advisor --requirements REQ-001,REQ-002 Compare the authorization approaches and their trade-offs.
+```
+
+Without selected IDs, it answers the question only (`coverage: []`); it does not
+claim whole-contract coverage. The advisor reads the contract, relevant source,
+selected skills, recent discussion and a snapshot of relevant confirmed memory.
+It returns options with benefits, trade-offs and evidence, a recommendation,
+assumptions, and suggested amendments. Completed advice compares at least two
+options; insufficient information should produce questions or a blocker instead.
+
+Send the generated `STARTER.txt` to your chosen agent. After its `reply.json` is
+ready, run `/waicc-continue`. Pi checks the advice and records `noted` →
+`ADVICE_READY`, asks a focused follow-up, or records the blocker. **Advice never
+adopts amendments, changes the contract, confirms memory, marks the plan ready,
+or generates an implementation handoff.** Findings and unverified coverage remain
+visible even when advice is noted. Tell Pi which recommendation you accept before
+it explicitly prepares a revised planning/review contract. New scope still needs
+`/waicc-amend`; for whole-contract verification use `/waicc-review`.
+
+Only one request can be pending per session. Finish it first, or explicitly pause
+it with `/waicc-cancel Pause planning to obtain focused advice` before asking the
+advisor. The advisor command itself needs no model call and creates no new contract
+version. It uses the same reply identity, freshness checks, history, export and
+round limits as other handoffs.
+
+Standalone CLI equivalent:
+
+```sh
+node src/cli.ts --root <project> advisor <session-id> --requirements REQ-001 "Which pagination approach fits?"
+```
 
 ## Project storage and version control
 
@@ -169,11 +282,16 @@ myproject/
         STARTER.txt
         reply.example.json
         conversation.json         # Recent replies, decisions and check evidence
+        memory.json               # Advisor only: relevant confirmed memory at issue
         skills/                   # Only guidance selected for this handoff
         reply.json                # Written by the external agent
         received.json             # Frozen response after validation
         assessment.json
       exports/<export-id>/
+      lifecycle/<closure-id>/
+        closure.json              # Pinned PASS, explicit reason and close time
+        CLOSURE.md
+        reopen.json               # Present if this closure was reopened
 ```
 
 Git ignores generated state using a `.gitignore` inside `.pi/pi-waicc`; no root
@@ -185,7 +303,8 @@ rules are preserved. If `.pi` is versioned, `pi-waicc` is ignored there; otherwi
 `.pi` is ignored at the working-copy root. This is an explicit SVN property change
 that you can inspect with `svn diff`. It does not schedule files for addition.
 
-Exports contain the requirements, contract, recent conversation and selected skills;
+Exports contain the requirements, contract, recent conversation and selected skills
+(plus the confirmed memory snapshot for advisor handoffs);
 they do not copy the source checkout or authentication files. The recipient needs
 matching source separately. Exported paths are portable; return the resulting
 `reply.json` to the original round's designated location. `manifest.json` identifies
@@ -217,6 +336,8 @@ be acyclic; acceptance criteria reference known requirements. Readiness requires
 every requirement to have planned verification, addressed reply coverage, no open
 questions or failed checks, and explicit dispositions for high/critical findings.
 `verified` remains false: schema validity and model agreement do not prove tests ran.
+Advisor `ADVICE_READY` is separate from readiness: it records a completed advice
+exchange, not whole-contract coverage, resolution of findings, or permission to implement.
 
 Git fingerprints include revision, index and working-tree/untracked nonignored file
 content. SVN fingerprints include root revision, reported working-copy changes,

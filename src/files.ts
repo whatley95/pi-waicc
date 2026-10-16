@@ -162,7 +162,11 @@ export function loadSession(root: string, id: string): Session {
     .filter((name) => /^\d{8}-[a-f0-9-]+\.json$/.test(name))
     .sort();
   ensure(commits.length > 0, "Session has no committed transactions");
-  const entry = readJson<{ schemaVersion: number; session: Session }>(
+  const entry = readJson<{
+    schemaVersion: number;
+    at: string;
+    session: Session;
+  }>(
     safePath(root, `${sessionRelative(id)}/journal/${commits.at(-1)!}`),
     32_000_000,
   );
@@ -187,6 +191,26 @@ export function loadSession(root: string, id: string): Session {
     "Invalid session state",
   );
   s.rounds.forEach((r) => identifier(r.id, "Request ID"));
+  ensure(
+    typeof entry.at === "string" && Number.isFinite(Date.parse(entry.at)),
+    "Invalid journal activity timestamp",
+  );
+  // The journal is authoritative, including for older sessions without updatedAt.
+  s.updatedAt = entry.at;
+  // Old handoff-ready sessions are not silently promoted to a closure-ready PASS.
+  s.contractReview ??= "NOT_REVIEWED";
+  s.deliveryVerified ??= false;
+  ensure(
+    [
+      "NOT_REVIEWED",
+      "PENDING",
+      "PASS",
+      "NEEDS_CHANGES",
+      "BLOCKED",
+      "STALE",
+    ].includes(s.contractReview) && s.deliveryVerified === false,
+    "Invalid contract review or delivery verification state",
+  );
   return s;
 }
 /** Journal entry is the commit point; session.json is a disposable UI cache. */
@@ -210,9 +234,13 @@ export function commit(
     s.artifacts[path] = digest(content);
   }
   s.sequence++;
+  s.updatedAt = now();
   const name = `${String(s.sequence).padStart(8, "0")}-${randomUUID()}.json`;
   const path = safePath(root, `${sessionRelative(s.id)}/journal/${name}`);
-  atomicWrite(path, json({ schemaVersion: 1, at: now(), event, session: s }));
+  atomicWrite(
+    path,
+    json({ schemaVersion: 1, at: s.updatedAt, event, session: s }),
+  );
   // Failure of this cache cannot roll back a journal entry already committed.
   try {
     atomicWrite(
@@ -237,7 +265,14 @@ export function artifact(root: string, session: Session, path: string): string {
 }
 export function listSessions(
   root: string,
-): { id: string; status: string; createdAt: string }[] {
+): {
+  id: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  contractReview: Session["contractReview"];
+  deliveryVerified: false;
+}[] {
   const path = safePath(root, `${runtimePath}/sessions`);
   if (!existsSync(path)) return [];
   return readdirSync(path)
@@ -253,6 +288,18 @@ export function listSessions(
     })
     .map((id) => {
       const s = loadSession(root, id);
-      return { id, status: s.status, createdAt: s.createdAt };
-    });
+      return {
+        id,
+        status: s.status,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        contractReview: s.contractReview,
+        deliveryVerified: s.deliveryVerified,
+      };
+    })
+    .sort(
+      (a, b) =>
+        Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
+        a.id.localeCompare(b.id),
+    );
 }
