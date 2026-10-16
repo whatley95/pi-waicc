@@ -6,8 +6,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +17,7 @@ import { basename, join, resolve } from "node:path";
 import {
   digest,
   json,
+  listSessions,
   loadSession,
   safePath,
   sessionRelative,
@@ -28,16 +31,23 @@ import {
   amend,
   assess,
   cancel,
+  closeSession,
   createSession,
   exportHandoff,
   ingest,
   issue,
   prepare,
   readContract,
+  reopenSession,
   setRoundLimit,
   status,
 } from "../src/workflow.ts";
-import { readyContract, validateContract } from "../src/validation.ts";
+import {
+  advisorInput,
+  readyContract,
+  validateContract,
+  validateReply,
+} from "../src/validation.ts";
 import type { Contract, Reply, Session } from "../src/types.ts";
 import { pathToFileURL } from "node:url";
 
@@ -158,6 +168,738 @@ function assessment(s: Session) {
     dispositions: [],
   };
 }
+const advisorQuestion = "Should search use cursor or offset pagination?";
+function reviewing(root: string): Session {
+  const s = planned(root);
+  cancel(root, s.id, "Review the contract before implementation");
+  return issue(
+    root,
+    s.id,
+    "review",
+    "Review full-contract readiness and evidence",
+  );
+}
+function passedReview(root: string): Session {
+  let s = reviewing(root);
+  respond(root, s);
+  s = ingest(root, s.id);
+  return assess(root, s.id, assessment(s));
+}
+
+test("full review PASS signals READY_TO_CLOSE, and explicit closure preserves the pinned decision without verifying delivery", (t) => {
+  const root = fixture(t);
+  let s = reviewing(root);
+  assert.equal(s.contractReview, "PENDING");
+  respond(root, s);
+  assert.throws(
+    () => closeSession(root, s.id, "Not yet assessed"),
+    /READY_TO_CLOSE/,
+  );
+  s = ingest(root, s.id);
+  assert.equal(s.contractReview, "PENDING");
+  s = assess(root, s.id, assessment(s));
+  assert.equal(s.status, "READY_TO_CLOSE");
+  assert.equal(s.contractReview, "PASS");
+  assert.equal(s.closure, undefined);
+  assert.equal(s.reviewApproval!.contractVersion, 1);
+  assert.equal(s.reviewApproval!.requestId, s.rounds.at(-1)!.id);
+  assert.equal(s.reviewApproval!.sourceFingerprint, snapshot(root).fingerprint);
+  const before = s;
+  s = closeSession(root, s.id, "Contract accepted for implementation");
+  assert.equal(s.status, "CLOSED");
+  assert.equal(s.contractReview, "PASS");
+  assert.equal(s.verified, false);
+  assert.equal(s.deliveryVerified, false);
+  assert.equal(s.contractVersion, before.contractVersion);
+  assert.equal(s.rounds.length, before.rounds.length);
+  assert.equal(s.createdAt, before.createdAt);
+  assert.deepEqual(s.closure!.approval, before.reviewApproval);
+  assert.equal(s.closure!.reason, "Contract accepted for implementation");
+  const record = JSON.parse(
+    readFileSync(
+      join(
+        root,
+        sessionRelative(s.id),
+        `lifecycle/${s.closure!.id}/closure.json`,
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(record.status, "CLOSED");
+  assert.equal(record.contractReview, "PASS");
+  assert.equal(record.deliveryVerified, false);
+  assert.deepEqual(record.closure, s.closure);
+  assert.equal(listSessions(root)[0].status, "CLOSED");
+  assert.equal(listSessions(root)[0].contractReview, "PASS");
+  assert.equal(listSessions(root)[0].deliveryVerified, false);
+  writeFileSync(
+    join(root, sessionRelative(s.id), "session.json"),
+    "broken cache",
+  );
+  assert.deepEqual(loadSession(root, s.id).closure, s.closure);
+  assert.equal(ingest(root, s.id).sequence, s.sequence);
+  assert.throws(() => closeSession(root, s.id, "Already closed"), /closed/);
+});
+
+test("planning readiness and advisor advice cannot close a contract", (t) => {
+  const root = fixture(t);
+  let s = planned(root);
+  assert.throws(
+    () => closeSession(root, s.id, "Pending planning"),
+    /READY_TO_CLOSE/,
+  );
+  respond(root, s);
+  s = ingest(root, s.id);
+  s = assess(root, s.id, assessment(s));
+  assert.equal(s.status, "READY_FOR_HANDOFF");
+  assert.equal(s.contractReview, "NOT_REVIEWED");
+  assert.throws(
+    () => closeSession(root, s.id, "Plan is not a review"),
+    /READY_TO_CLOSE/,
+  );
+  cancel(root, s.id, "Pause implementation");
+  s = issue(root, s.id, "advisor", advisorQuestion);
+  adviceReply(root, s);
+  s = ingest(root, s.id);
+  s = assess(root, s.id, { ...assessment(s), decision: "noted" });
+  assert.equal(s.status, "ADVICE_READY");
+  assert.equal(s.reviewApproval, undefined);
+  assert.throws(
+    () => closeSession(root, s.id, "Advice is not review"),
+    /READY_TO_CLOSE/,
+  );
+});
+
+test("status reports stale review approval without a write and closure requires fresh inputs", (t) => {
+  const root = fixture(t);
+  const s = passedReview(root);
+  assert.throws(() => closeSession(root, s.id, " "), /Closure reason/);
+  writeFileSync(join(root, "app.txt"), "source changed after PASS");
+  const detail = status(root, s.id) as {
+    status: string;
+    contractReview: string;
+    updatedAt: string;
+  };
+  assert.equal(detail.status, "STALE");
+  assert.equal(detail.contractReview, "STALE");
+  assert.equal(detail.updatedAt, s.updatedAt);
+  assert.equal(
+    (status(root) as { sessions: { status: string; contractReview: string }[] })
+      .sessions[0].status,
+    "STALE",
+  );
+  assert.equal(
+    (status(root) as { sessions: { contractReview: string }[] }).sessions[0]
+      .contractReview,
+    "STALE",
+  );
+  assert.throws(
+    () => closeSession(root, s.id, "Cannot use obsolete PASS"),
+    /no longer matches/,
+  );
+  assert.equal(loadSession(root, s.id).sequence, s.sequence);
+  let fresh = issue(root, s.id, "review", "Review the changed source");
+  assert.equal(fresh.contractReview, "PENDING");
+  assert.equal(fresh.reviewApproval, undefined);
+  respond(root, fresh);
+  fresh = ingest(root, s.id);
+  fresh = assess(root, s.id, assessment(fresh));
+  assert.equal(
+    closeSession(root, s.id, "Fresh review accepted").status,
+    "CLOSED",
+  );
+});
+
+test("amendments, new requests and revisions invalidate a previous contract review PASS", (t) => {
+  for (const action of ["amend", "advisor", "prepare"] as const) {
+    const root = fixture(t);
+    let s = passedReview(root);
+    s =
+      action === "amend"
+        ? amend(root, s.id, "Also add pagination.")
+        : action === "advisor"
+          ? issue(root, s.id, "advisor", advisorQuestion)
+          : prepare(
+              root,
+              s.id,
+              example(),
+              "review",
+              "Review revised contract",
+              1,
+            );
+    assert.notEqual(s.contractReview, "PASS");
+    assert.equal(s.reviewApproval, undefined);
+    assert.throws(
+      () => closeSession(root, s.id, "Old review must not close new work"),
+      /READY_TO_CLOSE/,
+    );
+  }
+});
+
+test("a reviewer-proposed revision needs a new reviewed version before closure", (t) => {
+  const root = fixture(t);
+  let s = reviewing(root);
+  const revision = example();
+  revision.risks.push("Ordering must remain stable");
+  respond(root, s, (r) => {
+    r.proposedContract = revision;
+  });
+  s = ingest(root, s.id);
+  assert.throws(
+    () => assess(root, s.id, { ...assessment(s), contract: revision }),
+    /changed contract requires a fresh review/,
+  );
+  assert.equal(loadSession(root, s.id).contractVersion, 1);
+  s = assess(root, s.id, {
+    ...assessment(s),
+    decision: "followup",
+    contract: revision,
+  });
+  assert.equal(s.contractVersion, 2);
+  assert.equal(s.contractReview, "PENDING");
+  assert.equal(s.reviewApproval, undefined);
+  respond(root, s);
+  s = ingest(root, s.id);
+  s = assess(root, s.id, assessment(s));
+  assert.equal(s.status, "READY_TO_CLOSE");
+  assert.equal(s.reviewApproval!.contractVersion, 2);
+  assert.equal(
+    closeSession(root, s.id, "Revised contract reviewed").status,
+    "CLOSED",
+  );
+});
+
+test("task-scoped review cannot signal whole-contract closure", (t) => {
+  const root = fixture(t);
+  let s = planned(root);
+  cancel(root, s.id, "Review only API task");
+  s = issue(root, s.id, "review", "Inspect API task only", "API");
+  respond(root, s);
+  s = ingest(root, s.id);
+  s = assess(root, s.id, assessment(s));
+  assert.equal(s.status, "NEEDS_REVIEW");
+  assert.equal(s.contractReview, "NOT_REVIEWED");
+  assert.equal(s.reviewApproval, undefined);
+  assert.throws(
+    () => closeSession(root, s.id, "Only one task was reviewed"),
+    /READY_TO_CLOSE/,
+  );
+});
+
+test("closed contracts block mutations; explicit reopening preserves history and requires a fresh review", (t) => {
+  const root = fixture(t);
+  let s = passedReview(root);
+  s = closeSession(root, s.id, "Contract accepted");
+  const closureId = s.closure!.id;
+  const closurePath = join(
+    root,
+    sessionRelative(s.id),
+    `lifecycle/${closureId}/closure.json`,
+  );
+  const closed = readFileSync(closurePath, "utf8");
+  for (const mutate of [
+    () =>
+      prepare(root, s.id, example(), "planning", "Not allowed while closed", 1),
+    () => issue(root, s.id, "review", "Not allowed while closed"),
+    () => amend(root, s.id, "New requirement"),
+    () => cancel(root, s.id, "Not allowed while closed"),
+    () => assess(root, s.id, assessment(s)),
+    () => setRoundLimit(root, s.id, 20),
+    () => exportHandoff(root, s.id),
+  ])
+    assert.throws(mutate, /Contract is closed/);
+  assert.throws(() => reopenSession(root, s.id, ""), /Reopening reason/);
+  assert.equal(loadSession(root, s.id).sequence, s.sequence);
+  s = reopenSession(root, s.id, "Reconsider pagination");
+  assert.equal(s.status, "NEEDS_REVIEW");
+  assert.equal(s.contractReview, "NOT_REVIEWED");
+  assert.equal(s.reviewApproval, undefined);
+  assert.equal(s.closure, undefined);
+  assert.equal(s.contractVersion, 1);
+  assert.equal(readFileSync(closurePath, "utf8"), closed);
+  assert.ok(
+    existsSync(
+      join(root, sessionRelative(s.id), `lifecycle/${closureId}/reopen.json`),
+    ),
+  );
+  assert.throws(
+    () => closeSession(root, s.id, "Cannot reuse previous PASS"),
+    /READY_TO_CLOSE/,
+  );
+  assert.throws(
+    () => reopenSession(root, s.id, "Already open"),
+    /Only a closed/,
+  );
+  s = issue(root, s.id, "review", "Fresh review after reopening");
+  respond(root, s);
+  s = ingest(root, s.id);
+  s = assess(root, s.id, assessment(s));
+  s = closeSession(root, s.id, "Re-reviewed contract accepted");
+  assert.notEqual(s.closure!.id, closureId);
+  assert.equal(readFileSync(closurePath, "utf8"), closed);
+  assert.equal(s.deliveryVerified, false);
+});
+
+test("closure rejects tampered review evidence", (t) => {
+  const root = fixture(t);
+  const s = passedReview(root);
+  writeFileSync(
+    join(
+      root,
+      sessionRelative(s.id),
+      roundDirectory(s.rounds.at(-1)!),
+      "assessment.json",
+    ),
+    "{}",
+  );
+  assert.throws(
+    () => closeSession(root, s.id, "Evidence must stay immutable"),
+    /modified/,
+  );
+});
+
+test("legacy handoff-ready sessions are not silently promoted to review PASS", (t) => {
+  const root = fixture(t);
+  const s = passedReview(root);
+  const dir = join(root, sessionRelative(s.id), "journal");
+  const path = join(dir, readdirSync(dir).sort().at(-1)!);
+  const entry = JSON.parse(readFileSync(path, "utf8"));
+  entry.session.status = "READY_FOR_HANDOFF";
+  delete entry.session.contractReview;
+  delete entry.session.reviewApproval;
+  delete entry.session.deliveryVerified;
+  writeFileSync(path, json(entry));
+  const old = loadSession(root, s.id);
+  assert.equal(old.contractReview, "NOT_REVIEWED");
+  assert.equal(old.deliveryVerified, false);
+  assert.throws(
+    () => closeSession(root, s.id, "Need a fresh review"),
+    /READY_TO_CLOSE/,
+  );
+});
+
+test("CLI supports explicit close and reopen, without model inference", (t) => {
+  const root = fixture(t);
+  const s = passedReview(root);
+  const invoke = (...args: string[]) =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [resolve("src/cli.ts"), "--root", root, ...args],
+        { encoding: "utf8", windowsHide: true },
+      ),
+    );
+  const closed = invoke("close", s.id, "Contract accepted for implementation");
+  assert.equal(closed.status, "CLOSED");
+  assert.equal(invoke("status", s.id).contractReview, "PASS");
+  assert.equal(invoke("status", "all").sessions[0].status, "CLOSED");
+  const reopened = invoke("reopen", s.id, "Revisit assumptions");
+  assert.equal(reopened.status, "NEEDS_REVIEW");
+  assert.equal(reopened.contractReview, "NOT_REVIEWED");
+});
+
+function advising(root: string, ids: string[] = []): Session {
+  const s = planned(root);
+  cancel(root, s.id, "Pause planning for a focused design decision");
+  return issue(root, s.id, "advisor", advisorQuestion, undefined, ids);
+}
+function adviceReply(
+  root: string,
+  s: Session,
+  modify?: (reply: Reply) => void,
+): Reply {
+  return respond(root, s, (reply) => {
+    reply.advice!.options = [
+      {
+        id: "cursor",
+        title: "Cursor pagination",
+        benefits: ["Stable page boundary"],
+        tradeoffs: ["Opaque cursor handling"],
+        evidence: [
+          "API acceptance AC-001 requires pagination; ordering is not implemented in app.txt.",
+        ],
+      },
+      {
+        id: "offset",
+        title: "Offset pagination",
+        benefits: ["Simple page selection"],
+        tradeoffs: ["Rows can move across pages"],
+        evidence: [
+          "No page-number UI requirement occurs in the original request.",
+        ],
+      },
+    ];
+    reply.advice!.recommendation = {
+      optionId: "cursor",
+      rationale:
+        "Prefer stable continuation; confirm ordering before implementation.",
+    };
+    reply.advice!.assumptions = [
+      "A stable unique ordering key will be available.",
+    ];
+    reply.advice!.proposedAmendments = [
+      "Clarify ordering and pagination semantics in AC-001.",
+    ];
+    modify?.(reply);
+  });
+}
+
+test("advisor records scoped advice on an unfinished contract without adoption or implementation readiness", (t) => {
+  const root = fixture(t);
+  let s = createSession(root, requirements);
+  const draft = example();
+  draft.questions = ["Which datastore?"];
+  draft.tasks = [];
+  s = prepare(
+    root,
+    s.id,
+    draft,
+    "planning",
+    "Investigate missing information",
+    0,
+  );
+  cancel(root, s.id, "Obtain focused advice first");
+  const before = snapshot(root).fingerprint;
+  const original = readContract(root, s.id);
+  s = issue(root, s.id, "advisor", advisorQuestion, undefined, ["REQ-001"]);
+  const roundCount = s.rounds.length;
+  const reply = adviceReply(root, s, (r) => {
+    r.coverage[0].status = "unverified";
+    r.checks[0].outcome = "not_run";
+    r.findings = [
+      {
+        id: "F-1",
+        severity: "high",
+        description: "Ordering is not defined",
+        evidence: "No ordering implementation in app.txt.",
+      },
+    ];
+  });
+  assert.deepEqual(
+    reply.coverage.map((r) => r.requirementId),
+    ["REQ-001"],
+  );
+  s = ingest(root, s.id);
+  s = assess(root, s.id, { ...assessment(s), decision: "noted" });
+  assert.equal(s.status, "ADVICE_READY");
+  assert.equal(s.rounds.length, roundCount);
+  assert.equal(s.rounds.at(-1)!.status, "ASSESSED");
+  assert.equal(s.verified, false);
+  assert.deepEqual(readContract(root, s.id), original);
+  assert.equal(snapshot(root).fingerprint, before);
+  assert.deepEqual(recall(root, "", true), []);
+  const view = status(root, s.id) as {
+    pending: unknown;
+    lastAssessment: { advice: Reply["advice"] };
+    nextAction: string;
+  };
+  assert.equal(view.pending, null);
+  assert.deepEqual(view.lastAssessment.advice, reply.advice);
+  assert.match(view.nextAction, /Nothing was adopted or authorized/);
+  assert.equal(ingest(root, s.id).sequence, s.sequence);
+  assert.throws(
+    () => assess(root, s.id, { ...assessment(s), decision: "noted" }),
+    /Only a received/,
+  );
+  // A deliberate later revision is a separate operation, not an advisor side effect.
+  assert.equal(
+    prepare(
+      root,
+      s.id,
+      example(),
+      "planning",
+      "Human chose cursor; revise the plan explicitly",
+      1,
+    ).contractVersion,
+    2,
+  );
+});
+
+test("advisor requests require an existing contract, valid scope and no pending round", (t) => {
+  const root = fixture(t);
+  const draft = createSession(root, requirements);
+  assert.throws(
+    () => issue(root, draft.id, "advisor", advisorQuestion),
+    /Prepare a contract/,
+  );
+  const s = planned(root);
+  assert.throws(
+    () => issue(root, s.id, "advisor", advisorQuestion),
+    /pending request/,
+  );
+  cancel(root, s.id, "Pause");
+  for (const ids of [["UNKNOWN"], ["REQ-001", "REQ-001"], [""]])
+    assert.throws(() =>
+      issue(root, s.id, "advisor", advisorQuestion, undefined, ids),
+    );
+  assert.throws(
+    () => issue(root, s.id, "advisor", advisorQuestion, "API"),
+    /requirement IDs/,
+  );
+  assert.throws(
+    () => issue(root, s.id, "review", "Review", undefined, []),
+    /only supported for advisor/,
+  );
+  assert.throws(
+    () => issue(root, s.id, "bogus" as "advisor", advisorQuestion),
+    /Unknown request mode/,
+  );
+  const next = issue(root, s.id, "advisor", advisorQuestion);
+  assert.deepEqual(next.rounds.at(-1)!.advisor?.requirementIds, []);
+  assert.equal(next.contractVersion, 1);
+});
+
+test("advisor response schema validates options and evidence without changing ordinary reply rules", (t) => {
+  const root = fixture(t);
+  const s = advising(root);
+  const valid = adviceReply(root, s);
+  assert.deepEqual(validateReply(valid), valid);
+  const invalid: ((r: Reply) => void)[] = [
+    (r) => {
+      delete r.advice;
+    },
+    (r) => {
+      r.advice!.options.pop();
+    },
+    (r) => {
+      r.advice!.options[1].id = r.advice!.options[0].id;
+    },
+    (r) => {
+      r.advice!.recommendation!.optionId = "missing";
+    },
+    (r) => {
+      r.advice!.recommendation = null;
+    },
+    (r) => {
+      r.advice!.options[0].evidence = [];
+    },
+    (r) => {
+      r.advice!.options[0].tradeoffs = [];
+    },
+    (r) => {
+      r.advice!.options[0].benefits = [];
+    },
+    (r) => {
+      Object.assign(r.advice!, { authorizeImplementation: true });
+    },
+    (r) => {
+      r.proposedContract = example();
+    },
+    (r) => {
+      r.mode = "review";
+    },
+  ];
+  for (const modify of invalid) {
+    const reply = structuredClone(valid);
+    modify(reply);
+    assert.throws(() => validateReply(reply));
+  }
+  const blocked = structuredClone(valid);
+  blocked.outcome = "blocked";
+  blocked.advice!.options = [];
+  blocked.advice!.recommendation = null;
+  assert.doesNotThrow(() => validateReply(blocked));
+});
+
+test("advisor intake pins the exact question and only the selected requirement coverage", (t) => {
+  const root = fixture(t);
+  const s = advising(root, ["REQ-002"]);
+  adviceReply(root, s, (r) => {
+    r.advice!.question = "A different question";
+  });
+  assert.throws(() => ingest(root, s.id), /question does not match/);
+  adviceReply(root, s, (r) => {
+    r.coverage[0].requirementId = "REQ-001";
+  });
+  assert.throws(() => ingest(root, s.id), /assigned scope/);
+  adviceReply(root, s, (r) => {
+    r.coverage = [];
+  });
+  assert.throws(() => ingest(root, s.id), /assigned scope/);
+  adviceReply(root, s);
+  assert.equal(ingest(root, s.id).status, "AWAITING_ASSESSMENT");
+});
+
+test("advisor assessment cannot adopt a contract or use ready; noted is advisor-only", (t) => {
+  const root = fixture(t);
+  let s = advising(root);
+  adviceReply(root, s);
+  s = ingest(root, s.id);
+  assert.throws(
+    () => assess(root, s.id, assessment(s)),
+    /cannot authorize readiness/,
+  );
+  assert.throws(
+    () =>
+      assess(root, s.id, {
+        ...assessment(s),
+        decision: "noted",
+        contract: example(),
+      }),
+    /cannot change the contract/,
+  );
+  assert.equal(loadSession(root, s.id).status, "AWAITING_ASSESSMENT");
+  assert.equal(readContract(root, s.id).version, 1);
+  const p = planned(root);
+  respond(root, p);
+  ingest(root, p.id);
+  assert.throws(
+    () => assess(root, p.id, { ...assessment(p), decision: "noted" }),
+    /only valid for advisor/,
+  );
+});
+
+test("incomplete advisor advice requires followup, which preserves scope and previous discussion", (t) => {
+  const root = fixture(t);
+  let s = advising(root, ["REQ-001"]);
+  adviceReply(root, s, (r) => {
+    r.outcome = "needs_clarification";
+    r.questions = ["What is the expected query volume?"];
+    r.advice!.options = [];
+    r.advice!.recommendation = null;
+  });
+  s = ingest(root, s.id);
+  assert.throws(
+    () => assess(root, s.id, { ...assessment(s), decision: "noted" }),
+    /Incomplete advice/,
+  );
+  const question = "Compare both options assuming 1000 searches per minute.";
+  const first = s.rounds.at(-1)!;
+  s = assess(root, s.id, {
+    ...assessment(s),
+    decision: "followup",
+    rationale: question,
+  });
+  const next = s.rounds.at(-1)!;
+  assert.equal(next.mode, "advisor");
+  assert.notEqual(next.id, first.id);
+  assert.deepEqual(next.advisor, { question, requirementIds: ["REQ-001"] });
+  assert.equal(s.contractVersion, 1);
+  const history = JSON.parse(
+    readFileSync(
+      join(
+        root,
+        sessionRelative(s.id),
+        roundDirectory(next),
+        "conversation.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(history.at(-1).advisor.question, advisorQuestion);
+  assert.equal(history.at(-1).advice.recommendation, null);
+  assert.equal(history.at(-1).decision, "followup");
+  adviceReply(root, s);
+  s = ingest(root, s.id);
+  assert.equal(
+    assess(root, s.id, { ...assessment(s), decision: "noted" }).status,
+    "ADVICE_READY",
+  );
+});
+
+test("advisor exports retain question, scope, skills and only current confirmed memory", (t) => {
+  const root = fixture(t);
+  const active = propose(
+    root,
+    "Customer search uses account isolation",
+    "app.txt",
+    "fact",
+  );
+  curate(root, active.id, "confirm");
+  propose(root, "Customer search may need caching", "app.txt", "lesson");
+  writeFileSync(join(root, "obsolete.txt"), "old");
+  const stale = propose(
+    root,
+    "Customer search formerly used offsets",
+    "obsolete.txt",
+    "fact",
+  );
+  curate(root, stale.id, "confirm");
+  writeFileSync(join(root, "obsolete.txt"), "changed");
+  const s = advising(root, ["REQ-001"]);
+  const path = exportHandoff(root, s.id);
+  const template = JSON.parse(
+    readFileSync(join(path, "reply.example.json"), "utf8"),
+  );
+  assert.equal(template.mode, "advisor");
+  assert.equal(template.advice.question, advisorQuestion);
+  assert.deepEqual(
+    template.coverage.map(
+      (row: { requirementId: string }) => row.requirementId,
+    ),
+    ["REQ-001"],
+  );
+  const memory = JSON.parse(readFileSync(join(path, "memory.json"), "utf8"));
+  assert.deepEqual(
+    memory.map((entry: { id: string }) => entry.id),
+    [active.id],
+  );
+  const manifest = JSON.parse(
+    readFileSync(join(path, "manifest.json"), "utf8"),
+  );
+  assert.deepEqual(manifest.advisor, s.rounds.at(-1)!.advisor);
+  assert.equal(manifest.mode, "advisor");
+  assert.ok(existsSync(join(path, "skills/waicc-workflow/SKILL.md")));
+  assert.equal(snapshot(root).fingerprint, s.rounds.at(-1)!.source.fingerprint);
+});
+
+test("advisor replies become stale before intake or assessment when source changes", (t) => {
+  const root = fixture(t);
+  let s = advising(root);
+  adviceReply(root, s);
+  writeFileSync(join(root, "app.txt"), "changed before intake");
+  assert.equal(ingest(root, s.id).status, "STALE");
+  s = issue(root, s.id, "advisor", advisorQuestion);
+  adviceReply(root, s);
+  s = ingest(root, s.id);
+  writeFileSync(join(root, "app.txt"), "changed after intake");
+  assert.throws(
+    () => assess(root, s.id, { ...assessment(s), decision: "noted" }),
+    /Source changed/,
+  );
+  assert.equal(ingest(root, s.id).status, "STALE");
+});
+
+test("advisor argument parsing and CLI issue a scoped handoff on the existing version", (t) => {
+  assert.deepEqual(advisorInput("  A multiline\nquestion?  "), {
+    question: "A multiline\nquestion?",
+  });
+  assert.deepEqual(
+    advisorInput("--requirements REQ-001,REQ-002 Which option?"),
+    { question: "Which option?", requirementIds: ["REQ-001", "REQ-002"] },
+  );
+  for (const input of [
+    "",
+    "--requirements",
+    "--requirements REQ-001",
+    "--unknown foo",
+  ])
+    assert.throws(() => advisorInput(input));
+  const root = fixture(t);
+  const s = planned(root);
+  cancel(root, s.id, "Ask for advice");
+  const result = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        resolve("src/cli.ts"),
+        "--root",
+        root,
+        "advisor",
+        s.id,
+        "--requirements",
+        "REQ-001",
+        advisorQuestion,
+      ],
+      { encoding: "utf8", windowsHide: true },
+    ),
+  );
+  assert.equal(result.contractVersion, 1);
+  assert.deepEqual(result.rounds.at(-1).advisor, {
+    question: advisorQuestion,
+    requirementIds: ["REQ-001"],
+  });
+});
 
 test("full planning → implementation handoff → implementation reply → independent review cycle", (t) => {
   const root = fixture(t);
@@ -201,7 +943,8 @@ test("full planning → implementation handoff → implementation reply → inde
   respond(root, s);
   s = ingest(root, s.id);
   s = assess(root, s.id, assessment(s));
-  assert.equal(s.status, "READY_FOR_HANDOFF");
+  assert.equal(s.status, "READY_TO_CLOSE");
+  assert.equal(s.contractReview, "PASS");
   assert.equal(s.verified, false);
 });
 test("valid dependency graph is retained; cycles and unknown references are rejected", () => {
@@ -359,6 +1102,125 @@ test("journal survives an interrupted or corrupt session cache", (t) => {
     "partial cache {",
   );
   assert.equal(loadSession(root, s.id).sequence, s.sequence);
+});
+
+test("session updatedAt tracks committed activity, not reads, no-op intake or external file timestamps", (t) => {
+  const root = fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 17) });
+  let s = createSession(root, requirements);
+  const createdAt = s.createdAt;
+  assert.equal(s.updatedAt, createdAt);
+  t.mock.timers.tick(1000);
+  s = prepare(root, s.id, example(), "planning", "Inspect", 0);
+  assert.equal(s.updatedAt, new Date().toISOString());
+  assert.equal(s.createdAt, createdAt);
+  const handoffAt = s.updatedAt;
+  t.mock.timers.tick(1000);
+  assert.equal((status(root, s.id) as Session).updatedAt, handoffAt);
+  assert.equal(ingest(root, s.id).updatedAt, handoffAt); // No reply: no event committed.
+  assert.throws(
+    () => prepare(root, s.id, example(), "planning", "Reject stale version", 0),
+    /version changed/,
+  );
+  assert.equal(loadSession(root, s.id).updatedAt, handoffAt);
+  exportHandoff(root, s.id);
+  const exportAt = loadSession(root, s.id).updatedAt;
+  assert.equal(exportAt, new Date().toISOString());
+  t.mock.timers.tick(1000);
+  respond(root, s);
+  utimesSync(join(root, "app.txt"), new Date(), new Date());
+  assert.equal(loadSession(root, s.id).updatedAt, exportAt); // Writing reply.json alone is not intake.
+  s = ingest(root, s.id);
+  assert.equal(s.updatedAt, new Date().toISOString());
+  const receivedAt = s.updatedAt;
+  t.mock.timers.tick(1000);
+  assert.equal(ingest(root, s.id).updatedAt, receivedAt); // Already received: idempotent.
+  s = assess(root, s.id, assessment(s));
+  assert.equal(s.updatedAt, new Date().toISOString());
+  assert.equal(s.createdAt, createdAt);
+  const dir = join(root, sessionRelative(s.id), "journal");
+  const last = readdirSync(dir).sort().at(-1)!;
+  const entry = JSON.parse(readFileSync(join(dir, last), "utf8"));
+  assert.equal(s.updatedAt, entry.at);
+  assert.equal(entry.session.updatedAt, entry.at);
+});
+
+test("status lists sessions newest activity first and preserves creation times", (t) => {
+  const root = fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 17) });
+  const first = createSession(root, requirements);
+  t.mock.timers.tick(1000);
+  const second = createSession(root, "Another objective");
+  assert.deepEqual(
+    listSessions(root).map((s) => s.id),
+    [second.id, first.id],
+  );
+  t.mock.timers.tick(1000);
+  const updated = amend(root, first.id, "Also add pagination.");
+  const sessions = listSessions(root);
+  assert.deepEqual(
+    sessions.map((s) => s.id),
+    [first.id, second.id],
+  );
+  assert.deepEqual(sessions[0], {
+    id: first.id,
+    status: updated.status,
+    createdAt: first.createdAt,
+    updatedAt: updated.updatedAt,
+    contractReview: updated.contractReview,
+    deliveryVerified: false,
+  });
+  const detail = status(root, first.id) as {
+    createdAt: string;
+    updatedAt: string;
+  };
+  assert.equal(detail.createdAt, first.createdAt);
+  assert.equal(detail.updatedAt, updated.updatedAt);
+  assert.deepEqual(
+    (status(root) as { sessions: unknown[] }).sessions,
+    sessions,
+  );
+});
+
+test("equal activity timestamps have deterministic session ordering", (t) => {
+  const root = fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 17) });
+  const ids = [
+    createSession(root, "First objective").id,
+    createSession(root, "Second objective").id,
+  ];
+  assert.deepEqual(
+    listSessions(root).map((s) => s.id),
+    ids.sort((a, b) => a.localeCompare(b)),
+  );
+});
+
+test("older sessions recover updatedAt from the journal without rewriting history or trusting the cache", (t) => {
+  const root = fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.UTC(2026, 9, 17) });
+  const s = createSession(root, requirements);
+  const dir = join(root, sessionRelative(s.id));
+  const journal = join(dir, "journal", readdirSync(join(dir, "journal"))[0]);
+  const entry = JSON.parse(readFileSync(journal, "utf8"));
+  delete entry.session.updatedAt; // Simulate a snapshot written before updatedAt existed.
+  const legacy = json(entry);
+  writeFileSync(journal, legacy);
+  const cache = json({
+    ...entry.session,
+    updatedAt: "2099-01-01T00:00:00.000Z",
+  });
+  writeFileSync(join(dir, "session.json"), cache);
+  utimesSync(journal, new Date("2099-01-01"), new Date("2099-01-01"));
+  t.mock.timers.tick(1000);
+  assert.equal(loadSession(root, s.id).updatedAt, entry.at);
+  assert.equal(listSessions(root)[0].updatedAt, entry.at);
+  assert.equal((status(root, s.id) as Session).updatedAt, entry.at);
+  assert.equal(readFileSync(journal, "utf8"), legacy);
+  assert.equal(readFileSync(join(dir, "session.json"), "utf8"), cache);
+  const updated = amend(root, s.id, "Add pagination.");
+  assert.equal(updated.updatedAt, new Date().toISOString());
+  assert.equal(updated.createdAt, s.createdAt);
+  assert.equal(readFileSync(journal, "utf8"), legacy);
 });
 test("uncommitted artifact from a crash can be replaced without rewriting history", (t) => {
   const root = fixture(t);
@@ -605,7 +1467,10 @@ test("CLI can create and recover sessions without a Pi process", (t) => {
   const recovered = invoke("status", s.id);
   assert.equal(recovered.sessionId, s.id);
   assert.equal(recovered.verified, false);
+  assert.equal(recovered.createdAt, s.createdAt);
+  assert.equal(recovered.updatedAt, s.updatedAt);
   assert.equal(invoke("status", "all").sessions.length, 1);
+  assert.equal(invoke("status", "all").sessions[0].updatedAt, s.updatedAt);
   const bad = spawnSync(
     process.execPath,
     [cli, "--root", root, "status", "0000-missing"],

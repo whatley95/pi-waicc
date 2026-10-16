@@ -54,6 +54,19 @@ export function identifier(value: unknown, name = "ID"): string {
   );
   return id;
 }
+export function advisorInput(input: string): {
+  question: string;
+  requirementIds?: string[];
+} {
+  const value = text(input.trim(), "Advisor question");
+  if (!value.startsWith("--")) return { question: value };
+  const match = /^--requirements\s+(\S+)\s+([\s\S]+)$/.exec(value);
+  ensure(match, "Usage: advisor [--requirements REQ-001,REQ-002] <question>");
+  return {
+    question: text(match[2].trim(), "Advisor question"),
+    requirementIds: match[1].split(","),
+  };
+}
 export function relativePath(value: unknown): string {
   const path = text(value, "Relative path", 1000).replaceAll("\\", "/");
   ensure(
@@ -244,6 +257,7 @@ export function validateReply(value: unknown): Reply {
       "questions",
       "checks",
       "proposedContract",
+      "advice",
     ],
     "Reply",
   );
@@ -260,7 +274,9 @@ export function validateReply(value: unknown): Reply {
       `Invalid ${field}`,
     );
   ensure(
-    ["planning", "review", "implementation"].includes(r.mode as string),
+    ["planning", "review", "implementation", "advisor"].includes(
+      r.mode as string,
+    ),
     "Invalid reply mode",
   );
   ensure(
@@ -308,5 +324,64 @@ export function validateReply(value: unknown): Reply {
       "Invalid check outcome",
     );
   }
+  if (r.mode === "advisor") {
+    ensure(
+      r.proposedContract === undefined,
+      "Advisor replies suggest amendments, not replacement contracts",
+    );
+    const advice = record(r.advice, "Advisor advice");
+    keys(
+      advice,
+      [
+        "question",
+        "options",
+        "recommendation",
+        "assumptions",
+        "proposedAmendments",
+      ],
+      "Advisor advice",
+    );
+    text(advice.question, "Advisor question");
+    strings(advice.assumptions, "Advisor assumptions");
+    strings(advice.proposedAmendments, "Proposed amendments");
+    const options = list(advice.options, "Advisor options").map((entry) => {
+      const option = record(entry, "Advisor option");
+      keys(
+        option,
+        ["id", "title", "benefits", "tradeoffs", "evidence"],
+        "Advisor option",
+      );
+      identifier(option.id);
+      text(option.title, "Option title");
+      const benefits = strings(option.benefits, "Option benefits");
+      const tradeoffs = strings(option.tradeoffs, "Option tradeoffs");
+      const evidence = strings(option.evidence, "Option evidence");
+      if (r.outcome === "ready")
+        ensure(
+          benefits.length > 0 && tradeoffs.length > 0 && evidence.length > 0,
+          "Completed advice needs benefits, tradeoffs and evidence for each option",
+        );
+      return option.id as string;
+    });
+    unique(options, "advisor option IDs");
+    if (advice.recommendation !== null) {
+      const recommendation = record(
+        advice.recommendation,
+        "Advisor recommendation",
+      );
+      keys(recommendation, ["optionId", "rationale"], "Advisor recommendation");
+      ensure(
+        options.includes(recommendation.optionId as string),
+        "Recommendation must reference a supplied option",
+      );
+      text(recommendation.rationale, "Recommendation rationale");
+    }
+    if (r.outcome === "ready")
+      ensure(
+        options.length >= 2 && advice.recommendation !== null,
+        "Completed advice needs at least two options and a recommendation",
+      );
+  } else
+    ensure(r.advice === undefined, "Advice is only valid for advisor replies");
   return structuredClone(r) as unknown as Reply;
 }

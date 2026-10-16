@@ -33,16 +33,26 @@ function save(root: string, entries: MemoryEntry[]): void {
     json({ schemaVersion: 1, entries }),
   );
 }
+// Common words would otherwise match nearly every entry when the query is a full request.
+const stopWords = new Set(
+  "the and for with that this from are was were has have had not but all any can will should must into onto than then them they their there what when where which who why how use using add also only each such other its our your you out new".split(
+    " ",
+  ),
+);
 export function recall(
   cwd: string,
   query = "",
   includeCandidates = false,
 ): (MemoryEntry & { state: string })[] {
   const root = projectRoot(cwd);
-  const terms = query
-    .toLowerCase()
-    .split(/\W+/)
-    .filter((word) => word.length > 2);
+  const terms = [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((word) => word.length > 2 && !stopWords.has(word)),
+    ),
+  ];
   return load(root)
     .map((entry) => {
       let state = entry.revoked

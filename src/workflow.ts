@@ -26,6 +26,7 @@ import {
   versionDirectory,
 } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
+import { recall } from "./memory.ts";
 import {
   ensure,
   identifier,
@@ -46,6 +47,36 @@ import type {
 } from "./types.ts";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+function requireOpen(s: Session): void {
+  ensure(
+    s.status !== "CLOSED",
+    "Contract is closed. Use /waicc-reopen <reason> before changing it.",
+  );
+}
+function resetReview(s: Session): void {
+  s.contractReview = "NOT_REVIEWED";
+  delete s.reviewApproval;
+}
+function approvalIsCurrent(s: Session, sourceFingerprint: string): boolean {
+  const approval = s.reviewApproval;
+  const last = s.rounds.at(-1);
+  return Boolean(
+    approval &&
+    s.contractReview === "PASS" &&
+    approval.contractVersion === s.contractVersion &&
+    approval.requirementsDigest === digest(requirementsText(s)) &&
+    approval.sourceFingerprint === sourceFingerprint &&
+    last?.id === approval.requestId &&
+    last.mode === "review" &&
+    !last.taskId &&
+    last.status === "ASSESSED" &&
+    last.decision === "ready" &&
+    last.contractVersion === approval.contractVersion &&
+    last.requirementsDigest === approval.requirementsDigest &&
+    last.source.fingerprint === approval.sourceFingerprint &&
+    last.reply?.outcome === "ready",
+  );
+}
 export const requirementsText = (s: Session): string =>
   s.requirements
     .map((r, i) => (i ? `\n## Amendment ${i}\n\n${r}` : r))
@@ -120,7 +151,33 @@ function nextRound(
   mode: Mode,
   focus: string,
   taskId?: string,
+  requirementIds?: string[],
 ): { round: Round; files: Record<string, string> } {
+  requireOpen(s);
+  ensure(
+    ["planning", "review", "implementation", "advisor"].includes(mode),
+    "Unknown request mode",
+  );
+  let advisor: Round["advisor"];
+  if (mode === "advisor") {
+    ensure(
+      !taskId,
+      "Advisor scope uses requirement IDs, not implementation tasks",
+    );
+    const ids = list(requirementIds ?? [], "Advisor requirement IDs").map(
+      (value) => identifier(value),
+    );
+    ensure(
+      new Set(ids).size === ids.length &&
+        ids.every((id) => v.contract.requirements.some((req) => req.id === id)),
+      "Advisor scope contains unknown or duplicate requirement IDs",
+    );
+    advisor = { question: focus, requirementIds: ids };
+  } else
+    ensure(
+      requirementIds === undefined,
+      "Requirement scope is only supported for advisor requests",
+    );
   ensure(
     !s.rounds.some((r) => r.status === "WAITING" || r.status === "RECEIVED"),
     "Assess or explicitly cancel the pending request before issuing another",
@@ -135,11 +192,14 @@ function nextRound(
       "Unknown task ID",
     );
   if (mode === "implementation") readyContract(v.contract);
+  resetReview(s);
+  if (mode === "review") s.contractReview = "PENDING";
   const round: Round = {
     id: randomUUID(),
     mode,
     contractVersion: v.version,
     taskId: taskId ?? null,
+    ...(advisor ? { advisor } : {}),
     source: snapshot(s.projectRoot),
     requirementsDigest: digest(requirementsText(s)),
     status: "WAITING",
@@ -162,6 +222,13 @@ function nextRound(
       [`${dir}/STARTER.txt`]: `Read ${join(s.projectRoot, sessionRelative(s.id), dir, "HANDOFF.md")} and perform its ${mode} assignment. Write the designated reply.\n`,
       [`${dir}/reply.example.json`]: json(replyTemplate(s, round, v)),
       [`${dir}/conversation.json`]: json(conversation(s, round)),
+      ...(advisor
+        ? {
+            [`${dir}/memory.json`]: json(
+              recall(s.projectRoot, `${requirementsText(s)}\n${focus}`),
+            ),
+          }
+        : {}),
       ...skillFiles(v.contract.skills, dir),
     },
   };
@@ -170,11 +237,13 @@ export function createSession(cwd: string, requirements: string): Session {
   const root = projectRoot(cwd);
   text(requirements, "Original requirements", 64_000);
   return withLock(root, () => {
+    const timestamp = now();
     const s: Session = {
       schemaVersion: 1,
       id: randomUUID(),
       projectRoot: root,
-      createdAt: now(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
       sequence: 0,
       requirements: [requirements],
       contractVersion: 0,
@@ -182,6 +251,8 @@ export function createSession(cwd: string, requirements: string): Session {
       rounds: [],
       artifacts: {},
       maxRounds: 12,
+      contractReview: "NOT_REVIEWED",
+      deliveryVerified: false,
       verified: false,
     };
     return commit(root, s, "session.created", {
@@ -200,13 +271,14 @@ export function prepare(
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    requireOpen(s);
     ensure(
       s.contractVersion === expectedVersion,
       "Contract version changed; reload before preparing",
     );
     ensure(
       ["planning", "review"].includes(mode),
-      "Use assessment to generate an implementation handoff",
+      "Prepare supports planning/review only; request advisor separately, or use assessment for implementation",
     );
     const c = validateContract(value, requirementsText(s));
     c.tasks
@@ -228,13 +300,19 @@ export function issue(
   mode: Mode,
   focus: string,
   taskId?: string,
+  requirementIds?: string[],
 ): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    requireOpen(s);
     ensure(
       mode !== "implementation",
       "Implementation handoffs require a ready assessment",
+    );
+    ensure(
+      s.contractVersion > 0,
+      "Prepare a contract before requesting advice or another handoff",
     );
     const next = nextRound(
       s,
@@ -242,6 +320,7 @@ export function issue(
       mode,
       text(focus, "Assignment focus"),
       taskId,
+      requirementIds,
     );
     return commit(root, s, "handoff.issued", next.files);
   });
@@ -250,6 +329,7 @@ export function ingest(cwd: string, id: string): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    if (s.status === "CLOSED") return s;
     const waiting = s.rounds.filter((r) => r.status === "WAITING");
     ensure(waiting.length <= 1, "Ambiguous pending requests");
     if (!waiting.length) {
@@ -265,6 +345,7 @@ export function ingest(cwd: string, id: string): Session {
           received.rationale =
             "Source changed after reply intake; issue a fresh request.";
           s.status = "STALE";
+          if (received.mode === "review") s.contractReview = "STALE";
           return commit(root, s, "reply.became-stale");
         }
       }
@@ -286,12 +367,20 @@ export function ingest(cwd: string, id: string): Session {
       "Reply identity or pinned inputs do not match this request",
     );
     const v = contract(root, s, r.contractVersion);
-    const ids = v.contract.requirements.map((req) => req.id);
+    const ids =
+      r.mode === "advisor"
+        ? r.advisor!.requirementIds
+        : v.contract.requirements.map((req) => req.id);
     ensure(
       reply.coverage.length === ids.length &&
         reply.coverage.every((row) => ids.includes(row.requirementId)),
-      "Reply must cover every requirement exactly once",
+      "Reply must cover every requirement in its assigned scope exactly once",
     );
+    if (r.mode === "advisor")
+      ensure(
+        reply.advice!.question === r.advisor!.question,
+        "Advisor question does not match this request",
+      );
     if (reply.proposedContract) {
       validateContract(reply.proposedContract, requirementsText(s));
       stableIds(v.contract, reply.proposedContract);
@@ -309,6 +398,7 @@ export function ingest(cwd: string, id: string): Session {
       r.rationale =
         "The source, requirements or contract changed after this request was issued. The reply is retained as historical advice; issue a fresh request.";
     s.status = stale ? "STALE" : "AWAITING_ASSESSMENT";
+    if (stale && r.mode === "review") s.contractReview = "STALE";
     return commit(root, s, stale ? "reply.stale" : "reply.received", {
       [`${dir}/received.json`]: raw,
       [`${dir}/observed-source.json`]: json(source),
@@ -317,7 +407,7 @@ export function ingest(cwd: string, id: string): Session {
 }
 export interface Assessment {
   requestId: string;
-  decision: "ready" | "followup" | "needs_changes" | "blocked";
+  decision: "ready" | "noted" | "followup" | "needs_changes" | "blocked";
   rationale: string;
   contract?: Contract;
   dispositions: {
@@ -330,6 +420,7 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    requireOpen(s);
     identifier(a.requestId);
     const r = s.rounds.find((round) => round.id === a.requestId);
     ensure(
@@ -338,9 +429,30 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     );
     text(a.rationale, "Assessment rationale");
     ensure(
-      ["ready", "followup", "needs_changes", "blocked"].includes(a.decision),
+      ["ready", "noted", "followup", "needs_changes", "blocked"].includes(
+        a.decision,
+      ),
       "Unknown assessment decision",
     );
+    if (r.mode === "advisor") {
+      ensure(
+        a.decision !== "ready",
+        "Advisor advice cannot authorize readiness; use noted or followup",
+      );
+      ensure(
+        a.contract === undefined,
+        "Advisor assessments cannot change the contract; explicitly prepare a later revision after a human decision",
+      );
+      if (a.decision === "noted")
+        ensure(
+          r.reply.outcome === "ready" && r.reply.questions.length === 0,
+          "Incomplete advice or unresolved questions require a followup or blocker decision",
+        );
+    } else
+      ensure(
+        a.decision !== "noted",
+        "The noted decision is only valid for advisor replies",
+      );
     ensure(
       r.requirementsDigest === digest(requirementsText(s)) &&
         r.contractVersion === s.contractVersion,
@@ -368,6 +480,14 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
       seen.add(d.findingId as string);
     }
     const files: Record<string, string> = {};
+    ensure(
+      !(
+        r.mode === "review" &&
+        a.decision === "ready" &&
+        a.contract !== undefined
+      ),
+      "A changed contract requires a fresh review. Adopt it with followup or needs_changes, not a ready review assessment.",
+    );
     let c = contract(root, s).contract;
     if (a.contract) {
       c = validateContract(a.contract, requirementsText(s));
@@ -419,14 +539,16 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
         "High/critical findings need explicit evidence-backed dispositions",
       );
     }
+    const assessedAt = now();
     r.status = "ASSESSED";
     r.decision = a.decision;
     r.rationale = a.rationale;
     r.dispositions = a.dispositions;
     files[`${roundDirectory(r)}/assessment.json`] = json({
       ...a,
-      at: now(),
+      at: assessedAt,
       verified: false,
+      deliveryVerified: false,
     });
     files[`${roundDirectory(r)}/ASSESSMENT.md`] =
       `# ${a.decision}\n\n${a.rationale}\n\nRequest: ${r.id}. Delivery verified: false.\n\n## Finding dispositions\n\n${a.dispositions.map((d) => `- ${d.findingId}: ${d.disposition}. Evidence: ${d.evidence}`).join("\n") || "None."}\n`;
@@ -443,9 +565,23 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
         "Implement the accepted task contracts in dependency order. Actual implementation begins only when the human submits this handoff to a coding agent.",
       );
       Object.assign(files, next.files);
+    } else if (a.decision === "noted") {
+      s.status = "ADVICE_READY";
     } else if (a.decision === "ready") {
-      s.status =
-        r.mode === "implementation" ? "NEEDS_REVIEW" : "READY_FOR_HANDOFF";
+      if (r.mode === "review" && !r.taskId) {
+        s.status = "READY_TO_CLOSE";
+        s.contractReview = "PASS";
+        s.reviewApproval = {
+          requestId: r.id,
+          contractVersion: s.contractVersion,
+          requirementsDigest: r.requirementsDigest,
+          sourceFingerprint: currentSource.fingerprint,
+          assessedAt,
+        };
+      } else {
+        s.status = "NEEDS_REVIEW";
+        resetReview(s);
+      }
     } else if (a.decision === "followup") {
       const v = a.contract
         ? (JSON.parse(
@@ -460,9 +596,15 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
           r.mode === "implementation" ? "review" : r.mode,
           a.rationale,
           r.taskId ?? undefined,
+          r.advisor?.requirementIds,
         ).files,
       );
-    } else s.status = a.decision === "blocked" ? "BLOCKED" : "NEEDS_CHANGES";
+    } else {
+      s.status = a.decision === "blocked" ? "BLOCKED" : "NEEDS_CHANGES";
+      if (r.mode === "review")
+        s.contractReview =
+          a.decision === "blocked" ? "BLOCKED" : "NEEDS_CHANGES";
+    }
     return commit(root, s, "reply.assessed", files);
   });
 }
@@ -470,6 +612,7 @@ export function cancel(cwd: string, id: string, reason: string): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    requireOpen(s);
     text(reason, "Cancellation reason");
     const r = s.rounds.findLast((round) =>
       ["WAITING", "RECEIVED"].includes(round.status),
@@ -478,6 +621,7 @@ export function cancel(cwd: string, id: string, reason: string): Session {
     r.status = "CANCELLED";
     r.rationale = reason;
     s.status = "NEEDS_CHANGES";
+    resetReview(s);
     return commit(root, s, "request.cancelled");
   });
 }
@@ -485,20 +629,118 @@ export function amend(cwd: string, id: string, amendment: string): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    requireOpen(s);
     text(amendment, "Requirement amendment");
     s.requirements.push(amendment);
     for (const r of s.rounds)
       if (["WAITING", "RECEIVED"].includes(r.status)) r.status = "STALE";
     s.status = "NEEDS_CHANGES";
+    resetReview(s);
     return commit(root, s, "requirements.amended", {
       [`amendments/${s.requirements.length - 1}.md`]: `${amendment}\n`,
     });
   });
 }
+export function closeSession(cwd: string, id: string, reason: string): Session {
+  const root = projectRoot(cwd);
+  return withLock(root, () => {
+    const s = loadSession(root, id);
+    requireOpen(s);
+    text(reason, "Closure reason");
+    ensure(
+      s.status === "READY_TO_CLOSE",
+      "Only a reviewed contract in READY_TO_CLOSE can be closed",
+    );
+    ensure(
+      !s.rounds.some((r) => r.status === "WAITING" || r.status === "RECEIVED"),
+      "Resolve pending replies before closing",
+    );
+    ensure(
+      approvalIsCurrent(s, snapshot(root).fingerprint),
+      "The passing review no longer matches the current contract, requirements or source. Request a fresh review.",
+    );
+    readyContract(contract(root, s).contract);
+    const round = s.rounds.at(-1)!;
+    for (const file of [
+      "assessment.json",
+      "received.json",
+      "observed-source.json",
+    ])
+      artifact(root, s, `${roundDirectory(round)}/${file}`);
+    s.closure = {
+      id: randomUUID(),
+      closedAt: now(),
+      reason,
+      approval: { ...s.reviewApproval! },
+    };
+    s.status = "CLOSED";
+    const dir = `lifecycle/${s.closure.id}`;
+    return commit(root, s, "contract.closed-by-explicit-command", {
+      [`${dir}/closure.json`]: json({
+        schemaVersion: 1,
+        sessionId: s.id,
+        status: s.status,
+        contractReview: s.contractReview,
+        closure: s.closure,
+        deliveryVerified: false,
+        verified: false,
+      }),
+      [`${dir}/CLOSURE.md`]: `# CLOSED\n\n${reason}\n\nContract v${s.contractVersion}; session ${s.id}.\nContract review: PASS. Assessment request: ${round.id}.\nClosed at: ${s.closure.closedAt}.\n\nThis closes the contract discussion, not code delivery. Delivery verified: false.\n`,
+    });
+  });
+}
+export function reopenSession(
+  cwd: string,
+  id: string,
+  reason: string,
+): Session {
+  const root = projectRoot(cwd);
+  return withLock(root, () => {
+    const s = loadSession(root, id);
+    text(reason, "Reopening reason");
+    ensure(
+      s.status === "CLOSED" && s.closure,
+      "Only a closed contract can be reopened",
+    );
+    const closure = s.closure;
+    delete s.closure;
+    resetReview(s);
+    s.status = "NEEDS_REVIEW";
+    return commit(root, s, "contract.reopened-by-explicit-command", {
+      [`lifecycle/${closure.id}/reopen.json`]: json({
+        schemaVersion: 1,
+        sessionId: id,
+        closureId: closure.id,
+        reopenedAt: now(),
+        reason,
+        contractVersion: s.contractVersion,
+        requiresFreshReview: true,
+        deliveryVerified: false,
+      }),
+    });
+  });
+}
 export function status(cwd: string, id?: string): unknown {
   const root = projectRoot(cwd);
-  if (!id) return { projectRoot: root, sessions: listSessions(root) };
+  if (!id) {
+    const sessions = listSessions(root);
+    const fingerprint = sessions.some((s) => s.status === "READY_TO_CLOSE")
+      ? snapshot(root).fingerprint
+      : undefined;
+    return {
+      projectRoot: root,
+      sessions: sessions.map((s) =>
+        s.status === "READY_TO_CLOSE" &&
+        !approvalIsCurrent(loadSession(root, s.id), fingerprint!)
+          ? { ...s, status: "STALE", contractReview: "STALE" }
+          : s,
+      ),
+    };
+  }
   const s = loadSession(root, id);
+  const staleApproval =
+    s.status === "READY_TO_CLOSE" &&
+    !approvalIsCurrent(s, snapshot(root).fingerprint);
   const r = s.rounds.findLast(
     (round) => round.status === "WAITING" || round.status === "RECEIVED",
   );
@@ -507,11 +749,17 @@ export function status(cwd: string, id?: string): unknown {
   return {
     sessionId: s.id,
     projectRoot: root,
-    status: s.status,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    status: staleApproval ? "STALE" : s.status,
+    contractReview: staleApproval ? "STALE" : s.contractReview,
+    reviewApproval: s.reviewApproval ?? null,
+    closure: s.closure ?? null,
     contractVersion: s.contractVersion,
     rounds: s.rounds.length,
     maxRounds: s.maxRounds,
     verified: false,
+    deliveryVerified: false,
     requirements: requirementsText(s),
     contract: s.contractVersion
       ? (() => {
@@ -530,12 +778,19 @@ export function status(cwd: string, id?: string): unknown {
       ? {
           requestId: r.id,
           mode: r.mode,
+          advisor: r.advisor,
           status: r.status,
           handoffPath: join(
             root,
             sessionRelative(id),
             roundDirectory(r),
             "HANDOFF.md",
+          ),
+          starterPath: join(
+            root,
+            sessionRelative(id),
+            roundDirectory(r),
+            "STARTER.txt",
           ),
           replyPath: join(
             root,
@@ -556,6 +811,8 @@ export function status(cwd: string, id?: string): unknown {
           coverage: last.reply?.coverage,
           findings: last.reply?.findings,
           checks: last.reply?.checks,
+          advisor: last.advisor,
+          advice: last.reply?.advice,
         }
       : null,
     lastReply: lastReply
@@ -564,6 +821,7 @@ export function status(cwd: string, id?: string): unknown {
           mode: lastReply.mode,
           status: lastReply.status,
           summary: lastReply.reply!.summary,
+          advice: lastReply.reply!.advice,
           rationale: lastReply.rationale,
           artifactPath: join(
             root,
@@ -574,23 +832,34 @@ export function status(cwd: string, id?: string): unknown {
         }
       : null,
     nextAction:
-      s.status === "DRAFT"
-        ? "Inspect the project and prepare a contract and handoff."
-        : r?.status === "WAITING"
-          ? "Submit HANDOFF.md to the chosen agent, then run /waicc-continue when reply.json is ready."
-          : r?.status === "RECEIVED"
-            ? "Assess the received reply against the requirements and actual evidence."
-            : s.status === "NEEDS_REVIEW"
-              ? "Request independent review against the implementation and actual check evidence."
-              : s.status === "READY_FOR_HANDOFF"
-                ? "The reviewed artifact is ready for its next human-chosen handoff; delivery remains unverified."
-                : "Resolve the reported blocker or issue a fresh request.",
+      s.status === "CLOSED"
+        ? "Contract discussion is closed; delivery remains unverified. Read its history, or explicitly /waicc-reopen <reason> before changes and a fresh review."
+        : staleApproval
+          ? "The passing review is stale. Request a fresh full-contract review before closing."
+          : s.status === "READY_TO_CLOSE"
+            ? "Contract review PASS. The human may /waicc-close <reason> to finish this discussion; closure does not verify code delivery."
+            : s.status === "DRAFT"
+              ? "Inspect the project and prepare a contract and handoff."
+              : r?.status === "WAITING"
+                ? "Submit HANDOFF.md to the chosen agent, then run /waicc-continue when reply.json is ready."
+                : r?.status === "RECEIVED"
+                  ? "Assess the received reply against the requirements and actual evidence."
+                  : s.status === "ADVICE_READY"
+                    ? "Discuss the recommendation with the human. Nothing was adopted or authorized; explicitly prepare a revision or request further advice/review as appropriate."
+                    : s.status === "NEEDS_REVIEW"
+                      ? "Request independent review against the implementation and actual check evidence."
+                      : s.status === "READY_FOR_HANDOFF"
+                        ? "The reviewed artifact is ready for its next human-chosen handoff; delivery remains unverified."
+                        : s.rounds.at(-1)?.mode === "advisor"
+                          ? "Resolve the advice blocker or ask /waicc-advisor with a clarified question. Contract changes require a separate explicit human decision."
+                          : "Resolve the reported blocker or issue a fresh request.",
   };
 }
 export function exportHandoff(cwd: string, id: string): string {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    requireOpen(s);
     const r = s.rounds.findLast((round) => round.status === "WAITING");
     ensure(r, "No pending handoff to export");
     const v = contract(root, s, r.contractVersion);
@@ -606,11 +875,22 @@ export function exportHandoff(cwd: string, id: string): string {
       [`${dir}/HANDOFF.md`]: handoff(s, r, v, request.focus, true),
       [`${dir}/reply.example.json`]: json(replyTemplate(s, r, v)),
       [`${dir}/conversation.json`]: json(conversation(s, r)),
+      ...(r.mode === "advisor"
+        ? {
+            [`${dir}/memory.json`]: artifact(
+              root,
+              s,
+              `${roundDirectory(r)}/memory.json`,
+            ),
+          }
+        : {}),
       [`${dir}/manifest.json`]: json({
         schemaVersion: 1,
         sessionId: id,
         requestId: r.id,
         contractVersion: v.version,
+        mode: r.mode,
+        advisor: r.advisor,
         source: r.source,
         includesSourceCode: false,
         returnReplyTo: join(
@@ -630,6 +910,7 @@ export function setRoundLimit(cwd: string, id: string, limit: number): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
+    requireOpen(s);
     ensure(
       Number.isInteger(limit) &&
         limit >= Math.max(2, s.rounds.length) &&
