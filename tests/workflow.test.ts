@@ -237,6 +237,14 @@ test("original quotes must come from the user; paths cannot escape scope", () =>
     assert.throws(() => validateContract(c, requirements), /path/i);
   }
 });
+test("contracts may only name packaged skills, and the error lists them", () => {
+  const c = example();
+  c.skills = ["react"];
+  assert.throws(
+    () => validateContract(c, requirements),
+    /Unknown skill react\. Available: .*wai-node.*waicc-workflow/,
+  );
+});
 test("mismatched request cannot consume a pending handoff", (t) => {
   const root = fixture(t);
   const s = planned(root);

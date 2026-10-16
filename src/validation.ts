@@ -1,5 +1,13 @@
+import { readdirSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { Contract, Reply } from "./types.ts";
+
+const packagedSkills = readdirSync(new URL("../skills/", import.meta.url), {
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort();
 
 export function ensure(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -116,9 +124,13 @@ export function validateContract(
   for (const field of ["exclusions", "assumptions", "questions", "risks"])
     strings(c[field], field);
   const skillNames = strings(c.skills, "Skills");
-  skillNames.forEach((name) =>
-    ensure(/^[a-z0-9-]+$/.test(name), "Invalid skill name"),
-  );
+  skillNames.forEach((name) => {
+    ensure(/^[a-z0-9-]+$/.test(name), "Invalid skill name");
+    ensure(
+      packagedSkills.includes(name),
+      `Unknown skill ${name}. Available: ${packagedSkills.join(", ")}`,
+    );
+  });
   unique(skillNames, "skills");
   const tasks = list(c.tasks, "Tasks").map((entry) => {
     const task = record(entry, "Task");
