@@ -100,7 +100,7 @@ sets PLAN_READY and creates no request/implementation handoff. Not-run checks st
 not_run. Planning addressed is source-backed specification coverage, not delivery proof.
 
 Do not silently erase blockers or relabel defects as future decisions just to pass.
-Review ready and explicit closure can accept a complete specification with documented
+Specification-only review ready and explicit closure can accept a complete specification with documented
 future gates; they never resolve those gates or authorize execution. All freshness,
 coverage and review re-checks remain. Legacy planning ready still uses execution-ready
 validation (all decisions resolved) and creates an implementation handoff. Existing
@@ -144,13 +144,13 @@ must remain unchanged. Save the completed object as `reply.json`, not a fenced b
 
 - `schemaVersion`, `sessionId`, `requestId`, `contractVersion`, `requirementsDigest`,
   `sourceFingerprint`, `mode`: pinned request identity. Modes are planning, review,
-  implementation and advisor.
+  implementation, testing and advisor.
 - `outcome`: `ready`, `planned` (planning only), `needs_changes`, `needs_clarification`, or `blocked`.
 - `summary`: the actual result.
 - `coverage`: exactly one `{requirementId,status,evidence}` row per requirement.
   For advisor, only the explicitly selected IDs are covered (default `[]`).
   Status is `addressed`, `missing`, or `unverified`.
-- `findings`: `{id,severity,description,evidence,extensions?}`. Severity is critical,
+- `findings`: `{id,severity,description,evidence,suggestedFix?,extensions?}`. Severity is critical,
   high, medium, low, or info. IDs are unique within the reply. `extensions` optionally
   holds untrusted annotation fields; it does not change scope or workflow decisions.
 - `questions`: unresolved questions, or `[]`.
@@ -160,8 +160,11 @@ must remain unchanged. Save the completed object as `reply.json`, not a fenced b
 - `proposedContract`: optional complete contract body, offered for explicit adoption;
   forbidden for advisor replies, which suggest amendments as text instead.
 - `advice`: required only for advisor replies; see below. Rejected in other modes.
+- `completion`: whole-work implementation report {summary,tasks,checks,findings};
+  implementation only. New delegated ready replies require every task and every
+  previous actionable code-review finding exactly once; checks must match reply.checks.
 
-Replies to another request/version are rejected. Matching planning/review/advisor replies
+Replies to another request/version are rejected. Matching planning/review/testing/advisor replies
 whose source changed are archived as stale. An implementation may change source;
 its observed post-implementation source is pinned at intake. Any subsequent source
 change invalidates assessment. Repeated intake cannot replace an already frozen reply.
@@ -253,7 +256,7 @@ the host's success is a delivery attempt, not a verified client clipboard readba
 
 ## Pi-native recipient transport
 
-`/waicc-receive <session-id> [--implement]` is a human command in a manually opened,
+`/waicc-receive <session-id> [--implement] [--run-checks]` is a human command in a manually opened,
 idle, trusted Pi chat in the same project checkout. It requires exactly one WAITING
 round with no reply file, and source matching that request. It does not create a
 WAICC session/round or mutate its journal, status or updatedAt. Pi's current model
@@ -263,7 +266,8 @@ The Pi chat persists role recipient plus a pin of sessionId, requestId,
 contractVersion, requirementsDigest, sourceFingerprint and mode. Resume restores
 that pin and recipient tool profile. Assignment recovery reads the exact committed
 contract version, handoff, template and conversation, selected skill paths, and
-relevant current confirmed memory. It never chooses a replacement/newer request.
+the issue-time confirmed-memory snapshot for new contextVersion 1 requests (legacy
+requests without a snapshot retain their old recall behavior). It never chooses a replacement/newer request.
 Cancellation, amendment, replacement, intake or closure invalidates the binding.
 An existing reply makes it stop. Per-tool guards check request metadata; full source
 fingerprints are checked at receive and submission, not on every read.
@@ -286,7 +290,18 @@ guard blocks all other tools, including shell, MCP and custom execution, and sto
 work on an invalidated/already answered pin. Only explicitly opted-in implementation
 enables direct edit/write: each path must stay within the pinned request's task
 allowedPaths, excluding reserved runtime/VCS paths and symlink/junction components.
-No execution-tool exception is made for tests; unavailable checks are not_run.
+Optional --run-checks for implementation/testing exposes only waicc_check, never a
+general execution tool. It needs dialog-capable UI and human confirmation for EACH
+exact program/args, runs at project root with a 1000–60000 ms timeout, and logs start,
+exit/output (bounded, with truncation flag), cancellation/timeouts and source before/after.
+Confirmation is rechecked against the same pin/source; denied/no-UI checks do not run.
+The opt-in is deliberately NOT restored from saved Pi bindings. Test source changes
+make the result failed even with exit 0, invalidate submission and require a fresh
+handoff; there is no automatic revert. A check finishing after CLOSED does not append
+results to closed history. Running processes/children are not isolated or revoked by
+contract cancellation/closure; commands may affect files/services with account permissions.
+No production, installs, resets, secrets or deployment. Missing execution permission
+means not_run, never an inferred pass. General shell/MCP/custom tools remain blocked.
 This is a Pi extension boundary, not an OS sandbox against user actions, trusted
 extensions or external programs. External recipients retain their own permissions.
 
@@ -390,7 +405,9 @@ needs_changes/blocked records the issue without starting contract preparation.
 noted is rejected for other modes. Adoption requires a human decision and a separate
 explicit contract revision; new requirements still require an amendment.
 
-Planned planning accepts the specification as PLAN_READY without implementation.
+Planned planning accepts the specification as PLAN_READY without an external implementation handoff.
+The main agent then completes all work if the original assignment authorizes implementation;
+planning-only scope stops there. A plan creates no new execution authority.
 Legacy ready planning creates an implementation handoff; ready implementation requests
 independent review; ready full-contract review records PASS and READY_TO_CLOSE.
 A task-scoped ready review still requires full review and cannot authorize closure.
@@ -402,6 +419,134 @@ The advisor slash command issues a handoff directly without inference; its reply
 is assessed through the existing Pi agent on /waicc-continue.
 
 ## Review verdict and explicit closure
+
+### Optional work delegation and shared context
+
+Default implementationOwner/testingOwner is main. `/waicc-planning --delegate` saves
+the original requirements without the flag and selects implementationOwner delegate.
+After planning adoption the coordinator may issue ONE whole-work implementation
+request. `/waicc-implement [focus]` selects delegation later and issues that request;
+`/waicc-test [focus]` similarly selects optional testing. Both require an accepted
+current plan, resolved execution gates, no pending round and no task/batch scope.
+Subsequent waicc_request implementation/testing requires the corresponding saved
+human delegation choice. `/waicc-implement --main` / `/waicc-test --main` restores
+main ownership without a handoff, after pending work is assessed/cancelled. These
+commands never launch agents or kill existing workers. CLI: implement/test <session>
+[--main] [focus]; start --delegate <requirements>.
+
+planApproval pins the accepted contract version/requirements/request. Preparing a
+new draft or amending requirements clears acceptance. Intentional in-scope contract
+adoption during failed code review carries it forward for the all-fixes cycle.
+Older sessions recover acceptance read-only from immutable planning assessments and
+the exact adopted contract, not merely from a status label.
+
+The owner saves important chat-only context with waicc_context (CLI context <session>
+<summary>) before dispatch. It cannot update during pending work and never replaces
+requirement amendments or adopts untrusted advice automatically. Each new round
+has contextVersion 1 and immutable CONTEXT.md/context.json, requirements.md (all
+amendments), complete saved round conversation, confirmed-only memory.json and
+relevant skills. Implementation/testing also carry wai-testing. No original chat
+is invented or copied implicitly. Old round files are not rewritten.
+
+context.json contains coordinator context, role ownership, plan pins, decisions,
+assumptions/risks/questions, dependency/path scope, all historical finding/check
+claims with source/version/status labels, and a checkEvidence path/digest index.
+Recorded check start/result files are copied unchanged under evidence/. Exports
+include the same packet/evidence and portable skills, but no source checkout or
+authentication files. Large Pi assignments provide exact input-file paths instead
+of dumping oversized history into the prompt; complete evidence remains on disk.
+
+Delegated coding ready requires a full completion report and ordinary scope/check
+assessment. Missing/unrun checks yield NEEDS_TESTING; supported implementation/testing
+yields NEEDS_REVIEW, never PASS. The coordinator independently inspects actual diff,
+completion/acceptance and test evidence before deciding whether it runs missing
+tests itself, uses selected optional testing, or creates ONE full code review.
+Testing is code/test-source read-only, cannot propose/adopt replacement contracts,
+and ready requires executed checks (not just not_run) plus normal readiness rules.
+Failed implementation/testing is assessed before ALL fixes; no automatic per-task
+or immediate followup review is generated. Only full code review can recommend PASS.
+
+### Evidence and suggested fixes
+
+Every actionable review issue should include concrete evidence and suggestedFix:
+source path with line/symbol or actual failing command/test/output, the triggering
+case and expected/observed behavior, defect impact and relevant requirement/criterion,
+plus a minimal in-scope remedy and regression verification. Static proof is valid;
+label inference, unavailable inputs and unrun reproduction rather than inventing them.
+Nonempty evidence is enforced; semantic proof and proposed fixes still need independent
+owner verification. Suggestions are inert advice, never executable authority.
+
+Normalizer v3 copies suggestion/recommendation/fix/suggested_fix into suggestedFix
+when canonical text is missing; text arrays join with newlines. The original alias
+remains in extensions, and raw replies/audit remain immutable. Canonical suggestedFix
+takes precedence; nothing synthesizes missing evidence or a remedy. Old replies
+without a suggested fix remain readable. Status lists missingFixSuggestions so the
+owner can investigate a remedy without another handoff solely to repair wording.
+Existing frozen rounds are never re-normalized or silently upgraded.
+The same check aliases/outcomes/evidence-array rules apply to completion.checks;
+task/finding evidence arrays become text and finding-disposition casing is canonicalized.
+Comparison uses explicit description/outcome/evidence claims, not inert extensions,
+so a failed or not-run result cannot be hidden by conflicting completion metadata.
+
+### Whole-work code review (default in Pi)
+
+`/waicc-review` prompts the main agent to finish ALL authorized planned work/fixes
+and checks before issuing ONE whole-change review. It never issues a per-task or
+batch code review. `/waicc-review --contract` explicitly retains specification-only
+review. New Pi `waicc_prepare`/`waicc_request` mode review defaults to reviewKind code;
+reviewKind contract is explicit. Old on-disk rounds without review metadata remain
+contract-only; they are not upgraded to code approval.
+
+For code review, pass `completion`:
+
+```json
+{
+  "summary": "All planned implementation and fixes complete; ready for independent review",
+  "tasks": [{"taskId": "SEARCH", "evidence": "src/search.ts implements AC-001; cite actual checks"}],
+  "checks": [{"description": "Search regression tests", "outcome": "passed", "evidence": "Command and actual result"}],
+  "findings": []
+}
+```
+
+Every contract task appears exactly once with implementation/acceptance evidence.
+All execution decisions must be resolved; every check has description/outcome/evidence,
+at least one check record is required, and failed checks prevent handoff. Unavailable
+checks may remain not_run with honest limits; this does not satisfy required verification.
+`findings` contains every actionable finding (all severities except info) from ALL
+previous assessed code-review rounds, exactly once by `{requestId,findingId,disposition,
+evidence}`. Disposition is resolved or disputed. First review uses []. These are
+coordinator claims for independent verification, not task-completion certification.
+
+The round's `review` stores kind code, original baseline source snapshot, complete
+changedPaths and completion. `code-review.json` freezes that context for recipients
+and export; conversation.json retains ALL prior code reviews, not just three rounds.
+The original baseline remains unchanged across fix cycles and contract revisions.
+The inventory contains file hashes, not old file contents: reviewers inspect available
+Git/SVN diffs/history, untracked/current files and report missing baseline access.
+For standalone review, the session may start after changes already exist; its inventory
+alone cannot recover earlier changes. Review the available VCS diff and full scope too.
+
+The reviewer checks the entire implementation, requirements/acceptance, integration,
+regressions, check evidence and all prior fixes, returning one consolidated reply.
+Main-agent assessment precedes source edits so the original review remains assessable.
+Code-review followup is rejected: use needs_changes/blocked, finish ALL fixes/checks,
+then request a fresh full review with a new completion report. Evidence-backed false
+positives may be disputed; other actionable findings require fixes and a fresh review,
+even if severity is low/medium. Source/version changes invalidate pending/pass review.
+No automatic handoffs per finding, external processes or closure are introduced.
+
+Code review ready requires execution-ready contract, addressed implementation coverage,
+no questions/failed checks, ready reply outcome and no actionable findings except
+explicit evidence-backed disputes. Required evidence that cannot be established is
+a blocker. reviewApproval.kind is code or contract; missing legacy kind means contract.
+The existing contractReview field remains the verdict for that pinned review kind,
+not a universal delivery-verified flag. PASS is never automatic certification.
+
+CLI equivalents: `request <session> review --completion <report.json> [focus]`, or
+`prepare <session> <contract.json> review --completion <report.json> [focus]`.
+Use `--contract` instead of `--completion <report.json>` for specification-only review.
+The exported low-level TypeScript API retains contract-only defaults for legacy callers;
+pass `{kind:"code",completion}` as the final prepare/issue option for code review.
 
 `/waicc-cancel [session-id] [reason]` cancels the most recent pending
 WAITING/RECEIVED round. A UUID explicitly targets that session without changing
@@ -416,9 +561,9 @@ session change. Trust and recipient/coordinator guards remain unchanged.
 `contractReview` is separate from session `status`. Values are NOT_REVIEWED,
 PENDING, PASS, NEEDS_CHANGES, BLOCKED or STALE. Issuing a new request clears any
 previous approval; review sets PENDING. Amendments and revisions invalidate PASS.
-A ready full review pins `reviewApproval` with requestId, contractVersion,
-requirementsDigest, sourceFingerprint and assessedAt. These describe a reviewed
-specification and evidence, not proof that code was implemented or tests passed.
+A ready full review pins `reviewApproval` with kind (code/contract), requestId,
+contractVersion, requirementsDigest, sourceFingerprint and assessedAt. These describe
+assessed review evidence of that kind, not independent proof that tests passed.
 
 Normal `/waicc-close [session-id] <reason>` (CLI: `close <session> <reason>`) requires READY_TO_CLOSE,
 no pending WAITING/RECEIVED round, and that pinned approval still matches the latest

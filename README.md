@@ -61,18 +61,29 @@ instead of relaying a questionnaire.
 2. **Continue in Pi.** Run `/waicc-continue`. WAICC validates the request identity,
    contract version, requirements digest and source state. Pi then assesses the
    reply against the original requirements and actual evidence.
-3. **Accept the plan, not execution.** The owner intentionally adopts supported
+3. **Accept the plan.** The owner intentionally adopts supported
    corrections with `waicc_assess.contract` and uses decision `planned` for a complete
-   plan. This records `PLAN_READY` without creating implementation work. Proposals
+   plan. This records `PLAN_READY` without an external implementation handoff. Proposals
    are never adopted automatically.
 4. **Keep genuine decisions visible.** Future human/external choices carry evidence,
    a recommendation and affected tasks in `contract.decisions`. Only those tasks
    and their dependents are gated. Questions that actually prevent a coherent
    specification still block acceptance; do not invent answers or erase blockers.
-5. **Request independent review.** Use `/waicc-review Review authorization, regressions and test evidence`
-   in the same session. Send that handoff to a reviewer, then run `/waicc-continue`
-   when its reply is ready.
-6. **Close explicitly.** A passing full-contract assessment shows `READY_TO_CLOSE`
+5. **The main agent finishes ALL code changes.** For an authorized development
+   request, the coordinator implements the entire accepted plan in dependency order,
+   runs relevant checks and inspects the whole diff. No per-task or batch handoffs.
+   Genuine remaining blockers must be resolved before claiming all work is done.
+   A planning-only request still stops at `PLAN_READY`; accepting a plan grants no new authority.
+6. **Review the whole implementation once.** `/waicc-review Review authorization, regressions and test evidence`
+   asks the main agent to check completion, then produce ONE code-review handoff.
+   Its completion report must cover every task, actual checks/limits and all earlier
+   actionable findings. Send the copied prompt to a reviewer, then `/waicc-continue`.
+   The reviewer inspects actual code changes, not merely the plan or contract.
+7. **Fix everything before re-review.** If review fails, the coordinator assesses
+   `needs_changes` before editing, fixes ALL findings, completes checks and requests
+   ONE fresh whole-change review. Repeat until no actionable findings remain—not
+   one handoff per fix. Real blockers and the explicit round limit still stop the loop.
+8. **Close explicitly.** A passing whole-change assessment shows `READY_TO_CLOSE`
    and `contractReview: PASS`. Run `/waicc-close <reason>` only when you decide the
    contract discussion is finished. This does not certify code delivery.
 
@@ -85,7 +96,10 @@ flowchart TD
     E --> C
     D --> F[Plan accepted: PLAN_READY]
     D --> G[Blocker or clarification]
-    F --> I[Independent source-backed contract review]
+    F --> H[Main agent finishes ALL planned code and checks]
+    H --> I[ONE independent whole-change code review]
+    I --> L[Findings: main agent fixes ALL and checks]
+    L --> I
     I --> J[Review PASS: READY_TO_CLOSE]
     J --> K[Human runs waicc-close: CLOSED]
 ```
@@ -102,6 +116,65 @@ limits; deliveryVerified stays false. A grep hit is not proof of behavior.
 Owner/planner/reviewer/advisor all receive source-first instructions. The owner must
 save adopted revisions, carry decisions forward and avoid unchanged follow-up loops.
 Schema validity cannot independently prove investigation quality or human approval.
+Code-review completion reports are evidence-backed coordinator claims, not proof;
+the reviewer independently verifies them. Unavailable checks stay `not_run` with
+limits; missing required evidence is a blocker, not a fabricated pass.
+
+For specification-only work, explicitly use `/waicc-review --contract <focus>`.
+That review may retain future execution gates and its PASS is not code approval.
+`reviewApproval.kind` distinguishes `code` from `contract`; legacy unmarked reviews
+remain specification-only and are never silently upgraded.
+
+## Optional coding and testing handoffs
+
+The main agent codes by default. To keep it as coordinator from the start:
+
+```text
+/waicc-planning --delegate Add customer search with account isolation. Preserve the existing API.
+```
+
+After plan adoption it prepares ONE whole-plan implementation handoff. You can also
+select delegation later with `/waicc-implement [focus]`. This means implement the
+entire accepted plan—or ALL outstanding fixes—not one task at a time. The coding
+agent should run relevant permitted checks and return a whole-work completion report.
+`/waicc-continue` makes the coordinator inspect the actual diff, coverage, fixes and
+check evidence before deciding what is next. It does not blindly turn a ready reply
+into review PASS or immediately send completed code back for implementation.
+Delegation is optional: the contract owner can always do the authorized work.
+To return a delegated role to the main agent, use `/waicc-implement --main [focus]`
+or `/waicc-test --main [focus]`. Finish/cancel a pending assignment first; changing
+ownership does not stop an external worker. These switches create no new handoff.
+
+If checks are missing, the main agent can run them itself. Optionally use
+`/waicc-test [focus]` to delegate ONE consolidated testing assignment. A tester runs
+permitted checks and reports results; it does not edit code/tests or implement fixes.
+Unavailable checks remain not_run. Implementation with unrun checks can reach
+NEEDS_TESTING; supported implementation/testing reaches NEEDS_REVIEW, never PASS.
+Finish ALL fixes/checks before ONE independent full code review. A separate tester
+is optional, not a mandatory handoff on every cycle. Neither command launches agents.
+
+Every new handoff includes CONTEXT.md/context.json, original requirements and all
+amendments, complete saved round conversation, prior findings/checks, relevant skills
+and a confirmed-memory snapshot. Recorded local check logs travel under evidence/.
+The owner saves important chat-only domain facts, constraints, references and decision
+rationale with waicc_context before dispatch; uncaptured chat cannot be recovered.
+The context packet supplements—not overrides—the contract or permissions. Large Pi
+assignments point to the full saved files instead of injecting an oversized history.
+
+### Review findings must be useful to fix
+
+Reviewers are instructed to provide `{id,severity,description,evidence,suggestedFix}`:
+explain the defect/impact, cite source path and line/symbol or actual failing check,
+identify the triggering case and expected versus observed behavior, then recommend
+a minimal in-scope fix and regression verification. Static source proof is valid;
+an unrun reproduction must never be described as executed. Unconfirmed suspicions
+stay labelled as such. Evidence is mandatory, and the owner independently verifies it.
+
+`suggestion`, `recommendation`, `fix` and `suggested_fix` can be normalized into
+suggestedFix, with original annotations/raw replies preserved. Suggested fixes are
+advice—not executable commands, permission or automatic scope changes. Older replies
+without suggestions remain readable; the owner investigates and derives a supported
+remedy instead of requiring another handoff solely to rewrite the reply.
 
 ## Manual handoff: exactly what to give
 
@@ -164,8 +237,8 @@ normal model controls, and run:
 Use the WAICC session ID from `/waicc-status`, not a Pi chat ID. The receiver finds
 that session's single waiting request and pins its request ID, contract version,
 requirements digest, source fingerprint and mode. It loads the original scope,
-handoff, exact contract, conversation, selected skill paths and relevant current
-human-confirmed memory. The current Pi model then performs the recipient role.
+handoff, exact contract, saved context, complete conversation, selected skill paths
+and the confirmed-memory snapshot frozen at issue. The current Pi model performs the recipient role.
 
 The recipient submits through `waicc_reply` and stops. Back in coordinating chat A:
 
@@ -190,10 +263,22 @@ request, **only if you want this Pi chat to edit the assigned code**, opt in wit
 ```
 
 This also enables direct `edit`/`write`, restricted to the request's task paths.
-Shell execution remains blocked, including test commands; unavailable checks must
-be reported as `not_run`. Use an appropriately permissioned external coding agent
-when the assignment needs a full shell/tool environment. These are Pi tool guards,
-not an OS sandbox or protection against other trusted extensions/external programs.
+General shell/MCP/custom execution remains blocked. To optionally run local checks:
+
+```text
+/waicc-receive <session-id> --implement --run-checks
+```
+
+For a testing-only assignment use `/waicc-receive <session-id> --run-checks` instead.
+`waicc_check` requires interactive confirmation of EACH exact program/argument list,
+runs at project root and logs actual exit/output plus source fingerprints. No UI or
+approval means not_run. This opt-in is not restored on reload; explicitly receive
+the same request with --run-checks again. Other execution tools remain blocked.
+Commands/scripts can write files, contact services and spawn processes with your
+account permissions: this is not an OS sandbox. No production, installs, credentials,
+resets or deployment. A tester changing source gets a failed check and must stop
+for a fresh handoff; WAICC never automatically reverts files. External coding/test
+agents keep their own permission model, never extra authority from the prompt.
 
 The recipient binding survives Pi chat resume. It never automatically receives a
 newer request: cancelled, replaced, closed or answered assignments stop. Source
@@ -202,7 +287,8 @@ within its assigned scope, checked again at coordinator intake/assessment.
 `waicc_status` in recipient mode recovers the pinned assignment. To deliberately
 leave that role, the human runs `/waicc-use <session-id>`; this restores the chat's
 previous active tool selection. Switching provider/model remains a normal Pi action;
-WAICC does not choose a model, spawn processes or run a background scheduler.
+WAICC does not choose a model, launch agent processes or run a background scheduler.
+Only an explicitly opted-in, individually confirmed local check launches a check program.
 
 ## Contracts for complicated work
 
@@ -274,11 +360,17 @@ model assessment is not proof of tested delivery.
 | Command                                          | Purpose                                                                                               |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | `/waicc-planning <requirements>`                 | Start a new durable task/session and ask Pi to prepare its contract                                   |
-| `/waicc-review <focus>`                          | Prepare review in this chat's selected session; without a selection, start from supplied requirements |
+| `/waicc-planning --delegate <requirements>`      | Plan with the main agent as coordinator and delegated implementation/fix cycles |
+| `/waicc-implement [focus]`                      | Delegate the entire accepted implementation or ALL review fixes |
+| `/waicc-test [focus]`                           | Optional whole-work testing handoff; no application/test source edits |
+| `/waicc-implement --main [focus]`              | Return coding to the main contract owner; no handoff |
+| `/waicc-test --main [focus]`                   | Return testing to the main contract owner; no handoff |
+| `/waicc-review <focus>`                          | Prepare ONE full code-change review after ALL work/fixes/checks; without a selection, capture supplied review requirements |
+| `/waicc-review --contract <focus>`               | Explicit specification-only review, not code-change approval |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
 | `/waicc-handoff [session-id]`                    | Show a copy-only manual recipient prompt, access requirements and separate human return steps         |
-| `/waicc-receive <session-id> [--implement]`      | Receive one pinned handoff in this Pi chat; implementation edits require explicit opt-in              |
+| `/waicc-receive <session-id> [--implement] [--run-checks]` | Receive a pinned role; edits opt in separately from individually confirmed local checks |
 | `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |
 | `/waicc-delete <session-id>`                    | Move one CLOSED session to project-local recovery storage; no source or shared-memory deletion           |
@@ -380,7 +472,7 @@ is an equivalent form. CLI: `waicc close <session-id> --force [reason]`.
 To accept a successfully reviewed contract, use normal closure instead:
 
 ```text
-/waicc-close Contract accepted for implementation
+/waicc-close Whole-change code review passed; accepted
 ```
 
 The resulting status includes:
@@ -393,8 +485,8 @@ The resulting status includes:
 }
 ```
 
-For contract-only work, default planning completion is `planned` -> `PLAN_READY`,
-with no implementation handoff. Then `/waicc-review Check full-contract requirements, dependencies, acceptance criteria and planned verification`.
+For contract-only work, planning completion is `planned` -> `PLAN_READY`,
+with no implementation handoff. Then `/waicc-review --contract Check full-contract requirements, dependencies, acceptance criteria and planned verification`.
 If a legacy implementation handoff is already pending, first explicitly
 `/waicc-cancel Pause implementation for contract-only review`.
 Send that handoff to a reviewer. When its reply is ready, `/waicc-continue` starts
@@ -404,13 +496,14 @@ Normal, reviewed closure requires the latest passing review to match the current
 requirements and source, with no reply pending. A changed source makes status show
 `STALE` instead, without rewriting history or update time. A revised contract must
 be reviewed in a new round; task-only reviews, planning readiness and advice cannot
-close the whole contract. `/waicc-review` on a saved contract targets its current
-version without silently creating a revision.
+close the whole contract. `/waicc-review` targets all finished implementation against
+the saved version, with a whole-work completion report, without silently revising it.
 
-A reviewed/closed specification may retain documented future human/external gates.
+A specification-only reviewed/closed contract may retain future human/external gates;
+whole-work code review requires all execution decisions resolved and every task complete.
 PASS/CLOSED does not answer those choices or authorize gated tasks. Legacy planning
 `ready` still creates an implementation handoff but requires every execution decision
-resolved; use `planned` for contract-only completion. Gate lists are informational,
+resolved; use `planned` to accept a plan without an external implementation handoff. Gate lists are informational,
 not a scheduler or evidence that task dependencies have been completed.
 
 Closed sessions remain selectable and readable, but their mutations are blocked.
@@ -520,8 +613,8 @@ rules are preserved. If `.pi` is versioned, `pi-waicc` is ignored there; otherwi
 `.pi` is ignored at the working-copy root. This is an explicit SVN property change
 that you can inspect with `svn diff`. It does not schedule files for addition.
 
-Exports contain the requirements, contract, recent conversation and selected skills
-(plus the confirmed memory snapshot for advisor handoffs);
+Exports contain the requirements, contract, shared saved context, complete saved round
+conversation, selected skills, confirmed-memory snapshot and recorded check evidence;
 they do not copy the source checkout or authentication files. The recipient needs
 matching source separately. Exported paths are portable; return the resulting
 `reply.json` to the original round's designated location. `manifest.json` identifies

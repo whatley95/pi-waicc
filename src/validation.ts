@@ -322,6 +322,7 @@ export function validateReply(value: unknown): Reply {
       "questions",
       "checks",
       "proposedContract",
+      "completion",
       "advice",
     ],
     "Reply",
@@ -339,7 +340,7 @@ export function validateReply(value: unknown): Reply {
       `Invalid ${field}`,
     );
   ensure(
-    ["planning", "review", "implementation", "advisor"].includes(
+    ["planning", "review", "implementation", "testing", "advisor"].includes(
       r.mode as string,
     ),
     "Invalid reply mode",
@@ -359,6 +360,12 @@ export function validateReply(value: unknown): Reply {
     "The planned outcome is only valid for planning",
   );
   text(r.summary, "Reply summary");
+  if (r.completion !== undefined) {
+    ensure(r.mode === "implementation", "Only implementation replies supply a work completion report");
+    record(r.completion, "Work completion report");
+  }
+  if (r.mode === "testing")
+    ensure(r.proposedContract === undefined, "Testing reports findings, not replacement contracts");
   strings(r.questions, "Questions");
   const coverage = list(r.coverage, "Coverage").map((entry) => {
     const row = record(entry, "Coverage");
@@ -376,12 +383,13 @@ export function validateReply(value: unknown): Reply {
     const f = record(entry, "Finding");
     keys(
       f,
-      ["id", "severity", "description", "evidence", "extensions"],
+      ["id", "severity", "description", "evidence", "suggestedFix", "extensions"],
       "Finding",
     );
     identifier(f.id);
     text(f.description, "Finding description");
     text(f.evidence, "Finding evidence");
+    if (f.suggestedFix !== undefined) text(f.suggestedFix, "Suggested fix");
     if (f.extensions !== undefined) record(f.extensions, "Finding extensions");
     ensure(
       ["critical", "high", "medium", "low", "info"].includes(
