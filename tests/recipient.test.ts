@@ -243,6 +243,30 @@ test("Pi recipient accepts flexible findings without losing submitted annotation
   assert.equal(received.status, "AWAITING_ASSESSMENT");
 });
 
+test("Pi recipient accepts check aliases and scalar decision evidence while retaining its original submitted fields", (t) => {
+  const { root, id } = fixture(t), assignment = receiveHandoff(root, id);
+  const input = {
+    ...body(), outcome: "planned",
+    checks: [{ description: "Inspect source", status: "pass", output: ["source.txt inspected; no runtime checks"] }],
+    proposedContract: { ...contract(), decisions: [{
+      id: "D1", question: "Which presentation?", owner: "human", status: "open",
+      affectedTaskIds: ["SEARCH"], evidence: "Existing behavior is known; presentation choice needs the owner", recommendation: "Keep current behavior until chosen",
+    }] },
+  };
+  const submitted = submitRecipientReply(root, assignment.pin, input);
+  assert.ok(submitted.normalization.length >= 3);
+  const stored = JSON.parse(readFileSync(assignment.replyPath, "utf8"));
+  assert.deepEqual(stored.checks, input.checks);
+  assert.deepEqual(stored.proposedContract, input.proposedContract);
+  assert.equal(loadSession(root, id).status, "WAITING_FOR_REPLY");
+  const received = ingest(root, id);
+  assert.equal(received.status, "AWAITING_ASSESSMENT");
+  assert.equal(received.contractVersion, 1);
+  assert.equal(received.rounds[0].reply!.checks[0].outcome, "passed");
+  assert.deepEqual(received.rounds[0].reply!.proposedContract!.decisions![0].evidence, [input.proposedContract.decisions[0].evidence]);
+  assert.deepEqual(received.rounds[0].replyNormalization, submitted.normalization);
+});
+
 test("cancelled, amended, replaced and changed-source assignments never retarget the old recipient", (t) => {
   const { root, id } = fixture(t);
   const first = receiveHandoff(root, id);
