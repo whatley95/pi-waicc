@@ -27,6 +27,11 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
   assert.equal(result.extensions.length, 1);
   for (const name of [
     "waicc-planning",
+    "waicc-develop",
+    "waicc-decisions",
+    "waicc-decide",
+    "waicc-compact",
+    "waicc-help-develop",
     "waicc-implement",
     "waicc-test",
     "waicc-review",
@@ -49,6 +54,7 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
     "waicc_memory",
     "waicc_reply",
     "waicc_context",
+    "waicc_checkpoint",
     "waicc_check",
   ])
     assert.ok(result.extensions[0].tools.has(name));

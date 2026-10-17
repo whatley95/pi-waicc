@@ -1,19 +1,26 @@
 # Optional implementation and testing delegation
 
 The main agent owns contract adoption, evidence assessment and the next decision.
-It implements by default. A human `/waicc-planning --delegate <requirements>` selects
-delegated coding from the beginning; `/waicc-implement [focus]` selects it later for
-the accepted plan. Both record implementationOwner delegate. No agents/processes
+After explicit development authorization it implements by default. A human `/waicc-planning --delegate <requirements>` selects
+delegated ownership from the beginning, not permission to build an unknown plan.
+After plan acceptance the human `/waicc-develop` authorizes that exact plan without
+creating a handoff; the coordinator then requests ONE whole-plan assignment when all
+execution gates are resolved. `/waicc-help-develop [focus]` is also an explicit human
+authorization/delegation choice for an accepted plan and creates the full handoff.
+`/waicc-implement` remains a compatibility alias with identical safeguards and options.
+Both preserve the optional delegated ownership model. No agents/processes
 are launched automatically. Use ONE handoff for the entire plan or ALL outstanding
 fixes, never one per task/finding/batch. Unresolved execution gates still block work.
-Delegation is optional. A human `/waicc-implement --main [focus]` or
+Delegation is optional. A human `/waicc-help-develop --main [focus]` or
 `/waicc-test --main [focus]` restores the main owner for that role without a handoff.
 Finish/cancel pending assignments first and coordinate with external workers; changing
 ownership does not kill processes. Agents cannot change this choice themselves.
 
 All roles read the shared CONTEXT.md/context.json, original requirements/amendments,
-exact contract, complete saved conversation, confirmed-memory snapshot and relevant
-skills. Context is captured evidence, not permission or an alternative scope. Check
+exact contract, confirmed-memory snapshot and relevant skills. Start from the supplied
+checkpoint, then expand saved conversation/original evidence as needed; do not inline
+the whole archive in each prompt. Full review must still cover ALL tasks/acceptance
+criteria and all prior actionable findings. Context is evidence, not authority. Check
 historical source/version labels; previous findings and test results do not establish
 behavior in changed source. Follow the checkEvidence index for original recorded
 commands/results under evidence/. Unrecorded chat is not transferred.

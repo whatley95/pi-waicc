@@ -1,4 +1,6 @@
 export type Mode = "planning" | "review" | "implementation" | "testing" | "advisor";
+export type Objective = "planning" | "development" | "review";
+export type RoundPhase = "specification" | "implementation" | "testing" | "code_review" | "advisor";
 export type SessionStatus =
   | "DRAFT"
   | "WAITING_FOR_REPLY"
@@ -9,6 +11,9 @@ export type SessionStatus =
   | "BLOCKED"
   | "READY_FOR_HANDOFF"
   | "PLAN_READY"
+  | "SPEC_APPROVED"
+  | "READY_TO_IMPLEMENT"
+  | "IMPLEMENTATION_GATED"
   | "ADVICE_READY"
   | "READY_TO_CLOSE"
   | "CLOSED"
@@ -140,10 +145,12 @@ export interface Reply {
 export interface Round {
   id: string;
   mode: Mode;
+  phase?: RoundPhase;
   contractVersion: number;
   taskId: string | null;
   advisor?: { question: string; requirementIds: string[] };
   contextVersion?: 1;
+  checkpointVersion?: 1;
   wholeWork?: true;
   review?:
     | { kind: "contract" }
@@ -205,11 +212,19 @@ export interface Session {
   rounds: Round[];
   artifacts: Record<string, string>;
   maxRounds: number;
+  objective?: Objective;
+  roundLimits?: Partial<Record<RoundPhase, number>>;
   contractReview: ContractReview;
   implementationOwner?: "main" | "delegate";
   planApproval?: { contractVersion: number; requirementsDigest: string; requestId: string } | null;
   testingOwner?: "main" | "delegate";
+  implementationAuthorization?: {
+    id: string; contractVersion: number; requirementsDigest: string; allowedPathsDigest: string;
+    sourceFingerprint: string; grantedAt: string; artifactPath: string;
+    origin: "human-develop" | "human-implementation-delegation" | "human-decision-resolution";
+  };
   context?: { summary: string; updatedAt: string; artifactPath: string };
+  checkpoint?: { jsonPath: string; markdownPath: string; sequence: number };
   reviewApproval?: ReviewApproval;
   closure?: Closure;
   deliveryVerified: false;

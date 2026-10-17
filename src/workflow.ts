@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   artifact,
-  commit,
   digest,
   json,
   listSessions,
@@ -31,9 +30,13 @@ import {
 import { projectRoot, snapshot } from "./source.ts";
 import { recall } from "./memory.ts";
 import { normalizeReply, replyNormalizerVersion } from "./reply.ts";
-import { decisionGates } from "./decisions.ts";
+import { decisionGates, decisionBrief } from "./decisions.ts";
 import { reviewContext, type ReviewRequest } from "./review.ts";
 import { contextPacket } from "./context.ts";
+import { commitWithCheckpoint as commit, checkpointData } from "./checkpoint.ts";
+import { acceptedPlanCurrent, acceptedPlanRequestId, authorizationState, defaultRoundLimits, decisionSummary, progressState,
+  requirementsText, reviewKindLabel, reviewState, roundPhase, roundUsage, scopeDigest, sessionPhase } from "./state.ts";
+export { requirementsText } from "./state.ts";
 import {
   ensure,
   identifier,
@@ -53,6 +56,8 @@ import type {
   Reply,
   Round,
   Session,
+  Objective,
+  RoundPhase,
 } from "./types.ts";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -87,10 +92,6 @@ function approvalIsCurrent(s: Session, sourceFingerprint: string): boolean {
     last.reply?.outcome === "ready",
   );
 }
-export const requirementsText = (s: Session): string =>
-  s.requirements
-    .map((r, i) => (i ? `\n## Amendment ${i}\n\n${r}` : r))
-    .join("\n");
 function contract(
   root: string,
   s: Session,
@@ -121,6 +122,7 @@ function contractFiles(
   return {
     [`${versionDirectory(v.version)}/contract.json`]: json(v),
     [`${versionDirectory(v.version)}/CONTRACT.md`]: contractMarkdown(v),
+    [`${versionDirectory(v.version)}/DECISIONS.md`]: `Contract v${v.version}; session ${s.id}.\n\n${decisionBrief(c)}`,
   };
 }
 function stableIds(previous: Contract, next: Contract): void {
@@ -206,6 +208,10 @@ function nextRound(
     s.rounds.length < s.maxRounds,
     `Session reached its ${s.maxRounds}-round limit. Stop and resolve the blocker; adjust the limit explicitly if justified.`,
   );
+  const phase = roundPhase(mode, review?.kind);
+  const phaseLimit = s.roundLimits?.[phase];
+  ensure(phaseLimit === undefined || s.rounds.filter((r) => (r.phase ?? roundPhase(r.mode, r.review?.kind)) === phase).length < phaseLimit,
+    `Session reached its ${phase} phase limit (${phaseLimit}); stop and resolve the blocker. /waicc-limit ${phase} <limit> changes it explicitly; the overall limit still applies.`);
   if (taskId)
     ensure(
       v.contract.tasks.some((t) => t.id === taskId),
@@ -248,11 +254,13 @@ function nextRound(
   const round: Round = {
     id: randomUUID(),
     mode,
+    phase,
     contractVersion: v.version,
     taskId: taskId ?? null,
     ...(advisor ? { advisor } : {}),
     ...(reviewData ? { review: reviewData } : {}),
     contextVersion: 1,
+    checkpointVersion: 1,
     ...(wholeWork ? { wholeWork: true } : {}),
     source,
     requirementsDigest: digest(requirementsText(s)),
@@ -286,10 +294,11 @@ function nextRound(
     },
   };
 }
-export function createSession(cwd: string, requirements: string, implementationOwner?: "main" | "delegate"): Session {
+export function createSession(cwd: string, requirements: string, implementationOwner?: "main" | "delegate", objective?: Objective): Session {
   const root = projectRoot(cwd);
   text(requirements, "Original requirements", 64_000);
   ensure(implementationOwner === undefined || ["main", "delegate"].includes(implementationOwner), "Invalid implementation owner");
+  ensure(objective === undefined || ["planning", "development", "review"].includes(objective), "Invalid objective");
   return withLock(root, () => {
     const timestamp = now();
     const s: Session = {
@@ -304,7 +313,8 @@ export function createSession(cwd: string, requirements: string, implementationO
       status: "DRAFT",
       rounds: [],
       artifacts: {},
-      maxRounds: 12,
+      maxRounds: objective ? 20 : 12,
+      ...(objective ? { objective, roundLimits: { ...defaultRoundLimits } } : {}),
       contractReview: "NOT_REVIEWED",
       planApproval: null,
       ...(implementationOwner ? { implementationOwner } : {}),
@@ -328,23 +338,90 @@ export function saveContext(cwd: string, id: string, summary: string): Session {
     return commit(root, s, "context.saved", { [artifactPath]: `${summary}\n` });
   });
 }
-function acceptedPlanCurrent(root: string, s: Session): boolean {
-  if (s.planApproval !== undefined)
-    return Boolean(s.planApproval && s.planApproval.contractVersion === s.contractVersion &&
-      s.planApproval.requirementsDigest === digest(requirementsText(s)));
-  // Read-only compatibility: old planning assessments may adopt v2 while their
-  // request remains pinned to v1. Never rewrite or simply trust the old status.
-  if (!s.contractVersion) return false;
-  const current = contract(root, s).contract;
-  return s.rounds.some((round) => {
-    if (round.mode !== "planning" || round.status !== "ASSESSED" ||
-      !["planned", "ready"].includes(round.decision ?? "") || round.requirementsDigest !== digest(requirementsText(s))) return false;
-    const assessment = JSON.parse(artifact(root, s, `${roundDirectory(round)}/assessment.json`)) as { contract?: Contract };
-    return digest(json(assessment.contract ?? contract(root, s, round.contractVersion).contract)) === digest(json(current));
-  });
-}
 function requireAcceptedPlan(root: string, s: Session): void {
   ensure(acceptedPlanCurrent(root, s), "Accept a current planning reply before delegating implementation/testing");
+}
+function noPending(s: Session): void {
+  ensure(!s.rounds.some((r) => ["WAITING", "RECEIVED"].includes(r.status)), "Finish/cancel the pending handoff before this human decision; its frozen inputs cannot change");
+}
+function noFailedSpecification(s: Session): void {
+  const latest = s.rounds.findLast((r) => r.mode === "review" && r.review?.kind !== "code" && r.status === "ASSESSED" && r.contractVersion === s.contractVersion);
+  ensure(!latest || !["needs_changes", "blocked"].includes(latest.decision ?? ""), "Specification review still requires changes; resolve and assess the current specification before development");
+}
+function grantImplementation(s: Session, c: Contract, source: string, origin: NonNullable<Session["implementationAuthorization"]>["origin"], files: Record<string, string>): void {
+  const id = randomUUID(), artifactPath = `authorizations/${id}.json`;
+  s.objective = "development";
+  s.implementationAuthorization = { id, artifactPath, origin, grantedAt: now(), contractVersion: s.contractVersion,
+    requirementsDigest: digest(requirementsText(s)), allowedPathsDigest: scopeDigest(c), sourceFingerprint: source };
+  files[artifactPath] = json({ ...s.implementationAuthorization, implementationOwner: s.implementationOwner ?? "main",
+    allowedPaths: c.tasks.map((t) => ({ taskId: t.id, allowedPaths: t.allowedPaths })),
+    limits: "Human authorization for the exact plan only. Decision gates, scope and host permissions remain in force; no installs, production actions, commits, pushes or deployment are implied." });
+}
+/** Explicit human transition; a PASS is evidence, never an implicit grant. */
+export function beginDevelopment(cwd: string, id: string, owner?: "main" | "delegate"): Session {
+  const root = projectRoot(cwd);
+  ensure(owner === undefined || ["main", "delegate"].includes(owner), "Invalid implementation owner");
+  return withLock(root, () => {
+    const s = loadSession(root, id); requireOpen(s); noPending(s);
+    ensure(s.contractVersion > 0, "Prepare and accept a source-backed plan or obtain specification PASS first");
+    const v = contract(root, s), source = snapshot(root);
+    readyPlan(v.contract);
+    if (authorizationState(s, v.contract).authorized && (!owner || owner === (s.implementationOwner ?? "main")) && s.status !== "SPEC_APPROVED") return s;
+    ensure(v.requirementsDigest === digest(requirementsText(s)), "Requirements changed; reconcile and accept the current plan first");
+    const specPass = (s.reviewApproval?.kind ?? "contract") === "contract" && approvalIsCurrent(s, source.fingerprint);
+    noFailedSpecification(s);
+    const acceptedRequestId = acceptedPlanRequestId(root, s);
+    ensure(acceptedRequestId || specPass, "Accept the current source-backed planning reply or obtain a fresh specification PASS before /waicc-develop");
+    if (owner) s.implementationOwner = owner;
+    s.planApproval = { contractVersion: s.contractVersion, requirementsDigest: v.requirementsDigest,
+      requestId: specPass ? s.reviewApproval!.requestId : acceptedRequestId! };
+    const files: Record<string, string> = {};
+    grantImplementation(s, v.contract, source.fingerprint, "human-develop", files);
+    s.status = decisionSummary(v.contract).openGates ? "IMPLEMENTATION_GATED" : "READY_TO_IMPLEMENT";
+    return commit(root, s, "development.authorized-by-human", files);
+  });
+}
+
+export function decisionsView(cwd: string, id: string) {
+  const root = projectRoot(cwd), s = loadSession(root, id);
+  ensure(s.contractVersion > 0, "Prepare a contract before inspecting its decisions");
+  const c = contract(root, s).contract;
+  return { sessionId: s.id, contractVersion: s.contractVersion, ...decisionSummary(c),
+    decisions: c.decisions ?? [], briefPath: s.artifacts[`${versionDirectory(s.contractVersion)}/DECISIONS.md`]
+      ? join(root, sessionRelative(s.id), versionDirectory(s.contractVersion), "DECISIONS.md") : null,
+    nextAction: "Investigate agent-owned facts first. The human may /waicc-decide <decision-id> <answer> after pending work is assessed/cancelled. Scope changes require /waicc-amend, not a decision answer." };
+}
+/** Resolves only an existing gate; no task, path, requirement or scope rewriting. */
+export function resolveDecision(cwd: string, id: string, decisionId: string, answer: string): Session {
+  const root = projectRoot(cwd); identifier(decisionId); text(answer, "Decision answer");
+  return withLock(root, () => {
+    const s = loadSession(root, id); requireOpen(s); noPending(s);
+    ensure(s.contractVersion > 0, "Prepare a contract before answering its decisions");
+    const v = contract(root, s), c = structuredClone(v.contract);
+    const decision = c.decisions?.find((d) => d.id === decisionId);
+    ensure(decision, "Unknown decision ID; use /waicc-decisions");
+    if (decision.status === "resolved") {
+      ensure(decision.answer === answer, "Decision is already resolved differently; revise/amend explicitly rather than replacing an established answer");
+      return s;
+    }
+    const acceptedRequestId = acceptedPlanRequestId(root, s);
+    const accepted = Boolean(acceptedRequestId) || ((s.reviewApproval?.kind ?? "contract") === "contract" && approvalIsCurrent(s, snapshot(root).fingerprint));
+    const wasAuthorized = authorizationState(s, c).authorized;
+    const recordId = randomUUID(), path = `decisions/${recordId}.json`, oldVersion = s.contractVersion;
+    decision.status = "resolved"; decision.answer = answer;
+    decision.evidence.push(`Human-recorded answer; exact text and provenance retained in ${path}`);
+    validateContract(c, requirementsText(s));
+    s.contractVersion++;
+    s.planApproval = accepted ? { contractVersion: s.contractVersion, requirementsDigest: digest(requirementsText(s)),
+      requestId: acceptedRequestId ?? s.reviewApproval!.requestId } : null;
+    resetReview(s); // The changed version never inherits specification/code PASS.
+    const source = snapshot(root), files = contractFiles(s, c, source);
+    files[path] = json({ id: recordId, decisionId, answer, recordedAt: now(), recordedBy: "human-command", previousVersion: oldVersion, contractVersion: s.contractVersion,
+      requirementsDigest: digest(requirementsText(s)), scopeChanged: false, reviewInvalidated: true });
+    if (wasAuthorized) grantImplementation(s, c, source.fingerprint, "human-decision-resolution", files);
+    s.status = wasAuthorized ? decisionSummary(c).openGates ? "IMPLEMENTATION_GATED" : "READY_TO_IMPLEMENT" : accepted ? "PLAN_READY" : "NEEDS_CHANGES";
+    return commit(root, s, "decision.answered-by-human", files);
+  });
 }
 /** Explicit human command selects delegation; subsequent agent requests honor that choice. */
 export function delegateWork(cwd: string, id: string, mode: "implementation" | "testing", focus: string): Session {
@@ -355,9 +432,18 @@ export function delegateWork(cwd: string, id: string, mode: "implementation" | "
     ensure(["implementation", "testing"].includes(mode), "Unknown delegated work mode");
     requireAcceptedPlan(root, s);
     if (mode === "implementation") s.implementationOwner = "delegate";
-    else s.testingOwner = "delegate";
+    const files: Record<string, string> = {};
+    if (mode === "implementation") {
+      noPending(s);
+      noFailedSpecification(s);
+      const v = contract(root, s);
+      ensure(v.requirementsDigest === digest(requirementsText(s)), "Requirements changed; reconcile the plan first");
+      readyContract(v.contract);
+      grantImplementation(s, v.contract, snapshot(root).fingerprint, "human-implementation-delegation", files);
+    } else if (s.objective) ensure(authorizationState(s, contract(root, s).contract).authorized, "Testing delegation requires current development authorization; use /waicc-develop");
+    if (mode === "testing") s.testingOwner = "delegate";
     const next = nextRound(s, contract(root, s), mode, text(focus, "Assignment focus"), undefined, undefined, undefined, true);
-    return commit(root, s, "work.delegated-by-human", next.files);
+    return commit(root, s, "work.delegated-by-human", { ...files, ...next.files });
   });
 }
 export function useMainWork(cwd: string, id: string, mode: "implementation" | "testing"): Session {
@@ -368,6 +454,7 @@ export function useMainWork(cwd: string, id: string, mode: "implementation" | "t
     ensure(["implementation", "testing"].includes(mode), "Unknown work mode");
     ensure(!s.rounds.some((round) => ["WAITING", "RECEIVED"].includes(round.status)), "Finish/cancel the pending handoff before switching work back to the main agent; this does not stop external workers");
     requireAcceptedPlan(root, s);
+    if (s.objective) ensure(authorizationState(s, contract(root, s).contract).authorized, "No current development authorization; use /waicc-develop before selecting the main worker");
     if (mode === "implementation") s.implementationOwner = "main";
     else s.testingOwner = "main";
     return commit(root, s, "work.main-selected-by-human");
@@ -426,8 +513,9 @@ export function issue(
     requireOpen(s);
     if (mode === "implementation" || mode === "testing") {
       ensure(mode === "implementation" ? s.implementationOwner === "delegate" : s.testingOwner === "delegate",
-        "Implementation handoffs require a ready assessment or explicit /waicc-implement choice; testing delegation requires /waicc-test");
+        "Implementation handoffs require a ready assessment or explicit /waicc-help-develop choice; testing delegation requires /waicc-test");
       requireAcceptedPlan(root, s);
+      if (s.objective) ensure(authorizationState(s, contract(root, s).contract).authorized, "No current development authorization; the human must /waicc-develop or /waicc-help-develop");
     }
     ensure(
       s.contractVersion > 0,
@@ -736,7 +824,7 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     });
     files[`${roundDirectory(r)}/ASSESSMENT.md`] =
       `# ${a.decision}\n\n${a.rationale}\n\nRequest: ${r.id}. Delivery verified: false.\n\n## Finding dispositions\n\n${a.dispositions.map((d) => `- ${d.findingId}: ${d.disposition}. Evidence: ${d.evidence}`).join("\n") || "None."}\n`;
-    if (a.decision === "planned") {
+    if (a.decision === "planned" || (s.objective && r.mode === "planning" && a.decision === "ready")) {
       s.status = "PLAN_READY";
       s.planApproval = { contractVersion: s.contractVersion, requirementsDigest: digest(requirementsText(s)), requestId: r.id };
       resetReview(s);
@@ -758,7 +846,7 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
       s.status = "ADVICE_READY";
     } else if (a.decision === "ready") {
       if (r.mode === "review" && !r.taskId) {
-        s.status = "READY_TO_CLOSE";
+        s.status = s.objective && r.review?.kind !== "code" ? "SPEC_APPROVED" : "READY_TO_CLOSE";
         s.contractReview = "PASS";
         s.reviewApproval = {
           kind: r.review?.kind ?? "contract",
@@ -908,8 +996,8 @@ export function closeSession(cwd: string, id: string, reason: string): Session {
     requireOpen(s);
     text(reason, "Closure reason");
     ensure(
-      s.status === "READY_TO_CLOSE",
-      "Only a reviewed contract in READY_TO_CLOSE can be closed",
+      s.status === "READY_TO_CLOSE" || (s.status === "SPEC_APPROVED" && s.objective !== "development"),
+      "Only a fresh reviewed objective in READY_TO_CLOSE (or planning-only SPEC_APPROVED) can be closed",
     );
     ensure(
       !s.rounds.some((r) => r.status === "WAITING" || r.status === "RECEIVED"),
@@ -927,6 +1015,7 @@ export function closeSession(cwd: string, id: string, reason: string): Session {
       "observed-source.json",
       ...(round.review?.kind === "code" ? ["code-review.json"] : []),
       ...(round.contextVersion ? ["CONTEXT.md", "context.json", "memory.json", "conversation.json", "request.json"] : []),
+      ...(round.checkpointVersion ? ["CHECKPOINT.md", "checkpoint.json"] : []),
       ...(round.replyNormalization?.length
         ? ["received.normalized.json", "reply-normalization.json"]
         : []),
@@ -965,6 +1054,7 @@ export function reopenSession(
     );
     const closure = s.closure;
     delete s.closure;
+    delete s.implementationAuthorization;
     resetReview(s);
     s.status = "NEEDS_REVIEW";
     return commit(root, s, "contract.reopened-by-explicit-command", {
@@ -999,14 +1089,14 @@ export function status(
                 ? s.status === "CLOSED"
                 : s.status !== "CLOSED",
           );
-    const fingerprint = sessions.some((s) => s.status === "READY_TO_CLOSE")
+    const fingerprint = sessions.some((s) => ["READY_TO_CLOSE", "SPEC_APPROVED"].includes(s.status))
       ? snapshot(root).fingerprint
       : undefined;
     return {
       projectRoot: root,
       filter,
       sessions: sessions.map((s) =>
-        s.status === "READY_TO_CLOSE" &&
+        ["READY_TO_CLOSE", "SPEC_APPROVED"].includes(s.status) &&
         !approvalIsCurrent(loadSession(root, s.id), fingerprint!)
           ? { ...s, status: "STALE", contractReview: "STALE" }
           : s,
@@ -1014,9 +1104,14 @@ export function status(
     };
   }
   const s = loadSession(root, id);
+  const currentSource = snapshot(root).fingerprint;
+  const currentContract = s.contractVersion ? contract(root, s).contract : null;
+  const authorization = authorizationState(s, currentContract);
+  const planAccepted = acceptedPlanCurrent(root, s);
+  const gates = currentContract ? decisionSummary(currentContract) : null;
   const staleApproval =
-    s.status === "READY_TO_CLOSE" &&
-    !approvalIsCurrent(s, snapshot(root).fingerprint);
+    ["READY_TO_CLOSE", "SPEC_APPROVED"].includes(s.status) &&
+    !approvalIsCurrent(s, currentSource);
   const r = s.rounds.findLast(
     (round) => round.status === "WAITING" || round.status === "RECEIVED",
   );
@@ -1033,12 +1128,24 @@ export function status(
   return {
     sessionId: s.id,
     projectRoot: root,
+    objective: s.objective ?? "legacy_unspecified",
+    phase: sessionPhase(s),
+    planApproval: s.planApproval ?? null,
+    planAccepted,
+    specificationReview: reviewState(s, "contract", currentSource),
+    codeReview: reviewState(s, "code", currentSource),
+    implementationAuthorized: authorization.authorized,
+    implementationAuthorization: authorization,
+    executionReady: authorization.authorized && gates?.openGates === 0 && planAccepted,
+    openGates: gates?.openGates ?? 0,
+    progress: progressState(root, s, currentContract, currentSource),
+    roundBudget: roundUsage(s),
+    decisionBriefPath: s.artifacts[`${versionDirectory(s.contractVersion)}/DECISIONS.md`]
+      ? join(root, sessionRelative(s.id), versionDirectory(s.contractVersion), "DECISIONS.md") : null,
     // Keep delivery instructions ahead of potentially large requirements/contract previews.
     manualHandoff:
       r?.status === "WAITING" && !replyExists ? manualHandoff(s, r) : null,
-    decisionGates: s.contractVersion
-      ? decisionGates(contract(root, s).contract)
-      : null,
+    decisionGates: gates,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     status: staleApproval ? "STALE" : s.status,
@@ -1047,8 +1154,12 @@ export function status(
     implementationOwner: s.implementationOwner ?? "main",
     testingOwner: s.testingOwner ?? "main",
     coordinatorContext: s.context ?? null,
-    reviewKind: (r ?? last)?.review?.kind ??
-      ((r ?? last)?.mode === "review" ? "contract" : null),
+    checkpoint: s.checkpoint ? {
+      ...s.checkpoint,
+      checkpointPath: join(root, sessionRelative(s.id), s.checkpoint.markdownPath),
+      indexPath: join(root, sessionRelative(s.id), s.checkpoint.jsonPath),
+    } : null,
+    reviewKind: reviewKindLabel(r ?? last),
     // Completion reports must not lose findings older than the bounded conversation preview.
     codeReviewFindings: s.rounds.flatMap((round) =>
       round.review?.kind === "code" && round.status === "ASSESSED"
@@ -1083,6 +1194,7 @@ export function status(
           advisor: r.advisor,
           wholeWork: r.wholeWork ?? false,
           contextPath: r.contextVersion ? join(root, sessionRelative(id), roundDirectory(r), "CONTEXT.md") : null,
+          checkpointPath: r.checkpointVersion ? join(root, sessionRelative(id), roundDirectory(r), "CHECKPOINT.md") : null,
           checkLogs: Object.keys(s.artifacts).filter((path) => path.startsWith(`${roundDirectory(r)}/checks/`) && path.endsWith("result.json")),
           review: r.review?.kind === "code"
             ? { kind: "code", changedPaths: r.review.changedPaths, completion: r.review.completion }
@@ -1128,7 +1240,7 @@ export function status(
           completion: last.reply?.completion,
           checkLogs: Object.keys(s.artifacts).filter((path) => path.startsWith(`${roundDirectory(last)}/checks/`) && path.endsWith("result.json")),
           advisor: last.advisor,
-          reviewKind: last.review?.kind ?? (last.mode === "review" ? "contract" : null),
+          reviewKind: reviewKindLabel(last),
           advice: last.reply?.advice,
           replyNormalization: last.replyNormalization ?? [],
         }
@@ -1157,8 +1269,16 @@ export function status(
           : "Contract discussion is closed; delivery remains unverified. Read its history, or explicitly /waicc-reopen <reason> before changes and a fresh review."
         : staleApproval
           ? "The passing review is stale. Request a fresh full-contract review before closing."
+          : s.status === "SPEC_APPROVED"
+            ? "Specification PASS is not code completion or permission to build. Use /waicc-develop to accept this plan and authorize same-session development (main by default); inspect /waicc-decisions for gates. Planning-only work may instead be explicitly closed."
+          : s.objective === "development" && !authorization.authorized && !r
+            ? `${authorization.reason} Reconcile/accept amended requirements or the current plan first where needed; do not edit code or create another implementation handoff until authorized.`
+          : ["READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED"].includes(s.status)
+            ? `${authorization.reason} ${authorization.authorized ? `Coding owner ${s.implementationOwner ?? "main"}. ${gates?.openGates ? "Use /waicc-decisions; main may do only genuinely unblocked authorized tasks. Whole-plan delegated coding and final review wait until all gates are resolved." : "Complete ALL work/checks before ONE full code review; delegation is optional."}` : "Stop implementation and obtain explicit /waicc-develop authorization."}`
           : s.status === "READY_TO_CLOSE"
-            ? `${s.reviewApproval?.kind === "code" ? "Whole-change code" : "Specification-only contract"} review PASS. The human may /waicc-close <reason>; this is assessed review evidence, not automatic delivery certification.`
+            ? s.reviewApproval?.kind === "code"
+              ? "Whole-change code review PASS. The human may /waicc-close <reason>; this is assessed evidence, not automatic delivery certification."
+              : "Specification-only contract review PASS (legacy closure-ready state), NOT code approval or implementation authority. Use /waicc-develop to continue development in this SAME session, or explicitly close planning-only work."
             : s.status === "DRAFT"
               ? "Inspect the project and prepare a contract and handoff."
               : r?.status === "WAITING"
@@ -1170,7 +1290,7 @@ export function status(
                   : s.status === "ADVICE_READY"
                     ? "Discuss the recommendation with the human. Nothing was adopted or authorized; explicitly prepare a revision or request further advice/review as appropriate."
                     : s.status === "PLAN_READY"
-                      ? `The plan is accepted. ${s.implementationOwner === "delegate" ? "The selected implementation owner is delegate: the coordinator prepares ONE whole-work implementation handoff, not application edits itself." : "The main agent implements by default; /waicc-implement is optional delegation."} Finish ALL authorized tasks/fixes/checks before ONE full code review. No per-task/finding/batch handoffs. Keep real blockers gated. Planning-only scope stops here; --contract review remains explicit.`
+                      ? `The plan is accepted. ${s.objective && !authorization.authorized ? "Implementation is NOT authorized. The human may /waicc-develop to extend this same session; no close/reopen/re-planning is needed." : s.implementationOwner === "delegate" ? "The selected implementation owner is delegate: the coordinator prepares ONE whole-work implementation handoff, not application edits itself." : "The main agent implements by default; /waicc-help-develop is optional delegation."} Finish ALL authorized tasks/fixes/checks before ONE full code review. No per-task/finding/batch handoffs. Keep real blockers gated. Planning-only scope stops here; --contract review remains explicit.`
                       : s.status === "NEEDS_TESTING"
                         ? "Implementation is reported complete but some checks were not run. The coordinator must inspect the diff and run required checks itself, or explicitly use /waicc-test. Do not treat missing verification as PASS; finish all fixes/checks before one full code review."
                       : s.status === "NEEDS_REVIEW"
@@ -1221,6 +1341,12 @@ export function exportHandoff(cwd: string, id: string): string {
             ),
           }
         : {}),
+      ...(r.checkpointVersion ? {
+        [`${dir}/CHECKPOINT.md`]: artifact(root, s, `${roundDirectory(r)}/CHECKPOINT.md`),
+        [`${dir}/checkpoint.json`]: artifact(root, s, `${roundDirectory(r)}/checkpoint.json`),
+        ...Object.fromEntries((JSON.parse(artifact(root, s, `${roundDirectory(r)}/checkpoint.json`)) as ReturnType<typeof checkpointData>).artifacts
+          .map((ref) => [`${dir}/archive/${ref.path}`, artifact(root, s, ref.path)])),
+      } : {}),
       ...Object.fromEntries(Object.keys(s.artifacts).filter((path) => path.startsWith(`${roundDirectory(r)}/evidence/`))
         .map((path) => [`${dir}/${path.slice(`${roundDirectory(r)}/`.length)}`, artifact(root, s, path)])),
       [`${dir}/manifest.json`]: json({
@@ -1233,6 +1359,7 @@ export function exportHandoff(cwd: string, id: string): string {
         reviewKind: r.review?.kind,
         source: r.source,
         includesSourceCode: false,
+        checkpointArtifactBase: r.checkpointVersion ? "archive/" : null,
         returnReplyTo: join(
           root,
           sessionRelative(id),
@@ -1246,11 +1373,18 @@ export function exportHandoff(cwd: string, id: string): string {
     return join(root, sessionRelative(id), dir);
   });
 }
-export function setRoundLimit(cwd: string, id: string, limit: number): Session {
+export function setRoundLimit(cwd: string, id: string, limit: number, phase?: RoundPhase): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
     requireOpen(s);
+    if (phase) {
+      ensure(Object.hasOwn(defaultRoundLimits, phase), "Unknown round phase");
+      const used = s.rounds.filter((r) => (r.phase ?? roundPhase(r.mode, r.review?.kind)) === phase).length;
+      ensure(Number.isInteger(limit) && limit >= Math.max(2, used) && limit <= 20, "Phase limit must be between its used count (at least 2) and 20");
+      s.roundLimits = { ...s.roundLimits, [phase]: limit };
+      return commit(root, s, "phase-round-limit.changed-by-human");
+    }
     ensure(
       Number.isInteger(limit) &&
         limit >= Math.max(2, s.rounds.length) &&

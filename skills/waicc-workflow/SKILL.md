@@ -20,11 +20,12 @@ genuine future decisions with task gates, evidence and recommendations.
 Determine your role first. A Pi chat bound by `/waicc-receive <session-id>` is a
 recipient, not the coordinator. Use `waicc_status` to recover its exact pinned
 assignment, not to select the newest pending request. Read its original scope,
-contract, conversation, relevant selected skill files/references and confirmed
+contract, relevant saved conversation/evidence, selected skill files/references and confirmed
 memory; verify important claims against source. Do only the assigned mode's work.
 Every new role receives CONTEXT.md/context.json, original requirements/amendments,
-complete saved conversation, confirmed-memory snapshot and relevant skills. Read
-those files; no agent inherits unrecorded chat. Historical findings/checks remain
+complete saved conversation, confirmed-memory snapshot and relevant skills. Start
+with CHECKPOINT.md/checkpoint.json when supplied, read the exact contract/requirements,
+then expand indexed history/evidence as needed. No agent inherits unrecorded chat. Historical findings/checks remain
 source/version-labelled claims, not current approval. Large Pi assignments provide
 an input-file index instead of dumping the complete history into the prompt.
 
@@ -52,11 +53,20 @@ source, then use `waicc_prepare` to save the contract and generate a planning
 handoff. The main agent implements authorized work after accepting the plan;
 review recipients only inspect it. Tool schemas govern the file formats. Never write
 canonical contracts or session state using generic file-editing tools.
+Read [development transitions and decisions](references/development.md) when moving
+from planning/specification to coding, answering gates or interpreting progress/budgets.
+PLAN_READY and SPEC_APPROVED do not authorize implementation. `/waicc-develop` is an
+explicit human command, not an agent action to invoke through shell or file changes.
 Before handoff, the owner uses `waicc_context` to preserve important chat-only domain
 facts, constraints, source references and established decisions/rationale. It is
 supplementary context, not an amendment or automatic adoption. It cannot change
 while a handoff waits/awaits assessment. New handoffs freeze it with confirmed-only
 memory; older request files remain immutable.
+
+Automatic checkpoints preserve references to canonical records, not summaries of
+summaries. For compaction or recovery use `waicc_checkpoint`; read
+[checkpoint recovery](references/recovery.md) for `/waicc-compact`, archived evidence,
+freshness and recipient pinning. A checkpoint never proves completion or grants authority.
 
 When handing work to the human, present `waicc_status.manualHandoff.copyPastePrompt`
 as one copy-only block, not merely a path list or the entire assessment. Explain
@@ -115,7 +125,7 @@ checks itself. For planning-only scope stop at PLAN_READY. Legacy ready planning
 all execution decisions resolved and produces an implementation prompt; it still
 does not run the coding agent or establish tested delivery.
 Honor the human's optional implementationOwner delegate choice, selected with
-`/waicc-planning --delegate` or `/waicc-implement`: remain coordinator and hand off
+`/waicc-planning --delegate` or `/waicc-help-develop`: remain coordinator and hand off
 the whole plan/fix cycle instead of coding by default. `/waicc-test` selects optional
 testing delegation; do not add that extra manual handoff by default. Read
 [delegation](references/delegation.md) for completion reports and test-result handling.
@@ -145,7 +155,10 @@ review. Evidence-backed false positives may be disputed. Repeat until no actiona
 findings remain, respecting genuine blockers and the human-controlled round limit.
 Do not modify source while review waits or awaits assessment; assess/cancel first.
 
-A ready whole-change review records PASS and READY_TO_CLOSE, not CLOSED. Do not
+A ready whole-change code review records PASS and READY_TO_CLOSE, not CLOSED. New
+specification-only reviews show SPEC_APPROVED, never implementation progress/authority.
+Legacy specification records can retain READY_TO_CLOSE but stay explicitly spec-only.
+Do not
 pass contract with a ready review assessment: adopt changes with needs_changes,
 finish the implementation and review that new version. Explicit
 `/waicc-review --contract` / reviewKind contract reviews only the specification;
