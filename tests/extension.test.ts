@@ -27,6 +27,8 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
   assert.equal(result.extensions.length, 1);
   for (const name of [
     "waicc-planning",
+    "waicc-implement",
+    "waicc-test",
     "waicc-review",
     "waicc-advisor",
     "waicc-continue",
@@ -46,6 +48,8 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
     "waicc_assess",
     "waicc_memory",
     "waicc_reply",
+    "waicc_context",
+    "waicc_check",
   ])
     assert.ok(result.extensions[0].tools.has(name));
   assert.ok(!result.extensions[0].tools.has("waicc_close"));
@@ -248,7 +252,7 @@ test("advisor slash command issues a handoff without model inference and continu
   // Existing-contract review is pinned to v1 without inference or a silent revision.
   await commands
     .get("waicc-review")!
-    .handler("Check full-contract readiness", ctx);
+    .handler("--contract Check full-contract readiness", ctx);
   assert.equal(prompts.length, 1);
   const review = JSON.parse(shown.at(-1)!);
   assert.equal(review.contractVersion, 1);

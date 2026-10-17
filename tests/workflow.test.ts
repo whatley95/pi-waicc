@@ -1531,7 +1531,7 @@ test("planning intake handles pass and fifteen scalar decision evidence entries 
   assert.equal(r.replyDigest, digest(raw));
   assert.deepEqual(JSON.parse(artifact(root, received, `${dir}/received.normalized.json`)), r.reply);
   const audit = JSON.parse(artifact(root, received, `${dir}/reply-normalization.json`));
-  assert.equal(audit.normalizerVersion, 2);
+  assert.equal(audit.normalizerVersion, 3);
   assert.deepEqual(audit.changes, r.replyNormalization);
   assert.deepEqual(r.reply!.proposedContract!.decisions!.map((d) => d.evidence), input.proposedContract.decisions.map((d) => [d.evidence]));
   assert.deepEqual(ingest(root, s.id), received);

@@ -1,4 +1,4 @@
-export type Mode = "planning" | "review" | "implementation" | "advisor";
+export type Mode = "planning" | "review" | "implementation" | "testing" | "advisor";
 export type SessionStatus =
   | "DRAFT"
   | "WAITING_FOR_REPLY"
@@ -12,10 +12,12 @@ export type SessionStatus =
   | "ADVICE_READY"
   | "READY_TO_CLOSE"
   | "CLOSED"
+  | "NEEDS_TESTING"
   | "NEEDS_REVIEW";
 export type ContractReview =
   "NOT_REVIEWED" | "PENDING" | "PASS" | "NEEDS_CHANGES" | "BLOCKED" | "STALE";
 export interface ReviewApproval {
+  kind?: "code" | "contract";
   requestId: string;
   contractVersion: number;
   requirementsDigest: string;
@@ -109,6 +111,7 @@ export interface Reply {
     severity: "critical" | "high" | "medium" | "low" | "info";
     description: string;
     evidence: string;
+    suggestedFix?: string;
     extensions?: Record<string, unknown>;
   }[];
   questions: string[];
@@ -119,6 +122,7 @@ export interface Reply {
     extensions?: Record<string, unknown>;
   }[];
   proposedContract?: Contract;
+  completion?: WorkCompletion;
   advice?: {
     question: string;
     options: {
@@ -139,6 +143,16 @@ export interface Round {
   contractVersion: number;
   taskId: string | null;
   advisor?: { question: string; requirementIds: string[] };
+  contextVersion?: 1;
+  wholeWork?: true;
+  review?:
+    | { kind: "contract" }
+    | {
+        kind: "code";
+        base: SourceSnapshot;
+        changedPaths: string[];
+        completion: WorkCompletion;
+      };
   source: SourceSnapshot;
   requirementsDigest: string;
   status: "WAITING" | "RECEIVED" | "ASSESSED" | "STALE" | "CANCELLED";
@@ -148,6 +162,23 @@ export interface Round {
   decision?: string;
   rationale?: string;
   dispositions?: {
+    findingId: string;
+    disposition: "resolved" | "disputed";
+    evidence: string;
+  }[];
+}
+/** Coordinator claims for independent review, never proof of delivery. */
+export interface WorkCompletion {
+  summary: string;
+  tasks: { taskId: string; evidence: string }[];
+  checks: {
+    description: string;
+    outcome: "passed" | "failed" | "not_run";
+    evidence: string;
+    extensions?: Record<string, unknown>;
+  }[];
+  findings: {
+    requestId: string;
     findingId: string;
     disposition: "resolved" | "disputed";
     evidence: string;
@@ -175,6 +206,10 @@ export interface Session {
   artifacts: Record<string, string>;
   maxRounds: number;
   contractReview: ContractReview;
+  implementationOwner?: "main" | "delegate";
+  planApproval?: { contractVersion: number; requirementsDigest: string; requestId: string } | null;
+  testingOwner?: "main" | "delegate";
+  context?: { summary: string; updatedAt: string; artifactPath: string };
   reviewApproval?: ReviewApproval;
   closure?: Closure;
   deliveryVerified: false;

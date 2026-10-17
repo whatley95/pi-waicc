@@ -1,6 +1,6 @@
 import { ensure, list, record, text } from "./validation.ts";
 
-export const replyNormalizerVersion = 2;
+export const replyNormalizerVersion = 3;
 
 const checkOutcomes = new Map([
   ["passed", "passed"],
@@ -92,6 +92,38 @@ function preserveAnnotations(
     row.extensions = Object.fromEntries(extensions);
 }
 
+function normalizeChecks(value: unknown, prefix: string, changes: string[]) {
+  return list(value, "Checks").map((entry, i) => {
+    const label = `${prefix}[${i}]`,
+      check = record(entry, label);
+    fieldAlias(check, "description", ["name", "check", "command"], label, changes);
+    fieldAlias(check, "evidence", ["details", "output"], label, changes);
+    for (const alias of ["status", "result"]) {
+      if (check[alias] === undefined) continue;
+      ensure(
+        check.outcome === undefined ||
+          checkOutcome(check.outcome) === checkOutcome(check[alias]),
+        `${label}: outcome and ${alias} disagree; provide one explicit check result`,
+      );
+      if (check.outcome === undefined) check.outcome = check[alias];
+      delete check[alias];
+      changes.push(`${label}: ${alias} mapped to outcome`);
+    }
+    const outcome = checkOutcome(check.outcome);
+    if (outcome !== check.outcome) {
+      changes.push(
+        `${label}.outcome: ${JSON.stringify(check.outcome)} mapped to ${JSON.stringify(outcome)}`,
+      );
+      check.outcome = outcome;
+    }
+    evidenceText(check, label, changes);
+    preserveAnnotations(
+      check, ["description", "outcome", "evidence"], label, changes,
+    );
+    return check;
+  });
+}
+
 /** Compatibility at the transport boundary, never an authority or scope conversion. */
 export function normalizeReply(value: unknown): {
   reply: Record<string, unknown>;
@@ -154,8 +186,22 @@ export function normalizeReply(value: unknown): {
         .join("\n");
       changes.push(`${label}: evidence text array joined with newlines`);
     }
+    if (f.suggestedFix === undefined) {
+      const aliases = ["suggested_fix", "suggestion", "recommendation", "fix"];
+      const extension = f.extensions === undefined ? {} : record(f.extensions, `${label} extensions`);
+      const direct = aliases.find((key) => typeof f[key] === "string" || Array.isArray(f[key]));
+      const nested = aliases.find((key) => typeof extension[key] === "string" || Array.isArray(extension[key]));
+      if (direct || nested) {
+        f.suggestedFix = direct ? f[direct] : extension[nested!];
+        changes.push(`${label}: ${direct ?? `extensions.${nested}`} copied to suggestedFix (original annotation retained)`);
+      }
+    }
+    if (Array.isArray(f.suggestedFix)) {
+      f.suggestedFix = list(f.suggestedFix, "Suggested fix").map((entry) => text(entry, "Suggested fix step")).join("\n");
+      changes.push(`${label}: suggestedFix text array joined with newlines`);
+    }
     preserveAnnotations(
-      f, ["id", "severity", "description", "evidence"], label, changes,
+      f, ["id", "severity", "description", "evidence", "suggestedFix"], label, changes,
     );
     return f;
   });
@@ -173,35 +219,21 @@ export function normalizeReply(value: unknown): {
     evidenceText(row, label, changes);
     return row;
   });
-  reply.checks = list(reply.checks, "Checks").map((entry, i) => {
-    const label = `checks[${i}]`,
-      check = record(entry, label);
-    fieldAlias(check, "description", ["name", "check", "command"], label, changes);
-    fieldAlias(check, "evidence", ["details", "output"], label, changes);
-    for (const alias of ["status", "result"]) {
-      if (check[alias] === undefined) continue;
-      ensure(
-        check.outcome === undefined ||
-          checkOutcome(check.outcome) === checkOutcome(check[alias]),
-        `${label}: outcome and ${alias} disagree; provide one explicit check result`,
-      );
-      if (check.outcome === undefined) check.outcome = check[alias];
-      delete check[alias];
-      changes.push(`${label}: ${alias} mapped to outcome`);
+  reply.checks = normalizeChecks(reply.checks, "checks", changes);
+  if (reply.completion !== undefined) {
+    const completion = record(reply.completion, "Work completion report");
+    if (completion.checks !== undefined)
+      completion.checks = normalizeChecks(completion.checks, "completion.checks", changes);
+    for (const name of ["tasks", "findings"]) {
+      if (completion[name] === undefined) continue;
+      completion[name] = list(completion[name], `Completion ${name}`, name === "findings" ? 6000 : 300).map((entry, i) => {
+        const row = record(entry, `completion.${name}[${i}]`);
+        evidenceText(row, `completion.${name}[${i}]`, changes);
+        if (name === "findings") enumWord(row, "disposition", ["resolved", "disputed"], `completion.findings[${i}]`, changes);
+        return row;
+      });
     }
-    const outcome = checkOutcome(check.outcome);
-    if (outcome !== check.outcome) {
-      changes.push(
-        `${label}.outcome: ${JSON.stringify(check.outcome)} mapped to ${JSON.stringify(outcome)}`,
-      );
-      check.outcome = outcome;
-    }
-    evidenceText(check, label, changes);
-    preserveAnnotations(
-      check, ["description", "outcome", "evidence"], label, changes,
-    );
-    return check;
-  });
+  }
   if (reply.proposedContract !== undefined) {
     const proposed = record(reply.proposedContract, "Proposed contract");
     if (proposed.decisions !== undefined)

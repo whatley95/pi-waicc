@@ -79,8 +79,25 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
     pin,
     replyExists: existsSync(replyPath),
     projectRoot: root,
+    inputs: {
+      request: join(root, sessionRelative(s.id), dir, "request.json"),
+      contract: join(root, sessionRelative(s.id), versionDirectory(r.contractVersion), "contract.json"),
+      context: r.contextVersion ? join(root, sessionRelative(s.id), dir, "CONTEXT.md") : null,
+      conversation: join(root, sessionRelative(s.id), dir, "conversation.json"),
+      memory: r.contextVersion || r.mode === "advisor" ? join(root, sessionRelative(s.id), dir, "memory.json") : null,
+      handoff: join(root, sessionRelative(s.id), dir, "HANDOFF.md"),
+      replyTemplate: join(root, sessionRelative(s.id), dir, "reply.example.json"),
+    },
     focus: request.focus,
+    wholeWork: r.wholeWork ?? false,
+    context: r.contextVersion ? JSON.parse(artifact(root, s, `${dir}/context.json`)) : null,
+    contextPath: r.contextVersion ? join(root, sessionRelative(s.id), dir, "CONTEXT.md") : null,
+    checkLogs: Object.keys(s.artifacts).filter((path) => path.startsWith(`${dir}/checks/`) && path.endsWith("result.json")),
     taskId: r.taskId,
+    reviewKind: r.mode === "review" ? r.review?.kind ?? "contract" : undefined,
+    codeReview: r.review?.kind === "code"
+      ? JSON.parse(artifact(root, s, `${dir}/code-review.json`))
+      : undefined,
     requirements: requirementsText(s),
     contract: {
       ...contract,
@@ -93,7 +110,9 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
     handoff: artifact(root, s, `${dir}/HANDOFF.md`),
     replyTemplate: JSON.parse(artifact(root, s, `${dir}/reply.example.json`)),
     conversation: JSON.parse(artifact(root, s, `${dir}/conversation.json`)),
-    memory: recall(root, `${requirementsText(s)}\n${request.focus}`),
+    memory: r.contextVersion || r.mode === "advisor"
+      ? JSON.parse(artifact(root, s, `${dir}/memory.json`)) as ReturnType<typeof recall>
+      : recall(root, `${requirementsText(s)}\n${request.focus}`),
     skills: Object.keys(s.artifacts)
       .filter((path) => path.startsWith(prefix) && path.endsWith("/SKILL.md"))
       .map((path) => join(root, sessionRelative(s.id), path)),

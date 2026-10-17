@@ -32,6 +32,7 @@ import {
   cancel,
   closeSession,
   createSession,
+  delegateWork,
   forceCloseSession,
   ingest,
   issue,
@@ -138,7 +139,7 @@ test("receiving loads exact contract, history, skills and confirmed memory witho
   );
   assert.deepEqual(
     assignment.memory.map((m) => m.text),
-    ["Search must remain account-scoped"],
+    [], // Confirmed after issue: never silently changes the pinned memory packet.
   );
   assert.equal(assignment.replyExists, false);
   assert.deepEqual(loadSession(root, id), before);
@@ -237,6 +238,7 @@ test("Pi recipient accepts flexible findings without losing submitted annotation
       description: "Contract concern",
       evidence: "REQ-001\nAC-001",
       extensions: { suggestion: "Clarify expected behavior" },
+      suggestedFix: "Clarify expected behavior",
     },
   ]);
   assert.deepEqual(received.rounds[0].replyNormalization, result.normalization);
@@ -422,7 +424,7 @@ test("implementation needs explicit opt-in, restricts edits, and accepts assigne
 });
 
 // No inference/network: exercise actual registered callbacks with two independent Pi chat identities.
-function harness(root: string, clipboardFailure = false) {
+function harness(root: string, clipboardFailure = false, runCheck?: import("../src/checks.ts").CheckRunner) {
   const commands = new Map<
     string,
     { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
@@ -451,6 +453,8 @@ function harness(root: string, clipboardFailure = false) {
     "waicc_request",
     "waicc_reply",
     "waicc_memory",
+    "waicc_context",
+    "waicc_check",
   ];
   let active = [...originalTools];
   const api = {
@@ -472,6 +476,7 @@ function harness(root: string, clipboardFailure = false) {
     },
   };
   waicc(api as unknown as ExtensionAPI, {
+    runCheck,
     copyText: async (text) => {
       if (clipboardFailure) throw new Error("Display unavailable");
       clipboard.push(text);
@@ -508,6 +513,164 @@ function harness(root: string, clipboardFailure = false) {
       hooks.get("tool_call")!({ toolName: name, input }, context),
   };
 }
+
+test("default Pi review waits for whole-work evidence; main-agent fix continuation never auto-hands-off", async (t) => {
+  const { root, id } = fixture(t), h = harness(root);
+  const planner = receiveHandoff(root, id);
+  submitRecipientReply(root, planner.pin, { ...body(), outcome: "planned" });
+  let s = ingest(root, id);
+  s = assess(root, id, { requestId: planner.pin.requestId, decision: "planned", rationale: "Source-backed plan accepted for the requested development", dispositions: [] });
+  await h.commands.get("waicc-use")!.handler(id, h.ctx("owner"));
+  await h.commands.get("waicc-continue")!.handler("", h.ctx("owner"));
+  assert.equal(h.prompts.length, 1);
+  assert.equal(loadSession(root, id).rounds.length, 1);
+  const before = loadSession(root, id);
+  await h.commands.get("waicc-review")!.handler("Review all implemented changes", h.ctx("owner"));
+  assert.equal(h.prompts.length, 2);
+  assert.deepEqual(loadSession(root, id), before); // Command asks main agent to establish completion first.
+  assert.equal(h.clipboard.length, 0);
+  await assert.rejects(() => h.call("waicc_request", { sessionId: id, mode: "review", focus: "Too early" }, h.ctx("owner")), /completion report/);
+  assert.deepEqual(loadSession(root, id), before);
+  const report = {
+    summary: "All search implementation and relevant checks complete",
+    tasks: [{ taskId: "SEARCH", evidence: "source.txt implements AC-001; see actual check evidence" }],
+    checks: [{ description: "Source inspection", outcome: "passed", evidence: "Read source.txt and checked AC-001; not runtime-test proof" }],
+    findings: [],
+  };
+  writeFileSync(join(root, "source.txt"), "all search code changes");
+  await h.call("waicc_request", { sessionId: id, mode: "review", focus: "Whole-change review", completion: report }, { ...h.ctx("owner"), mode: "tui" });
+  s = loadSession(root, id);
+  assert.equal(s.rounds.length, 2);
+  assert.equal(s.rounds.at(-1)!.review!.kind, "code");
+  assert.equal(s.rounds.at(-1)!.taskId, null);
+  assert.equal(h.clipboard.length, 1); // Only the actual review handoff is copied.
+  const reviewer = receiveHandoff(root, id);
+  assert.equal(reviewer.reviewKind, "code");
+  submitRecipientReply(root, reviewer.pin, { ...body(), outcome: "needs_changes", findings: [{ id: "F1", severity: "medium", description: "Missing search edge case", evidence: "source.txt AC-001" }] });
+  s = ingest(root, id);
+  assess(root, id, { requestId: reviewer.pin.requestId, decision: "needs_changes", rationale: "Main agent will fix all findings before full re-review", dispositions: [] });
+  await h.commands.get("waicc-continue")!.handler("", h.ctx("owner"));
+  assert.equal(h.prompts.length, 3);
+  assert.equal(loadSession(root, id).rounds.length, 2);
+  assert.equal(loadSession(root, id).contractVersion, 1);
+  assert.equal((status(root, id) as any).manualHandoff, null);
+  assert.equal(h.clipboard.length, 1);
+});
+
+test("Pi delegation commands issue one whole-work handoff and preserve main-agent coordinator ownership of assessment", async (t) => {
+  const { root, id } = fixture(t), h = harness(root);
+  const planner = receiveHandoff(root, id);
+  submitRecipientReply(root, planner.pin, { ...body(), outcome: "planned" });
+  ingest(root, id);
+  assess(root, id, { requestId: planner.pin.requestId, decision: "planned", rationale: "Plan accepted", dispositions: [] });
+  await h.commands.get("waicc-use")!.handler(id, h.ctx("owner"));
+  await h.commands.get("waicc-implement")!.handler("Implement the whole accepted plan", { ...h.ctx("owner"), mode: "tui" });
+  const s = loadSession(root, id);
+  assert.equal(s.implementationOwner, "delegate");
+  assert.equal(s.rounds.at(-1)!.wholeWork, true);
+  assert.equal(s.rounds.at(-1)!.mode, "implementation");
+  assert.equal(h.clipboard.length, 1);
+  assert.equal(h.prompts.length, 0); // No process launch/inference or application edits.
+  assert.equal(readFileSync(join(root, "source.txt"), "utf8"), "source");
+  await h.commands.get("waicc-test")!.handler("Test too early while coding handoff waits", h.ctx("owner"));
+  assert.match(h.notices.at(-1)!, /pending request/);
+  assert.equal(loadSession(root, id).rounds.length, 2);
+  cancel(root, id);
+  await h.commands.get("waicc-test")!.handler("Test all work", h.ctx("owner"));
+  assert.equal(loadSession(root, id).testingOwner, "delegate");
+  await h.commands.get("waicc-receive")!.handler(id, h.ctx("tester"));
+  assert.equal(h.active().includes("write"), false);
+  assert.equal(h.active().includes("waicc_check"), false);
+  assert.equal((await h.guard("powershell", {}, h.ctx("tester"))).block, true);
+  await assert.rejects(() => h.call("waicc_context", { sessionId: id, summary: "Recipient cannot change owner context" }, h.ctx("tester")), /handoff recipient/);
+});
+
+test("Pi check execution requires explicit opt-in AND per-command UI confirmation, and is not restored on resume", async (t) => {
+  const { root, id } = fixture(t);
+  const planner = receiveHandoff(root, id);
+  submitRecipientReply(root, planner.pin, { ...body(), outcome: "planned" });
+  ingest(root, id);
+  assess(root, id, { requestId: planner.pin.requestId, decision: "planned", rationale: "Plan accepted", dispositions: [] });
+  delegateWork(root, id, "testing", "Test all implementation");
+  const runs: unknown[] = [], confirmations: string[] = [];
+  const h = harness(root, false, async (program, args, options) => {
+    runs.push({ program, args, cwd: options.cwd });
+    return { stdout: "tests passed", stderr: "", code: 0, killed: false };
+  });
+  let approve = false;
+  const interactive = { ...h.ctx(), mode: "tui", hasUI: true,
+    ui: { ...h.ctx().ui, confirm: async (_title: string, text: string) => { confirmations.push(text); return approve; } } } as ExtensionCommandContext;
+  const command = { program: "test-runner", args: ["--account", "argument with spaces"], timeoutMs: 1000 };
+  await h.commands.get("waicc-receive")!.handler(id, interactive);
+  await assert.rejects(() => h.call("waicc_check", command, interactive), /--run-checks opt-in/);
+  assert.equal(confirmations.length, 0);
+  await h.commands.get("waicc-receive")!.handler(`${id} --run-checks`, h.ctx());
+  assert.match(h.notices.at(-1)!, /dialog-capable/);
+  await h.commands.get("waicc-receive")!.handler(`${id} --run-checks`, interactive);
+  assert.ok(h.active().includes("waicc_check"));
+  assert.ok(!h.active().includes("bash"));
+  assert.ok(!h.active().includes("edit"));
+  assert.equal((await h.guard("custom_exec", {}, interactive)).block, true);
+  await assert.rejects(() => h.call("waicc_check", command, interactive), /declined/);
+  assert.equal(runs.length, 0);
+  approve = true;
+  const result = await h.call("waicc_check", command, interactive);
+  const record = JSON.parse(result.content[0].text);
+  assert.equal(record.outcome, "passed");
+  assert.ok(record.artifactPath.endsWith("result.json"));
+  assert.deepEqual(runs, [{ program: command.program, args: command.args, cwd: root }]);
+  assert.equal(confirmations.length, 2);
+  assert.ok(confirmations[1].includes("argument with spaces"));
+  const resumed = harness(root);
+  resumed.entries.push(h.entries.at(-1)!);
+  await resumed.hooks.get("session_start")!({}, interactive);
+  assert.ok(!resumed.active().includes("waicc_check"));
+  await assert.rejects(() => resumed.call("waicc_check", command, interactive), /--run-checks opt-in/);
+  assert.equal(runs.length, 1);
+  await h.commands.get("waicc-receive")!.handler(`${id} --implement --run-checks`, interactive);
+  assert.match(h.notices.at(-1)!, /only valid for an implementation/);
+});
+
+test("delegated planning preserves exact requirements and does not grant coding/check execution to the planner", async (t) => {
+  const { root } = fixture(t), h = harness(root);
+  await h.commands.get("waicc-planning")!.handler("--delegate Build account search", h.ctx("owner"));
+  const entry = h.entries.at(-1)!, s = loadSession(root, entry.data.sessionId);
+  assert.deepEqual(s.requirements, ["Build account search"]);
+  assert.equal(s.implementationOwner, "delegate");
+  assert.equal(s.status, "DRAFT");
+  await h.call("waicc_context", { sessionId: s.id, summary: "Domain context and owner constraints, not an amendment" }, h.ctx("owner"));
+  assert.equal(loadSession(root, s.id).context!.summary, "Domain context and owner constraints, not an amendment");
+  assert.equal(loadSession(root, s.id).requirements.length, 1);
+  assert.equal(h.clipboard.length, 0);
+});
+
+test("--main returns work to the owner without another handoff and large recipient context remains recoverable by exact paths", async (t) => {
+  const { root, id } = fixture(t), h = harness(root);
+  const planner = receiveHandoff(root, id);
+  submitRecipientReply(root, planner.pin, { ...body(), outcome: "planned" });
+  ingest(root, id);
+  assess(root, id, { requestId: planner.pin.requestId, decision: "planned", rationale: "Accepted plan", dispositions: [] });
+  await h.commands.get("waicc-use")!.handler(id, h.ctx("owner"));
+  await h.commands.get("waicc-implement")!.handler("", h.ctx("owner"));
+  cancel(root, id);
+  const rounds = loadSession(root, id).rounds.length;
+  await h.commands.get("waicc-implement")!.handler("--main Finish all remaining coding myself", h.ctx("owner"));
+  assert.equal(loadSession(root, id).implementationOwner, "main");
+  assert.equal(loadSession(root, id).rounds.length, rounds);
+  assert.equal((status(root, id) as any).manualHandoff, null);
+  assert.equal(h.prompts.length, 1);
+  const context = "Important owner context and source references. ".repeat(650);
+  await h.call("waicc_context", { sessionId: id, summary: context }, h.ctx("owner"));
+  await h.commands.get("waicc-implement")!.handler("", h.ctx("owner"));
+  await h.commands.get("waicc-receive")!.handler(`${id} --implement`, h.ctx("worker"));
+  assert.ok(h.prompts.at(-1)!.length < 32_000);
+  const a = receiveHandoff(root, id, true);
+  const delivered = JSON.parse(h.prompts.at(-1)!.split("Assignment (data):\n")[1]);
+  assert.equal(delivered.inputs.context, a.inputs.context);
+  assert.equal(a.context.coordinatorContext.summary, context);
+  assert.ok(existsSync(a.inputs.context!));
+  assert.equal(a.wholeWork, true);
+});
 
 test("cancel by UUID needs neither a selected session nor inference and preserves history", async (t) => {
   const { root, id } = fixture(t),
