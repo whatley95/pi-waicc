@@ -12,6 +12,7 @@ import {
   cancel,
   closeSession,
   createSession,
+  delegateWork,
   exportHandoff,
   forceCloseSession,
   ingest,
@@ -20,10 +21,13 @@ import {
   reopenSession,
   setRoundLimit,
   status,
+  saveContext,
+  useMainWork,
 } from "./workflow.ts";
 import { advisorInput, ensure } from "./validation.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode } from "./types.ts";
+import type { ReviewRequest } from "./review.ts";
 
 const args = process.argv.slice(2);
 const rootIndex = args.indexOf("--root");
@@ -36,11 +40,35 @@ if (rootIndex >= 0) {
 const [command, id, ...rest] = args;
 const file = (path: string) =>
   JSON.parse(readFileSync(resolve(path), "utf8")) as unknown;
+function reviewInput(input: string[]): { review: ReviewRequest; focus: string } {
+  ensure(
+    input[0] === "--contract" || (input[0] === "--completion" && input[1]),
+    "Review code changes with --completion <whole-work-report.json>, or explicitly use --contract for specification-only review",
+  );
+  return input[0] === "--contract"
+    ? { review: { kind: "contract" }, focus: input.slice(1).join(" ") }
+    : {
+        review: { kind: "code", completion: file(input[1]) },
+        focus: input.slice(2).join(" "),
+      };
+}
 try {
   let output: unknown;
   switch (command) {
-    case "start":
-      output = createSession(cwd, args.slice(1).join(" "));
+    case "start": {
+      const delegated = id === "--delegate";
+      output = createSession(cwd, args.slice(delegated ? 2 : 1).join(" "), delegated ? "delegate" : undefined);
+      break;
+    }
+    case "implement":
+    case "test":
+      output = rest[0] === "--main"
+        ? useMainWork(cwd, id, command === "implement" ? "implementation" : "testing")
+        : delegateWork(cwd, id, command === "implement" ? "implementation" : "testing", rest.join(" ") ||
+        (command === "implement" ? "Complete the entire accepted plan and all fixes; run relevant permitted checks" : "Verify the entire implementation and prior fixes with actual permitted checks; do not edit code/tests"));
+      break;
+    case "context":
+      output = saveContext(cwd, id, rest.join(" "));
       break;
     case "status":
       output = ["open", "all", "closed", "deleted"].includes(id)
@@ -65,14 +93,17 @@ try {
       break;
     case "prepare": {
       const s = loadSession(projectRoot(cwd), id);
+      const mode = (rest[1] ?? "planning") as Mode;
+      const review = mode === "review" ? reviewInput(rest.slice(2)) : undefined;
       output = prepare(
         cwd,
         id,
         file(rest[0]),
-        (rest[1] ?? "planning") as Mode,
-        rest.slice(2).join(" ") ||
+        mode,
+        (review?.focus ?? rest.slice(2).join(" ")) ||
           "Inspect this contract against the original requirements and actual project.",
         s.contractVersion,
+        review?.review,
       );
       break;
     }
@@ -82,9 +113,18 @@ try {
     case "assess":
       output = assess(cwd, id, file(rest[0]) as Assessment);
       break;
-    case "request":
-      output = issue(cwd, id, rest[0] as Mode, rest.slice(1).join(" "));
+    case "request": {
+      const review = rest[0] === "review" ? reviewInput(rest.slice(1)) : undefined;
+      const focus = review
+        ? review.focus || "Review all changes against requirements and actual evidence"
+        : rest.slice(1).join(" ");
+      output = issue(
+        cwd, id, rest[0] as Mode,
+        focus,
+        undefined, undefined, review?.review,
+      );
       break;
+    }
     case "advisor": {
       const input = advisorInput(rest.join(" "));
       output = issue(
@@ -143,7 +183,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start <requirements> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | implement <session> [--main] [focus] | test <session> [--main] [focus] | context <session> <summary> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));

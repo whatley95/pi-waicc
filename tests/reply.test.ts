@@ -113,6 +113,7 @@ test("aliases, casing, text-array evidence and annotations produce readable cano
       severity: "high",
       description: "Review concern",
       evidence: "File:12\nREQ-001 lacks coverage",
+      suggestedFix: "Add the missing test",
       extensions: {
         agent: { name: "reviewer" },
         file: "src/example.ts",
@@ -122,6 +123,46 @@ test("aliases, casing, text-array evidence and annotations produce readable cano
     },
   ]);
   assert.deepEqual(normalizeReply(normalized.reply).changes, []);
+});
+
+test("review fixes normalize readable aliases without losing annotations or inventing evidence", () => {
+  for (const name of ["suggestion", "recommendation", "fix", "suggested_fix"]) {
+    const input = reply([{ ...finding(), [name]: ["Apply a scoped guard in src/search.ts", "Add and run the account-isolation regression test"] }]);
+    const original = structuredClone(input), converted = normalizeReply(input), result = validateReply(converted.reply);
+    assert.equal(result.findings[0].suggestedFix, "Apply a scoped guard in src/search.ts\nAdd and run the account-isolation regression test");
+    assert.deepEqual(result.findings[0].extensions![name], (original.findings[0] as any)[name]);
+    assert.deepEqual(input, original);
+    assert.deepEqual(normalizeReply(converted.reply).changes, []);
+    assert.equal(result.findings[0].evidence, (original.findings[0] as Record<string, unknown>).evidence);
+  }
+  const nested = validateReply(normalizeReply(reply([{ ...finding(), extensions: { recommendation: "Inspect the call path, fix only the confirmed guard and rerun AC1" } }])).reply);
+  assert.equal(nested.findings[0].suggestedFix, nested.findings[0].extensions!.recommendation);
+  assert.throws(() => validateReply(normalizeReply(reply([{ ...finding(), evidence: "", suggestion: "A fix cannot replace evidence" }])).reply), /Finding evidence/);
+});
+
+test("canonical review fix takes precedence; missing fixes remain readable and never synthesized", () => {
+  const converted = normalizeReply(reply([{ ...finding(), suggestedFix: "Canonical scoped fix plus regression test", recommendation: "Different untrusted suggestion" }]));
+  const result = validateReply(converted.reply);
+  assert.equal(result.findings[0].suggestedFix, "Canonical scoped fix plus regression test");
+  assert.equal(result.findings[0].extensions!.recommendation, "Different untrusted suggestion");
+  const old = normalizeReply(reply([finding()]));
+  assert.equal(validateReply(old.reply).findings[0].suggestedFix, undefined);
+  assert.deepEqual(old.changes, []);
+  assert.throws(() => validateReply(reply([{ ...finding(), suggestedFix: "" }])), /Suggested fix/);
+});
+
+test("whole-work reports use the same flexible check parsing without hiding failed checks", () => {
+  const input = { ...reply(), mode: "implementation", checks: [{ name: "Regression", status: "FAIL", evidence: ["Actual failure output"], command: "node regression.js" }],
+    completion: { summary: "Code reported complete; check failed", tasks: [{ taskId: "T1", evidence: ["src/search.ts implements AC1"] }],
+      checks: [{ name: "Regression", result: "failure", evidence: ["Actual failure output"], command: "node regression.js" }], findings: [] } };
+  const original = structuredClone(input), normalized = normalizeReply(input), result = validateReply(normalized.reply);
+  assert.equal(result.checks[0].outcome, "failed");
+  assert.equal(result.completion!.checks[0].outcome, "failed");
+  assert.equal(result.completion!.checks[0].extensions!.command, "node regression.js");
+  assert.equal(result.completion!.tasks[0].evidence, "src/search.ts implements AC1");
+  assert.deepEqual(input, original);
+  assert.deepEqual(normalizeReply(normalized.reply).changes, []);
+  assert.ok(normalized.changes.some((change) => change.startsWith("completion.checks")));
 });
 
 test("generated finding IDs avoid all supplied IDs, including later entries and aliases", () => {

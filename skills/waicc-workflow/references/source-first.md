@@ -10,8 +10,8 @@ The owner captures a requirements/context brief and constraints. An initial plan
 draft may use tasks: []; do not speculate a detailed plan merely to dispatch work.
 The planner investigates and returns a complete proposedContract: source-backed
 paths, dependencies/shared-file sequencing, acceptance and verification plans.
-The reviewer independently compares significant claims to actual code/tests/docs,
-not just JSON or another agent's narrative. The advisor investigates before comparing
+The reviewer independently compares the entire implementation and significant claims
+to actual code/tests/docs, not just JSON or another agent's narrative. The advisor investigates before comparing
 options and recommending within its selected scope.
 
 For planning, addressed coverage means a source-backed task/acceptance criterion
@@ -39,18 +39,37 @@ an execution scheduler or proof of completed dependencies.
 The owner spot-checks material claims and explicitly saves supported in-scope
 corrections with waicc_assess.contract; saying a change is accepted does not update
 the contract on disk. Use planned on complete planning (reply planned or ready) to
-reach PLAN_READY without implementation work. Coverage must be addressed, plain
+reach PLAN_READY without an external implementation handoff. Coverage must be addressed, plain
 questions empty, no failed checks, and high/critical findings need dispositions.
 If those are missing, investigate rather than fabricate them. Future gates remain
 visible; they do not require another identical planning round.
 
-Request independent review of the saved version. Changed contracts need a fresh
-review before PASS. Review/explicit closure may accept a complete specification with
-documented future gates; they never resolve those choices or authorize execution.
-Legacy planning ready creates an implementation handoff only when all execution
-decisions are resolved. Do not use it for routine contract-only completion.
+For authorized development, the main agent by default completes ALL planned work itself
+in dependency order and runs relevant checks before ONE independent code review.
+Do not review per task, finding or batch. Planning-only scope stops at PLAN_READY;
+the plan does not create new authority. Real remaining gates block all-done code
+review, even if unblocked work can be finished first.
+If the human selected implementationOwner delegate, the main agent instead coordinates
+ONE complete implementation/fix handoff and independently assesses the returned diff
+and evidence. Testing delegation is optional, selected through /waicc-test; it is not
+another required handoff. All roles read the same frozen saved-context packet and
+confirmed-memory snapshot. Important chat-only context must first be saved by the owner.
+
+Code review uses reviewKind code and a completion report covering every task,
+actual checks/not_run limits and every prior actionable review finding by requestId
+and findingId. The reviewer verifies the whole implementation, prior fixes,
+acceptance criteria and regressions each time, not only the latest delta. On failure,
+assess needs_changes BEFORE editing, fix ALL issues, check the whole result, then
+issue ONE fresh full review with updated completion evidence. Do not use followup
+for code-review defects. Missing verification must not be disguised as a pass.
+
+Changed contracts need fresh review. Explicit reviewKind contract
+(`/waicc-review --contract`) and legacy unmarked reviews assess only the specification
+and may retain future gates. Their PASS never means code changes passed review.
+Legacy planning ready creates an external implementation handoff only when deliberately
+requested and all execution decisions are resolved; it is not the main-agent flow.
 
 Follow up only for genuinely new investigable work. If only a human/external answer
 remains, give one recommended decision brief and record needs_changes/blocked instead
 of repeating unchanged rounds. Do not auto-adopt scope changes, confirm memory,
-spawn processes, implement, deploy or close the discussion without its required human action.
+spawn external processes, deploy or close the discussion without its required human action.
