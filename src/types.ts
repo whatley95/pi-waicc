@@ -92,6 +92,7 @@ export interface Reply {
     severity: "critical" | "high" | "medium" | "low" | "info";
     description: string;
     evidence: string;
+    extensions?: Record<string, unknown>;
   }[];
   questions: string[];
   checks: {
@@ -125,6 +126,7 @@ export interface Round {
   status: "WAITING" | "RECEIVED" | "ASSESSED" | "STALE" | "CANCELLED";
   replyDigest?: string;
   reply?: Reply;
+  replyNormalization?: string[];
   decision?: string;
   rationale?: string;
   dispositions?: {

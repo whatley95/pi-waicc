@@ -205,6 +205,41 @@ test("an existing external reply also prevents recipient overwrite", (t) => {
   assert.equal(readFileSync(a.replyPath, "utf8"), external);
 });
 
+test("Pi recipient accepts flexible findings without losing submitted annotations or self-assessing", (t) => {
+  const { root, id } = fixture(t);
+  const a = receiveHandoff(root, id);
+  const input = {
+    ...body(),
+    findings: [
+      {
+        severity: "Medium",
+        title: "Contract concern",
+        evidence: ["REQ-001", "AC-001"],
+        suggestion: "Clarify expected behavior",
+      },
+    ],
+  };
+  const result = submitRecipientReply(root, a.pin, input);
+  assert.ok(result.normalization.length > 0);
+  assert.deepEqual(
+    JSON.parse(readFileSync(a.replyPath, "utf8")).findings,
+    input.findings,
+  );
+  assert.equal(loadSession(root, id).status, "WAITING_FOR_REPLY");
+  const received = ingest(root, id);
+  assert.deepEqual(received.rounds[0].reply!.findings, [
+    {
+      id: "F-001",
+      severity: "medium",
+      description: "Contract concern",
+      evidence: "REQ-001\nAC-001",
+      extensions: { suggestion: "Clarify expected behavior" },
+    },
+  ]);
+  assert.deepEqual(received.rounds[0].replyNormalization, result.normalization);
+  assert.equal(received.status, "AWAITING_ASSESSMENT");
+});
+
 test("cancelled, amended, replaced and changed-source assignments never retarget the old recipient", (t) => {
   const { root, id } = fixture(t);
   const first = receiveHandoff(root, id);
@@ -266,6 +301,14 @@ test("advisor receiver preserves exact question and selected coverage without ad
     ...body(),
     outcome: "needs_clarification" as const,
     questions: ["Expected search scale?"],
+    findings: [
+      {
+        severity: "low",
+        title: "Scale is unspecified",
+        evidence:
+          "The advisor question does not include expected search volume",
+      },
+    ],
     advice: {
       question: "Which search index?",
       options: [],
@@ -293,7 +336,13 @@ test("advisor receiver preserves exact question and selected coverage without ad
     }),
   );
   submitRecipientReply(root, a.pin, reply);
-  assert.equal(ingest(root, id).contractVersion, 1);
+  const received = ingest(root, id);
+  assert.equal(received.contractVersion, 1);
+  assert.equal(
+    received.rounds.at(-1)!.reply!.findings[0].description,
+    "Scale is unspecified",
+  );
+  assert.ok(received.rounds.at(-1)!.replyNormalization!.length > 0);
 });
 
 test("implementation needs explicit opt-in, restricts edits, and accepts assigned source changes at submission", (t) => {

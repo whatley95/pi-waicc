@@ -24,9 +24,12 @@ function keys(
   allowed: string[],
   name: string,
 ): void {
+  const unsupported = Object.keys(value).filter(
+    (key) => !allowed.includes(key),
+  );
   ensure(
-    Object.keys(value).every((key) => allowed.includes(key)),
-    `${name} contains unsupported fields`,
+    unsupported.length === 0,
+    `${name} contains unsupported fields: ${unsupported.map((key) => JSON.stringify(key)).join(", ")}. Allowed: ${allowed.join(", ")}`,
   );
 }
 export function text(value: unknown, name: string, max = 32_000): string {
@@ -301,10 +304,15 @@ export function validateReply(value: unknown): Reply {
   unique(coverage, "coverage IDs");
   const findings = list(r.findings, "Findings").map((entry) => {
     const f = record(entry, "Finding");
-    keys(f, ["id", "severity", "description", "evidence"], "Finding");
+    keys(
+      f,
+      ["id", "severity", "description", "evidence", "extensions"],
+      "Finding",
+    );
     identifier(f.id);
     text(f.description, "Finding description");
     text(f.evidence, "Finding evidence");
+    if (f.extensions !== undefined) record(f.extensions, "Finding extensions");
     ensure(
       ["critical", "high", "medium", "low", "info"].includes(
         f.severity as string,
