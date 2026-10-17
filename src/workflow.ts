@@ -21,13 +21,16 @@ import {
   contractMarkdown,
   conversation,
   handoff,
+  manualHandoff,
   replyTemplate,
   roundDirectory,
+  starterPrompt,
   versionDirectory,
 } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { recall } from "./memory.ts";
 import { normalizeReply } from "./reply.ts";
+import { decisionGates } from "./decisions.ts";
 import {
   ensure,
   identifier,
@@ -38,6 +41,7 @@ import {
   validateContract,
   validateReply,
   readyContract,
+  readyPlan,
 } from "./validation.ts";
 import type {
   Contract,
@@ -123,6 +127,14 @@ function stableIds(previous: Contract, next: Contract): void {
       ),
     ),
     "Preserve requirement IDs and original quotes across revisions; record scope changes as amendments",
+  );
+  ensure(
+    (previous.decisions ?? []).every((d) =>
+      (next.decisions ?? []).some(
+        (n) => n.id === d.id && n.question === d.question,
+      ),
+    ),
+    "Preserve decision IDs/questions across revisions; carry answers and evidence forward instead of dropping prior decisions",
   );
 }
 function skillFiles(names: string[], prefix: string): Record<string, string> {
@@ -221,7 +233,7 @@ function nextRound(
         projectRoot: s.projectRoot,
       }),
       [`${dir}/HANDOFF.md`]: instructions,
-      [`${dir}/STARTER.txt`]: `Read ${join(s.projectRoot, sessionRelative(s.id), dir, "HANDOFF.md")} and perform its ${mode} assignment. Write the designated reply.\n`,
+      [`${dir}/STARTER.txt`]: starterPrompt(s, round),
       [`${dir}/reply.example.json`]: json(replyTemplate(s, round, v)),
       [`${dir}/conversation.json`]: json(conversation(s, round)),
       ...(advisor
@@ -431,7 +443,8 @@ export function validateRoundReply(
 }
 export interface Assessment {
   requestId: string;
-  decision: "ready" | "noted" | "followup" | "needs_changes" | "blocked";
+  decision:
+    "ready" | "planned" | "noted" | "followup" | "needs_changes" | "blocked";
   rationale: string;
   contract?: Contract;
   dispositions: {
@@ -453,10 +466,19 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     );
     text(a.rationale, "Assessment rationale");
     ensure(
-      ["ready", "noted", "followup", "needs_changes", "blocked"].includes(
-        a.decision,
-      ),
+      [
+        "ready",
+        "planned",
+        "noted",
+        "followup",
+        "needs_changes",
+        "blocked",
+      ].includes(a.decision),
       "Unknown assessment decision",
+    );
+    ensure(
+      a.decision !== "planned" || r.mode === "planning",
+      "The planned assessment is only valid for planning",
     );
     if (r.mode === "advisor") {
       ensure(
@@ -522,8 +544,9 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
       s.contractVersion++;
       Object.assign(files, contractFiles(s, c, currentSource));
     }
-    if (a.decision === "ready") {
-      readyContract(c);
+    if (a.decision === "ready" || a.decision === "planned") {
+      if (a.decision === "planned" || r.mode === "review") readyPlan(c);
+      else readyContract(c);
       if (r.mode === "implementation") {
         const tasks = r.taskId
           ? c.tasks.filter((task) => task.id === r.taskId)
@@ -553,7 +576,8 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
         "Unresolved questions, coverage gaps or failed checks prevent ready",
       );
       ensure(
-        r.reply.outcome === "ready",
+        r.reply.outcome === "ready" ||
+          (a.decision === "planned" && r.reply.outcome === "planned"),
         "Reply did not report readiness; resolve it in a follow-up round",
       );
       ensure(
@@ -576,7 +600,10 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     });
     files[`${roundDirectory(r)}/ASSESSMENT.md`] =
       `# ${a.decision}\n\n${a.rationale}\n\nRequest: ${r.id}. Delivery verified: false.\n\n## Finding dispositions\n\n${a.dispositions.map((d) => `- ${d.findingId}: ${d.disposition}. Evidence: ${d.evidence}`).join("\n") || "None."}\n`;
-    if (a.decision === "ready" && r.mode === "planning") {
+    if (a.decision === "planned") {
+      s.status = "PLAN_READY";
+      resetReview(s);
+    } else if (a.decision === "ready" && r.mode === "planning") {
       const v = a.contract
         ? (JSON.parse(
             files[`${versionDirectory(s.contractVersion)}/contract.json`],
@@ -683,7 +710,7 @@ export function closeSession(cwd: string, id: string, reason: string): Session {
       approvalIsCurrent(s, snapshot(root).fingerprint),
       "The passing review no longer matches the current contract, requirements or source. Request a fresh review.",
     );
-    readyContract(contract(root, s).contract);
+    readyPlan(contract(root, s).contract);
     const round = s.rounds.at(-1)!;
     for (const file of [
       "assessment.json",
@@ -773,9 +800,23 @@ export function status(cwd: string, id?: string): unknown {
   );
   const last = s.rounds.findLast((round) => round.status === "ASSESSED");
   const lastReply = s.rounds.findLast((round) => round.reply);
+  const replyExists = r
+    ? existsSync(
+        safePath(
+          root,
+          `${sessionRelative(s.id)}/${roundDirectory(r)}/reply.json`,
+        ),
+      )
+    : false;
   return {
     sessionId: s.id,
     projectRoot: root,
+    // Keep delivery instructions ahead of potentially large requirements/contract previews.
+    manualHandoff:
+      r?.status === "WAITING" && !replyExists ? manualHandoff(s, r) : null,
+    decisionGates: s.contractVersion
+      ? decisionGates(contract(root, s).contract)
+      : null,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     status: staleApproval ? "STALE" : s.status,
@@ -807,6 +848,7 @@ export function status(cwd: string, id?: string): unknown {
           mode: r.mode,
           advisor: r.advisor,
           status: r.status,
+          replyExists,
           handoffPath: join(
             root,
             sessionRelative(id),
@@ -871,18 +913,22 @@ export function status(cwd: string, id?: string): unknown {
             : s.status === "DRAFT"
               ? "Inspect the project and prepare a contract and handoff."
               : r?.status === "WAITING"
-                ? "Submit HANDOFF.md to the chosen agent, then run /waicc-continue when reply.json is ready."
+                ? replyExists
+                  ? "A reply.json already exists. Return to the coordinator and /waicc-continue to validate it; do not send this request to another worker."
+                  : "Manual handoff: copy manualHandoff.copyPastePrompt (or STARTER.txt CONTENTS) into one separate agent with project access. /waicc-handoff shows the copy block and return steps. After its reply, return here and /waicc-continue."
                 : r?.status === "RECEIVED"
                   ? "Assess the received reply against the requirements and actual evidence."
                   : s.status === "ADVICE_READY"
                     ? "Discuss the recommendation with the human. Nothing was adopted or authorized; explicitly prepare a revision or request further advice/review as appropriate."
-                    : s.status === "NEEDS_REVIEW"
-                      ? "Request independent review against the implementation and actual check evidence."
-                      : s.status === "READY_FOR_HANDOFF"
-                        ? "The reviewed artifact is ready for its next human-chosen handoff; delivery remains unverified."
-                        : s.rounds.at(-1)?.mode === "advisor"
-                          ? "Resolve the advice blocker or ask /waicc-advisor with a clarified question. Contract changes require a separate explicit human decision."
-                          : "Resolve the reported blocker or issue a fresh request.",
+                    : s.status === "PLAN_READY"
+                      ? "The source-backed plan is accepted; no implementation was started or handed off. Review the contract with /waicc-review. Present only unresolved human/external decisions with recommendations; keep affected tasks gated."
+                      : s.status === "NEEDS_REVIEW"
+                        ? "Request independent review against the implementation and actual check evidence."
+                        : s.status === "READY_FOR_HANDOFF"
+                          ? "The reviewed artifact is ready for its next human-chosen handoff; delivery remains unverified."
+                          : s.rounds.at(-1)?.mode === "advisor"
+                            ? "Resolve the advice blocker or ask /waicc-advisor with a clarified question. Contract changes require a separate explicit human decision."
+                            : "Resolve the reported blocker or issue a fresh request.",
   };
 }
 export function exportHandoff(cwd: string, id: string): string {
@@ -903,6 +949,7 @@ export function exportHandoff(cwd: string, id: string): string {
       [`${dir}/contract.json`]: json(v),
       [`${dir}/CONTRACT.md`]: contractMarkdown(v),
       [`${dir}/HANDOFF.md`]: handoff(s, r, v, request.focus, true),
+      [`${dir}/STARTER.txt`]: starterPrompt(s, r, true),
       [`${dir}/reply.example.json`]: json(replyTemplate(s, r, v)),
       [`${dir}/conversation.json`]: json(conversation(s, r)),
       ...(r.mode === "advisor"

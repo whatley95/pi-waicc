@@ -118,6 +118,7 @@ export function validateContract(
       "risks",
       "tasks",
       "skills",
+      "decisions",
     ],
     "Contract",
   );
@@ -218,9 +219,57 @@ export function validateContract(
     visited.add(id);
   };
   ids.forEach(visit);
+  const decisions = list(c.decisions ?? [], "Decisions").map((entry) => {
+    const d = record(entry, "Decision");
+    keys(
+      d,
+      [
+        "id",
+        "question",
+        "owner",
+        "status",
+        "affectedTaskIds",
+        "evidence",
+        "recommendation",
+        "answer",
+      ],
+      "Decision",
+    );
+    identifier(d.id, "Decision ID");
+    text(d.question, "Decision question");
+    ensure(
+      ["agent", "human", "external"].includes(d.owner as string),
+      "Invalid decision owner",
+    );
+    ensure(
+      ["open", "resolved", "deferred"].includes(d.status as string),
+      "Invalid decision status",
+    );
+    const affected = strings(d.affectedTaskIds, "Affected task IDs");
+    unique(affected, "affected task IDs");
+    ensure(
+      affected.length > 0 && affected.every((id) => ids.includes(id)),
+      "A decision must name existing affected tasks",
+    );
+    ensure(
+      strings(d.evidence, "Decision investigation evidence").length > 0,
+      "Decision needs investigation evidence, including any access limit",
+    );
+    text(d.recommendation, "Decision recommendation");
+    if (d.answer !== undefined) text(d.answer, "Decision answer");
+    if (d.status === "resolved") text(d.answer, "Resolved decision answer");
+    else
+      ensure(
+        d.answer === undefined,
+        "An unresolved decision must not carry a confirmed answer",
+      );
+    return d.id as string;
+  });
+  unique(decisions, "decision IDs");
   return structuredClone(c) as unknown as Contract;
 }
-export function readyContract(contract: Contract): void {
+/** A complete specification can gate execution on documented human/external decisions. */
+export function readyPlan(contract: Contract): void {
   ensure(contract.questions.length === 0, "Contract has unresolved questions");
   ensure(
     contract.tasks.length > 0 &&
@@ -239,6 +288,19 @@ export function readyContract(contract: Contract): void {
   ensure(
     contract.requirements.every((r) => covered.has(r.id)),
     "Some requirements have no acceptance criteria",
+  );
+  ensure(
+    !(contract.decisions ?? []).some(
+      (d) => d.owner === "agent" && d.status !== "resolved",
+    ),
+    "Investigate agent-owned decisions before accepting the plan; record genuine access limits as external decisions",
+  );
+}
+export function readyContract(contract: Contract): void {
+  readyPlan(contract);
+  ensure(
+    (contract.decisions ?? []).every((d) => d.status === "resolved"),
+    "Execution is gated by unresolved contract decisions; plan acceptance is not implementation authorization",
   );
 }
 export function validateReply(value: unknown): Reply {
@@ -283,10 +345,18 @@ export function validateReply(value: unknown): Reply {
     "Invalid reply mode",
   );
   ensure(
-    ["ready", "needs_changes", "needs_clarification", "blocked"].includes(
-      r.outcome as string,
-    ),
+    [
+      "ready",
+      "planned",
+      "needs_changes",
+      "needs_clarification",
+      "blocked",
+    ].includes(r.outcome as string),
     "Invalid reply outcome",
+  );
+  ensure(
+    r.outcome !== "planned" || r.mode === "planning",
+    "The planned outcome is only valid for planning",
   );
   text(r.summary, "Reply summary");
   strings(r.questions, "Questions");

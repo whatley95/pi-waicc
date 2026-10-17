@@ -25,7 +25,11 @@ import {
   withLock,
 } from "../src/files.ts";
 import { curate, propose, recall } from "../src/memory.ts";
-import { roundDirectory } from "../src/render.ts";
+import {
+  roundDirectory,
+  manualHandoffMessage,
+  type manualHandoff,
+} from "../src/render.ts";
 import { projectRoot, snapshot } from "../src/source.ts";
 import { configureSvnIgnore } from "../src/ignore.ts";
 import {
@@ -46,11 +50,13 @@ import {
 import {
   advisorInput,
   readyContract,
+  readyPlan,
   validateContract,
   validateReply,
 } from "../src/validation.ts";
 import type { Contract, Reply, Session } from "../src/types.ts";
 import { pathToFileURL } from "node:url";
+import { decisionGates } from "../src/decisions.ts";
 
 function fixture(t: TestContext, git = false): string {
   const root = mkdtempSync(join(tmpdir(), "waicc-test-"));
@@ -130,6 +136,233 @@ function planned(root: string): Session {
     0,
   );
 }
+
+function gatedPlan(): Contract {
+  return {
+    ...example(),
+    decisions: [
+      {
+        id: "DEC-001",
+        question: "Which client presentation does the owner want?",
+        owner: "human",
+        status: "deferred",
+        affectedTaskIds: ["CLIENT"],
+        evidence: [
+          "Source establishes the API boundary; the requested presentation choice is not specified",
+        ],
+        recommendation:
+          "Keep existing presentation until the owner chooses; gate CLIENT",
+      },
+    ],
+  };
+}
+
+test("a source-backed plan is accepted with future task decisions and no implementation handoff", (t) => {
+  const root = fixture(t);
+  const original = createSession(root, requirements);
+  const brief = { ...example(), tasks: [] };
+  const s = prepare(
+    root,
+    original.id,
+    brief,
+    "planning",
+    "Investigate source and form the plan",
+    0,
+  );
+  respond(root, s, (reply) => {
+    reply.outcome = "planned";
+    reply.proposedContract = gatedPlan();
+    reply.checks = [
+      {
+        description: "Build/tests",
+        outcome: "not_run",
+        evidence: "Planning uses source inspection; no test execution claimed",
+      },
+    ];
+  });
+  const received = ingest(root, s.id);
+  assert.throws(
+    () => assess(root, s.id, { ...assessment(received), decision: "planned" }),
+    /acceptance criteria/,
+  );
+  const accepted = assess(root, s.id, {
+    ...assessment(received),
+    decision: "planned",
+    contract: gatedPlan(),
+  });
+  assert.equal(accepted.status, "PLAN_READY");
+  assert.equal(accepted.contractVersion, 2);
+  assert.equal(accepted.rounds.length, 1);
+  assert.equal(accepted.rounds[0].status, "ASSESSED");
+  assert.equal(accepted.deliveryVerified, false);
+  assert.equal(accepted.rounds[0].reply!.checks[0].outcome, "not_run");
+  const view = status(root, s.id) as {
+    pending: unknown;
+    manualHandoff: unknown;
+    decisionGates: ReturnType<typeof decisionGates>;
+  };
+  assert.equal(view.pending, null);
+  assert.equal(view.manualHandoff, null);
+  assert.deepEqual(view.decisionGates.decisionUnblockedTaskIds, ["API"]);
+  assert.deepEqual(view.decisionGates.decisionBlockedTaskIds, ["CLIENT"]);
+  assert.ok(
+    artifact(root, accepted, "contracts/v002/CONTRACT.md").includes("DEC-001"),
+  );
+  assert.throws(
+    () => readyContract(readContract(root, s.id).contract),
+    /Execution is gated/,
+  );
+});
+
+test("planned still rejects unverified coverage, failed checks, human blockers and unresolved high findings", (t) => {
+  for (const failure of ["coverage", "checks", "questions", "findings"]) {
+    const root = fixture(t),
+      s = planned(root);
+    respond(root, s, (reply) => {
+      reply.outcome = "planned";
+      if (failure === "coverage") reply.coverage[0].status = "unverified";
+      if (failure === "checks") reply.checks[0].outcome = "failed";
+      if (failure === "questions")
+        reply.questions = [
+          "Missing information prevents a coherent specification",
+        ];
+      if (failure === "findings")
+        reply.findings = [
+          {
+            id: "F-001",
+            severity: "high",
+            description: "Unresolved authorization boundary",
+            evidence: "Source is contradictory",
+          },
+        ];
+    });
+    const received = ingest(root, s.id);
+    assert.throws(() =>
+      assess(root, s.id, { ...assessment(received), decision: "planned" }),
+    );
+    assert.equal(loadSession(root, s.id).sequence, received.sequence);
+  }
+});
+
+test("decisions require investigation evidence, task scope and explicit recorded answers", () => {
+  assert.doesNotThrow(() =>
+    readyPlan(validateContract(gatedPlan(), requirements)),
+  );
+  for (const change of [
+    { affectedTaskIds: ["UNKNOWN"] },
+    { evidence: [] },
+    { status: "resolved" },
+    { owner: "someone" },
+    { status: "maybe" },
+    { answer: "Pretend approval" },
+  ]) {
+    const c = gatedPlan();
+    Object.assign(c.decisions![0], change);
+    assert.throws(() => validateContract(c, requirements));
+  }
+  const agentOwned = gatedPlan();
+  agentOwned.decisions![0].owner = "agent";
+  assert.throws(
+    () => readyPlan(validateContract(agentOwned, requirements)),
+    /agent-owned/,
+  );
+  const resolved = gatedPlan();
+  resolved.decisions![0].status = "resolved";
+  resolved.decisions![0].answer =
+    "Owner confirmed the existing presentation; decision source recorded";
+  assert.doesNotThrow(() =>
+    readyContract(validateContract(resolved, requirements)),
+  );
+});
+
+test("decision gates propagate to dependent tasks without blocking independent tasks", () => {
+  const c = gatedPlan();
+  c.tasks.push({
+    ...structuredClone(c.tasks[1]),
+    id: "FOLLOW",
+    dependsOn: ["CLIENT"],
+    acceptance: [{ ...c.tasks[1].acceptance[0], id: "AC-003" }],
+  });
+  validateContract(c, requirements);
+  const gates = decisionGates(c);
+  assert.deepEqual(gates.decisionBlockedTaskIds, ["CLIENT", "FOLLOW"]);
+  assert.deepEqual(gates.decisionUnblockedTaskIds, ["API"]);
+});
+
+test("review and human closure can accept documented future gates without authorizing execution", (t) => {
+  const root = fixture(t),
+    initial = createSession(root, requirements);
+  const s = prepare(
+    root,
+    initial.id,
+    gatedPlan(),
+    "review",
+    "Independently verify the gated specification",
+    0,
+  );
+  respond(root, s);
+  const received = ingest(root, s.id);
+  const passed = assess(root, s.id, assessment(received));
+  assert.equal(passed.status, "READY_TO_CLOSE");
+  assert.equal(passed.contractReview, "PASS");
+  assert.throws(
+    () => readyContract(readContract(root, s.id).contract),
+    /Execution is gated/,
+  );
+  const closed = closeSession(
+    root,
+    s.id,
+    "Accept the specification with explicit future decision gates",
+  );
+  assert.equal(closed.status, "CLOSED");
+  assert.equal(closed.deliveryVerified, false);
+  assert.equal(
+    readContract(root, s.id).contract.decisions![0].status,
+    "deferred",
+  );
+});
+
+test("planned rejects stale source and decision removal; other modes cannot use planned", (t) => {
+  const root = fixture(t),
+    initial = createSession(root, requirements);
+  const s = prepare(
+    root,
+    initial.id,
+    gatedPlan(),
+    "planning",
+    "Investigate",
+    0,
+  );
+  respond(root, s, (reply) => {
+    reply.outcome = "planned";
+  });
+  const received = ingest(root, s.id);
+  assert.throws(
+    () =>
+      assess(root, s.id, {
+        ...assessment(received),
+        decision: "planned",
+        contract: example(),
+      }),
+    /Preserve decision/,
+  );
+  writeFileSync(join(root, "app.txt"), "Source changed");
+  assert.throws(
+    () => assess(root, s.id, { ...assessment(received), decision: "planned" }),
+    /Source changed/,
+  );
+  for (const mode of ["review", "advisor", "implementation"]) {
+    assert.throws(
+      () =>
+        validateReply({
+          ...received.rounds[0].reply!,
+          mode,
+          outcome: "planned",
+        }),
+      /only valid for planning/,
+    );
+  }
+});
 function respond(
   root: string,
   session: Session,
@@ -1554,6 +1787,122 @@ test("portable export includes selected skill references, pinned identity and co
     requirements,
   );
   assert.equal(snapshot(root).fingerprint, s.rounds[0].source.fingerprint);
+  const starter = readFileSync(join(path, "STARTER.txt"), "utf8");
+  assert.ok(starter.includes(manifest.requestId));
+  assert.ok(starter.includes("HANDOFF.md in the supplied export folder"));
+  assert.ok(starter.includes("reply.json beside that HANDOFF.md"));
+  assert.ok(starter.includes("matching project checkout"));
+  assert.ok(!starter.includes(root));
+});
+
+test("manual copy prompts pin each role, resolve linked inputs and leave source/session state unchanged", (t) => {
+  for (const mode of [
+    "planning",
+    "review",
+    "advisor",
+    "implementation",
+  ] as const) {
+    const root = fixture(t);
+    let s = planned(root);
+    if (mode === "implementation") {
+      respond(root, s);
+      s = ingest(root, s.id);
+      s = assess(root, s.id, assessment(s));
+    } else if (mode !== "planning") {
+      cancel(root, s.id, "Select another recipient mode");
+      s = issue(root, s.id, mode, "Perform the assigned work");
+    }
+    const before = loadSession(root, s.id);
+    const r = s.rounds.at(-1)!;
+    const view = status(root, s.id) as {
+      manualHandoff: ReturnType<typeof manualHandoff>;
+    };
+    const delivery = view.manualHandoff;
+    const starterPath = join(
+      root,
+      sessionRelative(s.id),
+      roundDirectory(r),
+      "STARTER.txt",
+    );
+    assert.equal(delivery.copyPastePrompt, readFileSync(starterPath, "utf8"));
+    assert.ok(delivery.copyPastePrompt.includes(r.id));
+    assert.ok(delivery.copyPastePrompt.includes(s.id));
+    assert.ok(
+      delivery.copyPastePrompt.includes(`contract: v${r.contractVersion}`),
+    );
+    assert.ok(delivery.copyPastePrompt.includes(`WAICC ${mode} recipient`));
+    assert.ok(
+      delivery.copyPastePrompt.includes(
+        JSON.stringify(
+          join(root, sessionRelative(s.id), roundDirectory(r), "HANDOFF.md"),
+        ),
+      ),
+    );
+    assert.ok(
+      delivery.copyPastePrompt.includes(
+        JSON.stringify(
+          join(root, sessionRelative(s.id), roundDirectory(r), "reply.json"),
+        ),
+      ),
+    );
+    assert.ok(!delivery.copyPastePrompt.includes("/waicc-continue"));
+    assert.equal(delivery.resumeCoordinatorCommand, `/waicc-use ${s.id}`);
+    assert.equal(delivery.continueCommand, "/waicc-continue");
+    assert.deepEqual(loadSession(root, s.id), before);
+    assert.equal(snapshot(root).fingerprint, r.source.fingerprint);
+  }
+});
+
+test("manual handoff view is withheld once any reply exists and never reissues work", (t) => {
+  const root = fixture(t),
+    s = planned(root);
+  const initial = status(root, s.id) as {
+    manualHandoff: unknown;
+    pending: { replyExists: boolean };
+  };
+  assert.ok(initial.manualHandoff);
+  assert.equal(initial.pending.replyExists, false);
+  const before = loadSession(root, s.id);
+  respond(root, s);
+  const written = status(root, s.id) as {
+    manualHandoff: unknown;
+    pending: { replyExists: boolean };
+    nextAction: string;
+  };
+  assert.equal(written.manualHandoff, null);
+  assert.equal(written.pending.replyExists, true);
+  assert.match(written.nextAction, /already exists.*waicc-continue/);
+  assert.deepEqual(loadSession(root, s.id), before);
+  ingest(root, s.id);
+  assert.equal(
+    (status(root, s.id) as { manualHandoff: unknown }).manualHandoff,
+    null,
+  );
+  cancel(root, s.id, "Stop the exchange");
+  assert.equal(
+    (status(root, s.id) as { manualHandoff: unknown }).manualHandoff,
+    null,
+  );
+});
+
+test("manual copy block stays intact when a prompt path contains Markdown fence characters", (t) => {
+  const root = fixture(t),
+    s = planned(root);
+  const delivery = (
+    status(root, s.id) as { manualHandoff: ReturnType<typeof manualHandoff> }
+  ).manualHandoff;
+  delivery.copyPastePrompt += "Path data containing ```` backticks\n";
+  const message = manualHandoffMessage(delivery);
+  const match = /^(`{3,})text\n([\s\S]*?)\n\1$/m.exec(message)!;
+  assert.ok(match);
+  assert.equal(match[2] + "\n", delivery.copyPastePrompt);
+  assert.ok(match[1].length > 4);
+  assert.ok(!match[2].includes("/waicc-continue"));
+  assert.ok(
+    message
+      .slice(message.indexOf(match[0]) + match[0].length)
+      .includes(delivery.continueCommand),
+  );
 });
 test("round limit stops repeated handoffs and can be changed explicitly", (t) => {
   const root = fixture(t);
