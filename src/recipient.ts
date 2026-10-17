@@ -11,6 +11,7 @@ import {
   withLock,
 } from "./files.ts";
 import { recall } from "./memory.ts";
+import { normalizeReply } from "./reply.ts";
 import { roundDirectory, versionDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure, identifier, record, relativePath } from "./validation.ts";
@@ -161,10 +162,14 @@ export function submitRecipientReply(
         body[key] === undefined || body[key] === expected,
         `Reply ${key} does not match the pinned request`,
       );
-    const reply = validateRoundReply(root, s, r, { ...body, ...identity });
-    const content = json(reply);
+    const submitted = { ...body, ...identity };
+    const normalized = normalizeReply(submitted);
+    const reply = validateRoundReply(root, s, r, normalized.reply);
+    // Keep the submitted fields intact; coordinator intake freezes raw + normalized views.
+    const content = json(submitted);
     ensure(
-      Buffer.byteLength(content, "utf8") <= 256_000,
+      Buffer.byteLength(content, "utf8") <= 256_000 &&
+        Buffer.byteLength(json(reply), "utf8") <= 256_000,
       "Reply exceeds 256 KB",
     );
     exclusiveWrite(replyPath, content);
@@ -173,6 +178,7 @@ export function submitRecipientReply(
       sessionId: pin.sessionId,
       requestId: pin.requestId,
       replyPath,
+      normalization: normalized.changes,
       nextAction:
         "Stop. Return to the coordinating Pi session and /waicc-continue. This submission does not assess the reply or change contract readiness.",
     };

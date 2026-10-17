@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import {
   digest,
+  artifact,
   json,
   listSessions,
   loadSession,
@@ -1031,6 +1032,141 @@ test("reply intake is idempotent and freezes the inspected response", (t) => {
   assert.equal(
     ingest(root, s.id).rounds[0].reply!.summary,
     a.rounds[0].reply!.summary,
+  );
+});
+
+test("flexible external findings preserve original bytes and audit the coordinator's canonical view", (t) => {
+  const root = fixture(t),
+    s = planned(root);
+  const original = respond(root, s);
+  const input = {
+    ...original,
+    findings: [
+      {
+        severity: "HIGH",
+        title: "Authorization concern",
+        evidence: ["REQ-002", "AC-001 needs inspection"],
+        file: "app.txt",
+        line: 1,
+      },
+    ],
+  };
+  const dir = roundDirectory(s.rounds[0]);
+  const path = join(root, sessionRelative(s.id), dir, "reply.json");
+  const raw = json(input);
+  writeFileSync(path, raw);
+  const received = ingest(root, s.id),
+    r = received.rounds[0];
+  assert.equal(received.status, "AWAITING_ASSESSMENT");
+  assert.equal(received.contractVersion, 1);
+  assert.deepEqual(r.reply!.findings, [
+    {
+      id: "F-001",
+      severity: "high",
+      description: "Authorization concern",
+      evidence: "REQ-002\nAC-001 needs inspection",
+      extensions: { file: "app.txt", line: 1 },
+    },
+  ]);
+  assert.equal(readFileSync(path, "utf8"), raw);
+  assert.equal(artifact(root, received, `${dir}/received.json`), raw);
+  assert.equal(r.replyDigest, digest(raw));
+  assert.deepEqual(
+    JSON.parse(artifact(root, received, `${dir}/received.normalized.json`)),
+    r.reply,
+  );
+  assert.deepEqual(
+    JSON.parse(artifact(root, received, `${dir}/reply-normalization.json`))
+      .changes,
+    r.replyNormalization,
+  );
+  assert.ok(r.replyNormalization!.length > 0);
+  const view = status(root, s.id) as {
+    pending: { reply: Reply; replyNormalization: string[] };
+  };
+  assert.deepEqual(view.pending.reply.findings, r.reply!.findings);
+  assert.deepEqual(view.pending.replyNormalization, r.replyNormalization);
+  assert.equal(ingest(root, s.id).sequence, received.sequence);
+  assert.throws(() => assess(root, s.id, assessment(received)), /dispositions/);
+  const next = assess(root, s.id, {
+    ...assessment(received),
+    decision: "followup",
+    rationale: "Check the concern against the contract and source",
+  });
+  const history = JSON.parse(
+    artifact(
+      root,
+      next,
+      `${roundDirectory(next.rounds.at(-1)!)}/conversation.json`,
+    ),
+  );
+  assert.deepEqual(history[0].findings, r.reply!.findings);
+  assert.deepEqual(history[0].replyNormalization, r.replyNormalization);
+  assert.equal(loadSession(root, s.id).contractVersion, 1);
+});
+
+test("normalization cannot bypass reply identity, coverage or source-freshness checks", (t) => {
+  const root = fixture(t),
+    s = planned(root);
+  const original = respond(root, s);
+  const input = {
+    ...original,
+    findings: [{ severity: "low", title: "Concern", evidence: "Source" }],
+  };
+  const path = join(
+    root,
+    sessionRelative(s.id),
+    roundDirectory(s.rounds[0]),
+    "reply.json",
+  );
+  for (const bad of [
+    { ...input, requestId: "other" },
+    { ...input, sourceFingerprint: "a".repeat(64) },
+    { ...input, coverage: [] },
+    { ...input, proposedContract: { ...example(), requirements: [] } },
+    { ...input, execute: "some command" },
+  ]) {
+    writeFileSync(path, json(bad));
+    assert.throws(() => ingest(root, s.id));
+    assert.equal(loadSession(root, s.id).rounds[0].status, "WAITING");
+  }
+  writeFileSync(path, json(input));
+  writeFileSync(join(root, "app.txt"), "Changed during planning");
+  const stale = ingest(root, s.id);
+  assert.equal(stale.status, "STALE");
+  assert.ok(stale.rounds[0].replyNormalization!.length);
+  assert.throws(() => assess(root, s.id, assessment(stale)), /current reply/);
+});
+
+test("normalized review evidence is pinned and checked before explicit closure", (t) => {
+  const root = fixture(t),
+    s = planned(root);
+  cancel(root, s.id, "Request full review instead");
+  const review = issue(root, s.id, "review", "Review the full contract");
+  const original = respond(root, review);
+  const dir = roundDirectory(review.rounds.at(-1)!);
+  writeFileSync(
+    join(root, sessionRelative(s.id), dir, "reply.json"),
+    json({
+      ...original,
+      findings: [
+        {
+          severity: "info",
+          title: "Inspection note",
+          evidence: "Source and contract inspected",
+        },
+      ],
+    }),
+  );
+  const received = ingest(root, s.id);
+  assess(root, s.id, assessment(received));
+  writeFileSync(
+    join(root, sessionRelative(s.id), dir, "received.normalized.json"),
+    "tampered",
+  );
+  assert.throws(
+    () => closeSession(root, s.id, "Close discussion"),
+    /Artifact was modified/,
   );
 });
 test("source change during planning marks its reply stale", (t) => {

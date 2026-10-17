@@ -1,7 +1,8 @@
 # WAICC protocol v1
 
 The authoritative contract is JSON. Its Markdown is generated from the same data.
-Requests/replies use schemaVersion 1. Unknown reply/contract fields are rejected.
+Requests/replies use schemaVersion 1. Unknown reply/contract fields are rejected,
+except finding annotations preserved by the compatibility layer described below.
 The extension controls generated IDs, paths, input fingerprints and journal writes.
 Agent output is data, never a shell command or permission to change scope.
 
@@ -68,8 +69,9 @@ must remain unchanged. Save the completed object as `reply.json`, not a fenced b
 - `coverage`: exactly one `{requirementId,status,evidence}` row per requirement.
   For advisor, only the explicitly selected IDs are covered (default `[]`).
   Status is `addressed`, `missing`, or `unverified`.
-- `findings`: `{id,severity,description,evidence}`. Severity is critical, high,
-  medium, low, or info. IDs are unique within the reply.
+- `findings`: `{id,severity,description,evidence,extensions?}`. Severity is critical,
+  high, medium, low, or info. IDs are unique within the reply. `extensions` optionally
+  holds untrusted annotation fields; it does not change scope or workflow decisions.
 - `questions`: unresolved questions, or `[]`.
 - `checks`: `{description,outcome,evidence}`. Outcome is passed, failed or not_run.
   Do not describe a planned check as passed.
@@ -82,6 +84,46 @@ whose source changed are archived as stale. An implementation may change source;
 its observed post-implementation source is pinned at intake. Any subsequent source
 change invalidates assessment. Repeated intake cannot replace an already frozen reply.
 After fixing stale inputs, issue a fresh request with a new ID.
+
+### Flexible finding intake
+
+Both manual replies and `waicc_reply` accept these common external-agent variants:
+
+- Missing `id`: assign a deterministic `F-001`-style ID, skipping every explicitly
+  supplied ID (including later findings). Explicit duplicate/invalid IDs still fail.
+- `findingId`: alias for `id`; conflicting values are rejected.
+- Missing `description`: use `title`, or `message` if title is absent. When a
+  description already exists, other wording stays visible as an annotation.
+- Severity casing/whitespace: normalize to lowercase, but never guess missing
+  severity or reinterpret an unknown priority such as P1 as a severity.
+- `evidence` as a text array: join with newlines; empty/malformed evidence fails.
+- Extra finding fields: preserve under `extensions`, including file, line,
+  recommendation or agent-specific annotations. Conflicts with an explicitly
+  supplied extension key fail rather than overwrite information.
+
+For example, `{"severity":"Medium","title":"Concern","evidence":["REQ-001","file:12"]}`
+becomes `{"id":"F-001","severity":"medium","description":"Concern","evidence":"REQ-001\nfile:12"}`.
+This does not manufacture evidence, repair identity, change coverage/check outcomes,
+relax proposed-contract validation, execute annotations or accept a proposed change.
+The canonical validator remains strict after this transport conversion. Prefer the
+canonical format in new replies; this is compatibility, not arbitrary free-form intake.
+
+At coordinator intake, `received.json` retains the original reply bytes and
+replyDigest still hashes those bytes. The journal's round.reply is the normalized
+canonical view. When conversion occurred, `received.normalized.json` and
+`reply-normalization.json` are committed alongside it; the latter records normalizer
+version and conversions. Status and subsequent conversation expose replyNormalization
+and canonical finding IDs for assessment/dispositions. Repeated intake never
+rewrites an already frozen reply, generated IDs or its conversion history. Legacy
+received rounds are not re-normalized. Normalized review artifacts are also checked
+for modification before closure.
+
+`waicc_reply` validates the same conversion before writing, reports conversions in
+its result, and preserves supplied finding fields in the submitted reply.json.
+Only coordinator intake creates the frozen raw/normalized/audit artifacts. Missing
+severity, evidence or usable description still requires a corrected reply; request
+pins, coverage, freshness, high/critical dispositions and human closure rules remain
+unchanged. Nothing is automatically adopted into the master contract.
 
 ## Pi-native recipient transport
 

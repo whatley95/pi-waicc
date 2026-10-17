@@ -163,6 +163,15 @@ deliverables, response format and stopping conditions. It also includes recent
 replies, findings, assessment decisions and check evidence. Changed requirements or
 source invalidate affected replies instead of silently accepting stale work.
 
+Other agents can raise concerns without matching every finding field name exactly.
+WAICC accepts `title`/`message` as `description`, generates missing finding IDs,
+normalizes severity casing and accepts evidence text arrays. Extra annotations such
+as file/line/recommendation stay visible under `extensions`. The original reply is
+preserved, while the coordinator receives a canonical view and conversion log.
+Required evidence/severity, pinned identity, coverage and freshness remain checked;
+normalization does not adopt suggestions or certify their claims. See
+[flexible finding intake](docs/PROTOCOL.md#flexible-finding-intake).
+
 WAICC records these dependencies and conversations. It does not automatically
 schedule parallel implementations or certify that dependent tasks are complete.
 
@@ -342,7 +351,9 @@ myproject/
         memory.json               # Advisor only: relevant confirmed memory at issue
         skills/                   # Only guidance selected for this handoff
         reply.json                # Written by the external agent
-        received.json             # Frozen response after validation
+        received.json             # Frozen original response after validation
+        received.normalized.json  # Canonical view, only when conversion occurred
+        reply-normalization.json  # Versioned conversion log, when applicable
         assessment.json
       exports/<export-id>/
       lifecycle/<closure-id>/
