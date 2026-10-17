@@ -392,14 +392,16 @@ export function validateReply(value: unknown): Reply {
     return f.id as string;
   });
   unique(findings, "finding IDs");
-  for (const entry of list(r.checks, "Checks")) {
+  for (const [i, entry] of list(r.checks, "Checks").entries()) {
     const check = record(entry, "Check");
-    keys(check, ["description", "outcome", "evidence"], "Check");
+    keys(check, ["description", "outcome", "evidence", "extensions"], "Check");
     text(check.description, "Check description");
     text(check.evidence, "Check evidence");
+    if (check.extensions !== undefined)
+      record(check.extensions, "Check extensions");
     ensure(
       ["passed", "failed", "not_run"].includes(check.outcome as string),
-      "Invalid check outcome",
+      `Invalid check outcome at checks[${i}].outcome: expected passed, failed or not_run; received ${JSON.stringify(check.outcome)?.slice(0, 120) ?? "undefined"}`,
     );
   }
   if (r.mode === "advisor") {

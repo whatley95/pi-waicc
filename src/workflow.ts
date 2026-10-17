@@ -30,7 +30,7 @@ import {
 } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { recall } from "./memory.ts";
-import { normalizeReply } from "./reply.ts";
+import { normalizeReply, replyNormalizerVersion } from "./reply.ts";
 import { decisionGates } from "./decisions.ts";
 import {
   ensure,
@@ -396,7 +396,7 @@ export function ingest(cwd: string, id: string): Session {
             [`${dir}/received.normalized.json`]: json(reply),
             [`${dir}/reply-normalization.json`]: json({
               schemaVersion: 1,
-              normalizerVersion: 1,
+              normalizerVersion: replyNormalizerVersion,
               changes: normalized.changes,
             }),
           }

@@ -230,6 +230,20 @@ Required evidence/severity, pinned identity, coverage and freshness remain check
 normalization does not adopt suggestions or certify their claims. See
 [flexible finding intake](docs/PROTOCOL.md#flexible-finding-intake).
 
+Reply intake also tolerates equivalent check formats: `pass`/`success` → `passed`,
+`fail`/`failure` → `failed`, and `not run`/`not-run`/`skipped` → `not_run`.
+Checks can use `status` or `result` for `outcome`, `name`/`check`/`command` for a
+missing description, and `details`/`output` for missing evidence. Conflicting
+outcomes are rejected; additional check annotations are preserved as untrusted
+`extensions`, never executed. Check/coverage evidence arrays are joined as text;
+single-text proposed decision evidence becomes a one-item array. Casing and
+separators may be normalized only when they match the same canonical meaning.
+
+This lets `/waicc-continue` read common external-agent JSON variants without
+rewriting the original reply. It does not accept arbitrary prose, infer missing
+facts, turn top-level `PASS` into readiness, or promote unverified coverage.
+Unknown check results identify `checks[index].outcome` and the expected values.
+
 WAICC records these dependencies and conversations. It does not automatically
 schedule parallel implementations or certify that dependent tasks are complete.
 
