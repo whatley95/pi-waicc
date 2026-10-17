@@ -47,7 +47,10 @@ visible; they do not require another identical planning round.
 For authorized development, the main agent by default completes ALL planned work itself
 in dependency order and runs relevant checks before ONE independent code review.
 Do not review per task, finding or batch. Planning-only scope stops at PLAN_READY;
-the plan does not create new authority. Real remaining gates block all-done code
+the plan does not create new authority. The human /waicc-develop can explicitly
+extend the same session after an accepted plan or fresh specification PASS; no
+close/reopen/replanning is needed solely to authorize development. Check the exact
+version/path-pinned grant and its reason. Real remaining gates block all-done code
 review, even if unblocked work can be finished first.
 If the human selected implementationOwner delegate, the main agent instead coordinates
 ONE complete implementation/fix handoff and independently assesses the returned diff

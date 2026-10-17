@@ -557,33 +557,35 @@ test("default Pi review waits for whole-work evidence; main-agent fix continuati
   assert.equal(h.clipboard.length, 1);
 });
 
-test("Pi delegation commands issue one whole-work handoff and preserve main-agent coordinator ownership of assessment", async (t) => {
-  const { root, id } = fixture(t), h = harness(root);
-  const planner = receiveHandoff(root, id);
-  submitRecipientReply(root, planner.pin, { ...body(), outcome: "planned" });
-  ingest(root, id);
-  assess(root, id, { requestId: planner.pin.requestId, decision: "planned", rationale: "Plan accepted", dispositions: [] });
-  await h.commands.get("waicc-use")!.handler(id, h.ctx("owner"));
-  await h.commands.get("waicc-implement")!.handler("Implement the whole accepted plan", { ...h.ctx("owner"), mode: "tui" });
-  const s = loadSession(root, id);
-  assert.equal(s.implementationOwner, "delegate");
-  assert.equal(s.rounds.at(-1)!.wholeWork, true);
-  assert.equal(s.rounds.at(-1)!.mode, "implementation");
-  assert.equal(h.clipboard.length, 1);
-  assert.equal(h.prompts.length, 0); // No process launch/inference or application edits.
-  assert.equal(readFileSync(join(root, "source.txt"), "utf8"), "source");
-  await h.commands.get("waicc-test")!.handler("Test too early while coding handoff waits", h.ctx("owner"));
-  assert.match(h.notices.at(-1)!, /pending request/);
-  assert.equal(loadSession(root, id).rounds.length, 2);
-  cancel(root, id);
-  await h.commands.get("waicc-test")!.handler("Test all work", h.ctx("owner"));
-  assert.equal(loadSession(root, id).testingOwner, "delegate");
-  await h.commands.get("waicc-receive")!.handler(id, h.ctx("tester"));
-  assert.equal(h.active().includes("write"), false);
-  assert.equal(h.active().includes("waicc_check"), false);
-  assert.equal((await h.guard("powershell", {}, h.ctx("tester"))).block, true);
-  await assert.rejects(() => h.call("waicc_context", { sessionId: id, summary: "Recipient cannot change owner context" }, h.ctx("tester")), /handoff recipient/);
-});
+for (const command of ["waicc-help-develop", "waicc-implement"])
+  test(`Pi ${command} issues one whole-work handoff and preserves main-agent coordinator ownership of assessment`, async (t) => {
+    const { root, id } = fixture(t), h = harness(root);
+    const planner = receiveHandoff(root, id);
+    submitRecipientReply(root, planner.pin, { ...body(), outcome: "planned" });
+    ingest(root, id);
+    assess(root, id, { requestId: planner.pin.requestId, decision: "planned", rationale: "Plan accepted", dispositions: [] });
+    await h.commands.get("waicc-use")!.handler(id, h.ctx("owner"));
+    await h.commands.get(command)!.handler("Implement the whole accepted plan", { ...h.ctx("owner"), mode: "tui" });
+    const s = loadSession(root, id);
+    assert.equal(s.implementationOwner, "delegate");
+    assert.equal(s.rounds.at(-1)!.wholeWork, true);
+    assert.equal(s.rounds.at(-1)!.mode, "implementation");
+    assert.equal(h.clipboard.length, 1);
+    assert.equal(h.prompts.length, 0); // No process launch/inference or application edits.
+    assert.equal(h.clipboard[0], (status(root, id) as any).manualHandoff.copyPastePrompt);
+    assert.equal(readFileSync(join(root, "source.txt"), "utf8"), "source");
+    await h.commands.get("waicc-test")!.handler("Test too early while coding handoff waits", h.ctx("owner"));
+    assert.match(h.notices.at(-1)!, /pending request/);
+    assert.equal(loadSession(root, id).rounds.length, 2);
+    cancel(root, id);
+    await h.commands.get("waicc-test")!.handler("Test all work", h.ctx("owner"));
+    assert.equal(loadSession(root, id).testingOwner, "delegate");
+    await h.commands.get("waicc-receive")!.handler(id, h.ctx("tester"));
+    assert.equal(h.active().includes("write"), false);
+    assert.equal(h.active().includes("waicc_check"), false);
+    assert.equal((await h.guard("powershell", {}, h.ctx("tester"))).block, true);
+    await assert.rejects(() => h.call("waicc_context", { sessionId: id, summary: "Recipient cannot change owner context" }, h.ctx("tester")), /handoff recipient/);
+  });
 
 test("Pi check execution requires explicit opt-in AND per-command UI confirmation, and is not restored on resume", async (t) => {
   const { root, id } = fixture(t);
@@ -651,17 +653,17 @@ test("--main returns work to the owner without another handoff and large recipie
   ingest(root, id);
   assess(root, id, { requestId: planner.pin.requestId, decision: "planned", rationale: "Accepted plan", dispositions: [] });
   await h.commands.get("waicc-use")!.handler(id, h.ctx("owner"));
-  await h.commands.get("waicc-implement")!.handler("", h.ctx("owner"));
+  await h.commands.get("waicc-help-develop")!.handler("", h.ctx("owner"));
   cancel(root, id);
   const rounds = loadSession(root, id).rounds.length;
-  await h.commands.get("waicc-implement")!.handler("--main Finish all remaining coding myself", h.ctx("owner"));
+  await h.commands.get("waicc-help-develop")!.handler("--main Finish all remaining coding myself", h.ctx("owner"));
   assert.equal(loadSession(root, id).implementationOwner, "main");
   assert.equal(loadSession(root, id).rounds.length, rounds);
   assert.equal((status(root, id) as any).manualHandoff, null);
   assert.equal(h.prompts.length, 1);
   const context = "Important owner context and source references. ".repeat(650);
   await h.call("waicc_context", { sessionId: id, summary: context }, h.ctx("owner"));
-  await h.commands.get("waicc-implement")!.handler("", h.ctx("owner"));
+  await h.commands.get("waicc-help-develop")!.handler("", h.ctx("owner"));
   await h.commands.get("waicc-receive")!.handler(`${id} --implement`, h.ctx("worker"));
   assert.ok(h.prompts.at(-1)!.length < 32_000);
   const a = receiveHandoff(root, id, true);
@@ -684,7 +686,10 @@ test("cancel by UUID needs neither a selected session nor inference and preserve
   assert.equal(after.sequence, before.sequence + 1);
   assert.equal(after.contractVersion, before.contractVersion);
   assert.deepEqual(after.requirements, before.requirements);
-  assert.deepEqual(after.artifacts, before.artifacts);
+  for (const [path, hash] of Object.entries(before.artifacts)) assert.equal(after.artifacts[path], hash);
+  const additions = Object.keys(after.artifacts).filter((path) => !Object.hasOwn(before.artifacts, path));
+  assert.equal(additions.length, 2);
+  assert.ok(additions.every((path) => path.startsWith("checkpoints/")));
   assert.equal(readFileSync(join(root, "source.txt"), "utf8"), "source");
   assert.equal(h.prompts.length, 0);
   assert.equal(h.entries.length, 0);

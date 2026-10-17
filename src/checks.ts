@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { commit, json, loadSession, now, withLock } from "./files.ts";
+import { json, loadSession, now, withLock } from "./files.ts";
+import { commitWithCheckpoint as commit } from "./checkpoint.ts";
 import { assertRecipientCurrent } from "./recipient.ts";
 import { roundDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";

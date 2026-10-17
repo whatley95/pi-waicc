@@ -102,7 +102,7 @@ test("delegation needs a current accepted plan, explicit ownership, whole scope 
   const { root, s: pending } = fixture(t);
   assert.throws(() => delegateWork(root, pending.id, "implementation", "Not accepted"), /Accept a current planning reply/);
   let s = decide(root, answer(root, pending, { outcome: "planned" }), "planned");
-  assert.throws(() => issue(root, s.id, "implementation", "No human choice"), /explicit \/waicc-implement/);
+  assert.throws(() => issue(root, s.id, "implementation", "No human choice"), /explicit \/waicc-help-develop/);
   assert.throws(() => issue(root, s.id, "testing", "No human choice"), /requires \/waicc-test/);
   s = delegateWork(root, s.id, "implementation", "Implement everything");
   assert.equal(s.implementationOwner, "delegate");
@@ -132,7 +132,7 @@ test("coding/testing delegation is optional and the human can switch back to mai
   s = useMainWork(root, s.id, "implementation");
   assert.equal(s.implementationOwner, "main");
   assert.equal(s.rounds.length, 2);
-  assert.throws(() => issue(root, s.id, "implementation", "Do not silently re-delegate"), /explicit \/waicc-implement/);
+  assert.throws(() => issue(root, s.id, "implementation", "Do not silently re-delegate"), /explicit \/waicc-help-develop/);
   s = delegateWork(root, s.id, "testing", "Optional independent testing");
   cancel(root, s.id);
   s = useMainWork(root, s.id, "testing");
@@ -270,10 +270,15 @@ test("CLI supports delegated planning, implementation and optional testing with 
   const another = run("start", "--delegate", "Another coding objective");
   assert.equal(another.implementationOwner, "delegate");
   assert.equal(another.requirements[0], "Another coding objective");
-  const implementation = run("implement", s.id);
-  assert.equal(implementation.rounds.at(-1).mode, "implementation");
-  assert.equal(implementation.rounds.at(-1).wholeWork, true);
-  cancel(root, s.id);
+  for (const command of ["help-develop", "implement"]) {
+    const implementation = run(command, s.id);
+    assert.equal(implementation.rounds.at(-1).mode, "implementation");
+    assert.equal(implementation.rounds.at(-1).wholeWork, true);
+    cancel(root, s.id);
+    const main = run(command, s.id, "--main");
+    assert.equal(main.implementationOwner, "main");
+    assert.equal(main.rounds.length, implementation.rounds.length);
+  }
   const testing = run("test", s.id);
   assert.equal(testing.rounds.at(-1).mode, "testing");
   assert.equal(testing.testingOwner, "delegate");
