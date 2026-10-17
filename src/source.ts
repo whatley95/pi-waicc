@@ -54,6 +54,22 @@ function excluded(path: string): boolean {
     /^\.pi\/pi-waicc(?:\/|$)/i.test(path)
   );
 }
+/** Normalize SVN-generated start tags, not arbitrary XML or property text. */
+export function normalizeSvnXml(xml: string): string {
+  return xml.replace(
+    /<([A-Za-z_][\w:.-]*)((?:\s+[A-Za-z_][\w:.-]*\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g,
+    (_tag, name: string, attributes: string, slash: string) => {
+      const sorted = [
+        ...attributes.matchAll(/([A-Za-z_][\w:.-]*)\s*=\s*("[^"]*"|'[^']*')/g),
+      ]
+        .map((attribute) => `${attribute[1]}=${attribute[2]}`)
+        .sort();
+      // Do not trim/normalize element text: property whitespace and binary/base64
+      // values are evidence, unlike insignificant start-tag formatting.
+      return `<${name}${sorted.length ? ` ${sorted.join(" ")}` : ""}${slash}>`;
+    },
+  );
+}
 export function snapshot(root: string): SourceSnapshot {
   const vcs = existsSync(join(root, ".git"))
     ? "git"
@@ -123,7 +139,7 @@ export function snapshot(root: string): SourceSnapshot {
           const path = decode(entry[1]).replaceAll("\\", "/");
           return path !== ".pi" && !omit(path);
         })
-        .map((entry) => entry[0])
+        .map((entry) => normalizeSvnXml(entry[0]))
         .sort();
       const properties = command(
         "svn",
@@ -131,7 +147,9 @@ export function snapshot(root: string): SourceSnapshot {
         root,
       );
       ensure(properties !== null, "Cannot fingerprint SVN property values");
-      vcsState = digest(JSON.stringify({ entries, properties }));
+      vcsState = digest(
+        JSON.stringify({ entries, properties: normalizeSvnXml(properties) }),
+      );
     }
     const walk = (relative: string): void => {
       for (const item of readdirSync(

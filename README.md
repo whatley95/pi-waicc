@@ -341,7 +341,10 @@ exchange, not whole-contract coverage, resolution of findings, or permission to 
 
 Git fingerprints include revision, index and working-tree/untracked nonignored file
 content. SVN fingerprints include root revision, reported working-copy changes,
-actual property values and source content, including untracked files. Common
+actual property values and source content, including untracked files. SVN XML
+attribute order is normalized, so repeated unchanged reads keep the same fingerprint;
+property values and real working-copy changes still matter. Pending SVN handoffs
+from before this normalization may need a fresh request after upgrading. Common
 untracked build/dependency directories and WAICC output are excluded; tracked source
 is retained even under a build-named directory. Symlinks/junctions fail closed rather
 than expanding scope.

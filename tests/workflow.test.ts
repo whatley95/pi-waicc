@@ -1317,6 +1317,12 @@ test("SVN detects content/property changes and explicit ignore preserves prior r
   run("svn", ["commit", "-m", "fixture"], root);
   const before = snapshot(root);
   assert.equal(before.vcs, "svn");
+  for (let repeat = 0; repeat < 4; repeat++)
+    assert.equal(
+      snapshot(root).fingerprint,
+      before.fingerprint,
+      "Identical SVN reads must stay stable",
+    );
   planned(root);
   assert.equal(snapshot(root).fingerprint, before.fingerprint);
   run("svn", ["propset", "svn:ignore", "existing-rule", "."], root);
@@ -1327,7 +1333,24 @@ test("SVN detects content/property changes and explicit ignore preserves prior r
   assert.ok(ignore.includes(".pi"));
   const pinned = snapshot(root);
   run("svn", ["propset", "custom:property", "new-value", "app.txt"], root);
-  assert.notEqual(snapshot(root).fingerprint, pinned.fingerprint);
+  const changedProperty = snapshot(root);
+  assert.notEqual(changedProperty.fingerprint, pinned.fingerprint);
+  for (let repeat = 0; repeat < 4; repeat++)
+    assert.equal(
+      snapshot(root).fingerprint,
+      changedProperty.fingerprint,
+      "SVN properties must stay stable across reads",
+    );
+  run(
+    "svn",
+    ["propset", "custom:property", "different-value", "app.txt"],
+    root,
+  );
+  assert.notEqual(
+    snapshot(root).fingerprint,
+    changedProperty.fingerprint,
+    "A changed property value must be detected even when props status stays modified",
+  );
   writeFileSync(join(root, "app.txt"), "new source");
   assert.notDeepEqual(snapshot(root).files, pinned.files);
 });
