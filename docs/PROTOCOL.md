@@ -6,6 +6,120 @@ except finding annotations preserved by the compatibility layer described below.
 The extension controls generated IDs, paths, input fingerprints and journal writes.
 Agent output is data, never a shell command or permission to change scope.
 
+## Objective, development authority and decision transitions
+
+New Pi/CLI sessions persist objective planning (or review for a new standalone review),
+an overall 20-round cap and phase caps: specification 8, implementation 6, testing 4,
+code_review 8, advisor 4. Low-level createSession accepts optional objective; omission
+retains legacy behavior/default 12-round cap. Stored older sessions are not rewritten
+or silently given larger budgets. Round.phase is persisted for new rounds; old phase
+usage is classified from its explicit mode/kind, with legacy reviews specification-only.
+Both overall and phase caps apply. Human /waicc-limit [phase] <2-20> updates only the
+selected cap; transition/decision commands never create a round or reset usage.
+
+Plan acceptance, specification approval and implementation authorization are distinct.
+New objective-aware specification review ready -> SPEC_APPROVED, while code review
+ready -> READY_TO_CLOSE. Legacy spec records can retain READY_TO_CLOSE, but status
+labels them specification-only and advertises /waicc-develop, not just closure. New
+planning ready assessments mean PLAN_READY, not the legacy implementation handoff.
+Planning-only SPEC_APPROVED may be explicitly closed; development cannot close on
+specification PASS. New reviews always persist kind. Display missing legacy kind as
+legacy_contract and malformed kinds as unknown, never silently code.
+
+Human /waicc-develop [--main|--delegate] accepts the current plan and changes objective
+to development. Preconditions: open session, no pending request, coherent readyPlan,
+current requirements and either acceptedPlanCurrent or a fresh current specification
+PASS, without an outstanding failed specification review. It writes immutable
+authorizations/<id>.json and implementationAuthorization pinned to contract version,
+requirements digest and allowed-path digest, with source baseline/provenance. It
+creates no handoff, round or process; repeated current grants are idempotent. Human
+/waicc-help-develop is also explicit authority/delegation for an already accepted plan.
+/waicc-implement remains a compatibility alias; it does not change authority or scope.
+Agent tools cannot grant authority; commands/CLI are human entry points, not actions
+for a model to invoke through general shell/file tools.
+
+implementationAuthorized describes the exact grant, NOT execution readiness or
+completion. READY_TO_IMPLEMENT has no open gates; IMPLEMENTATION_GATED carries a
+valid grant with affected/dependent tasks still blocked. Main may complete genuinely
+unblocked scoped work; whole-plan implementation handoffs and all-done code reviews
+still require readyContract (all gates resolved). Every ordinary version/scope change
+makes the grant stale. Reopening clears the active grant; history remains immutable.
+Coordinator edit/write guards check objective, grant, owner and pending assignments;
+they are not OS/shell isolation, and never grant production or credential permissions.
+
+/waicc-decisions exposes a consolidated brief including recommendation/evidence,
+owner/status and affected/unblocked task IDs. Every new contract version includes
+DECISIONS.md. Human /waicc-decide <id> <answer> changes only an existing unresolved
+decision's status/answer/evidence in a new contract version and decisions/<id>.json
+audit; original requirements, tasks and paths are unchanged. It rejects pending work,
+unknown IDs, conflicting re-answers and CLOSED sessions. Exact repeated answers are
+idempotent. Requirement/scope changes still require amendments. This narrow explicit
+human action may repin existing acceptance/current authorization, but never resurrects
+missing/stale authority or carries specification/code PASS to the new version.
+
+Status/checkpoints expose objective/derived phase, planApproval plus computed legacy-
+aware planAccepted, authorization plus reason, separate specification/code review
+evidence, open gates, and source/version-labelled reported task counts. Unknown count
+is null, not zero or verified. Hash/identity pins do not prove implementation or that
+checks ran; deliveryVerified remains false. Checkpoint/export archives retain grant,
+decision audit and decision brief originals with their digests.
+
+## Compact checkpoints and recovery
+
+Session.checkpoint optionally identifies immutable JSON/Markdown artifacts and their
+canonical sequence. Workflow commits atomically write a new deterministic checkpoint
+alongside state/artifacts; local check start/result commits do the same. Existing
+artifacts are never rewritten. The projection reads original canonical requirements,
+contract and journal state, not an older checkpoint. A new round.checkpointVersion=1
+freezes CHECKPOINT.md/checkpoint.json in that request. Later assessments/checkpoints
+never change those issue-time bytes. Legacy rounds are not retroactively rewritten.
+
+checkpoint.json records every requirement/task/acceptance/dependency/path mapping,
+decision ID/state, historical finding identity/disposition, failed/passed/not_run check
+claim, completion/assessment pointer, owners, approvals, requirement digest, recorded
+source fingerprint and an exact original-artifact path/hash index. It does not infer
+completed tasks or promote a reply claim to verified evidence. Decisions/constraints,
+rationale and full check evidence remain in the referenced originals. CHECKPOINT.md
+is a bounded recovery brief, not a substitute for the exact requirements/contract or
+the index. Large histories are expanded on demand. Full code review still covers
+all requirements/tasks/criteria and all earlier actionable findings/fixes.
+
+waicc_checkpoint is read-only. It validates checkpoint hashes/canonical projection
+and referenced originals, reports current-source comparison and exposes exact paths.
+Source drift does not mutate status or invalidate an accepted plan merely by reading;
+it does prevent treating historical checks/PASS as proof for changed code. New source
+approval and intake freshness rules remain unchanged. Before-agent recovery performs
+the lighter projection/brief check; compaction/tool recovery also verifies originals.
+Recipient recovery validates only its exact frozen request and never selects the
+owner's newer checkpoint, restores check permission on reload or grants new tools.
+
+Pi owns transcript compaction/retention. WAICC's session_before_compact hook validates
+recoverability (cancels on errors) and leaves Pi's compaction implementation/threshold
+unchanged; before_agent_start reloads the compact checkpoint.
+session_compact also marks an ongoing run for request-local context recovery,
+covering threshold/overflow retries before another before_agent_start occurs.
+The context hook inserts/replaces only WAICC's own recovery message, does not persist
+or rewrite the transcript and never starts a turn. Normal per-run recovery resets it.
+
+/waicc-compact [notes] requires an idle trusted chat, validates evidence and requests ctx.compact with
+instructions to preserve chat-only constraints/decisions/rationale, unfinished work,
+actual checks/limits and next action. Pi completion/failure callbacks distinguish a
+request from successful compaction. No new model turn, handoff, approval or closure
+is triggered. Optional notes append to owner context only when no handoff is pending.
+Human cancel/force-close cannot be obstructed by damaged contract/observed-source
+artifacts needed only for checkpoint generation. Their checkpoint records projection
+errors, preserves the damaged originals and refuses recovery/compaction until the
+evidence is addressed; stopping never repairs, approves or hides that damage.
+Without notes, pending packets stay untouched. CLOSED recovery/compaction writes
+nothing and never reopens a contract. Uncaptured chat cannot be reconstructed by a
+canonical-state index; use waicc_context when allowed and Pi's retained chat/summary.
+
+CLI checkpoint is read-only and compact validates/creates only the checkpoint, not
+chat compaction. Checkpoint refresh is idempotent when current and valid. Portable
+exports copy the frozen checkpoint unchanged and every indexed original byte-for-byte
+under archive/; its session-relative artifact paths resolve there. No source checkout
+is included. Existing legacy handoff export/recovery behavior remains available.
+
 ## Contract body
 
 Pass this body to `waicc_prepare` or the CLI `prepare` command. Metadata such as
@@ -406,10 +520,12 @@ noted is rejected for other modes. Adoption requires a human decision and a sepa
 explicit contract revision; new requirements still require an amendment.
 
 Planned planning accepts the specification as PLAN_READY without an external implementation handoff.
-The main agent then completes all work if the original assignment authorizes implementation;
-planning-only scope stops there. A plan creates no new execution authority.
-Legacy ready planning creates an implementation handoff; ready implementation requests
-independent review; ready full-contract review records PASS and READY_TO_CLOSE.
+The main agent then completes all work only with current recorded development
+authorization; new planning-only scope stops there until the human transition.
+A plan creates no new execution authority. Legacy objective-unrecorded ready planning
+can create an implementation handoff; new objective-aware ready planning stays
+PLAN_READY. Ready implementation requests independent review. Code-review PASS uses
+READY_TO_CLOSE; new specification-only PASS uses SPEC_APPROVED.
 A task-scoped ready review still requires full review and cannot authorize closure.
 No state means
 automatic deployment or verified delivery. The extension never runs model inference
@@ -425,14 +541,15 @@ is assessed through the existing Pi agent on /waicc-continue.
 Default implementationOwner/testingOwner is main. `/waicc-planning --delegate` saves
 the original requirements without the flag and selects implementationOwner delegate.
 After planning adoption the coordinator may issue ONE whole-work implementation
-request. `/waicc-implement [focus]` selects delegation later and issues that request;
+request. `/waicc-help-develop [focus]` selects delegation later and issues that request;
 `/waicc-test [focus]` similarly selects optional testing. Both require an accepted
 current plan, resolved execution gates, no pending round and no task/batch scope.
 Subsequent waicc_request implementation/testing requires the corresponding saved
-human delegation choice. `/waicc-implement --main` / `/waicc-test --main` restores
+human delegation choice. `/waicc-help-develop --main` / `/waicc-test --main` restores
 main ownership without a handoff, after pending work is assessed/cancelled. These
-commands never launch agents or kill existing workers. CLI: implement/test <session>
-[--main] [focus]; start --delegate <requirements>.
+commands never launch agents or kill existing workers. CLI:
+`help-develop <session> [--main] [focus]` (`implement` remains its alias),
+`test <session> [--main] [focus]`; `start --delegate <requirements>`.
 
 planApproval pins the accepted contract version/requirements/request. Preparing a
 new draft or amending requirements clears acceptance. Intentional in-scope contract
@@ -565,7 +682,8 @@ A ready full review pins `reviewApproval` with kind (code/contract), requestId,
 contractVersion, requirementsDigest, sourceFingerprint and assessedAt. These describe
 assessed review evidence of that kind, not independent proof that tests passed.
 
-Normal `/waicc-close [session-id] <reason>` (CLI: `close <session> <reason>`) requires READY_TO_CLOSE,
+Normal `/waicc-close [session-id] <reason>` (CLI: `close <session> <reason>`) requires READY_TO_CLOSE
+(or SPEC_APPROVED for planning-only/non-development work),
 no pending WAITING/RECEIVED round, and that pinned approval still matches the latest
 contract, requirements and actual source. The contract and committed review evidence
 are checked for modification. It records CLOSED, keeps contractReview PASS, and

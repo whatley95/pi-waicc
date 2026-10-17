@@ -6,8 +6,12 @@ import { configureSvnIgnore } from "./ignore.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { curate, propose, recall } from "./memory.ts";
 import { projectRoot } from "./source.ts";
+import { checkpointView, refreshCheckpoint } from "./checkpoint.ts";
 import {
   assess,
+  beginDevelopment,
+  decisionsView,
+  resolveDecision,
   amend,
   cancel,
   closeSession,
@@ -26,7 +30,7 @@ import {
 } from "./workflow.ts";
 import { advisorInput, ensure } from "./validation.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
-import type { Mode } from "./types.ts";
+import type { Mode, RoundPhase } from "./types.ts";
 import type { ReviewRequest } from "./review.ts";
 
 const args = process.argv.slice(2);
@@ -57,18 +61,41 @@ try {
   switch (command) {
     case "start": {
       const delegated = id === "--delegate";
-      output = createSession(cwd, args.slice(delegated ? 2 : 1).join(" "), delegated ? "delegate" : undefined);
+      output = createSession(cwd, args.slice(delegated ? 2 : 1).join(" "), delegated ? "delegate" : undefined, "planning");
       break;
     }
+    case "help-develop":
     case "implement":
-    case "test":
+    case "test": {
+      const mode = command === "test" ? "testing" : "implementation";
       output = rest[0] === "--main"
-        ? useMainWork(cwd, id, command === "implement" ? "implementation" : "testing")
-        : delegateWork(cwd, id, command === "implement" ? "implementation" : "testing", rest.join(" ") ||
-        (command === "implement" ? "Complete the entire accepted plan and all fixes; run relevant permitted checks" : "Verify the entire implementation and prior fixes with actual permitted checks; do not edit code/tests"));
+        ? useMainWork(cwd, id, mode)
+        : delegateWork(cwd, id, mode, rest.join(" ") ||
+        (mode === "implementation" ? "Complete the entire accepted plan and all fixes; run relevant permitted checks" : "Verify the entire implementation and prior fixes with actual permitted checks; do not edit code/tests"));
+      break;
+    }
+    case "develop":
+      ensure(id && rest.length <= 1 && (!rest[0] || ["--main", "--delegate"].includes(rest[0])), "Usage: waicc develop <session-id> [--main|--delegate]");
+      output = beginDevelopment(cwd, id, rest[0] === "--main" ? "main" : rest[0] === "--delegate" ? "delegate" : undefined);
+      break;
+    case "decisions":
+      ensure(id && !rest.length, "Usage: waicc decisions <session-id>");
+      output = decisionsView(cwd, id);
+      break;
+    case "decide":
+      ensure(id && rest.length >= 2, "Usage: waicc decide <session-id> <decision-id> <answer>");
+      output = resolveDecision(cwd, id, rest[0], rest.slice(1).join(" "));
       break;
     case "context":
       output = saveContext(cwd, id, rest.join(" "));
+      break;
+    case "compact":
+      ensure(id && rest.length === 0, "Usage: waicc compact <session-id> (checkpoint only; Pi owns chat compaction)");
+      output = refreshCheckpoint(cwd, id);
+      break;
+    case "checkpoint":
+      ensure(id && rest.length === 0, "Usage: waicc checkpoint <session-id>");
+      output = checkpointView(projectRoot(cwd), loadSession(projectRoot(cwd), id));
       break;
     case "status":
       output = ["open", "all", "closed", "deleted"].includes(id)
@@ -161,7 +188,8 @@ try {
       };
       break;
     case "limit":
-      output = setRoundLimit(cwd, id, Number(rest[0]));
+      ensure(rest.length === 1 || rest.length === 2, "Usage: waicc limit <session> [phase] <2-20>");
+      output = setRoundLimit(cwd, id, Number(rest.at(-1)), rest.length === 2 ? rest[0] as RoundPhase : undefined);
       break;
     case "ignore":
       output = configureSvnIgnore(projectRoot(cwd));
@@ -183,7 +211,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | implement <session> [--main] [focus] | test <session> [--main] [focus] | context <session> <summary> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));
