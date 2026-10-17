@@ -152,11 +152,22 @@ export function recoverLock(root: string): void {
 }
 export const sessionRelative = (id: string): string =>
   `${runtimePath}/sessions/${identifier(id, "Session ID")}`;
+export const deletedSessionRelative = (id: string): string =>
+  `${runtimePath}/deleted-sessions/${identifier(id, "Session ID")}`;
 export function loadSession(root: string, id: string): Session {
-  const path = safePath(root, `${sessionRelative(id)}/journal`);
+  return loadStoredSession(root, id, false);
+}
+export function loadDeletedSession(root: string, id: string): Session {
+  return loadStoredSession(root, id, true);
+}
+function loadStoredSession(root: string, id: string, deleted: boolean): Session {
+  const directory = deleted ? deletedSessionRelative(id) : sessionRelative(id);
+  const path = safePath(root, `${directory}/journal`);
   ensure(
     existsSync(path),
-    `Unknown WAICC session ${id}. List sessions with /waicc-status all (CLI: status).`,
+    deleted
+      ? `Unknown deleted WAICC session ${id}. List recovery storage with /waicc-list deleted (CLI: list deleted).`
+      : `Unknown WAICC session ${id}. List sessions with /waicc-status all (CLI: status all); use /waicc-list deleted to find deleted sessions.`,
   );
   const commits = readdirSync(path)
     .filter((name) => /^\d{8}-[a-f0-9-]+\.json$/.test(name))
@@ -167,7 +178,7 @@ export function loadSession(root: string, id: string): Session {
     at: string;
     session: Session;
   }>(
-    safePath(root, `${sessionRelative(id)}/journal/${commits.at(-1)!}`),
+    safePath(root, `${directory}/journal/${commits.at(-1)!}`),
     32_000_000,
   );
   const s = entry.session;
@@ -263,22 +274,31 @@ export function artifact(root: string, session: Session, path: string): string {
   );
   return content;
 }
-export function listSessions(
-  root: string,
-): {
+interface SessionSummary {
   id: string;
   status: string;
   createdAt: string;
   updatedAt: string;
   contractReview: Session["contractReview"];
   deliveryVerified: false;
-}[] {
-  const path = safePath(root, `${runtimePath}/sessions`);
+}
+export function listSessions(root: string): SessionSummary[] {
+  return storedSessions(root, false);
+}
+export function listDeletedSessions(root: string): SessionSummary[] {
+  return storedSessions(root, true);
+}
+function storedSessions(root: string, deleted: boolean): SessionSummary[] {
+  const path = safePath(
+    root,
+    `${runtimePath}/${deleted ? "deleted-sessions" : "sessions"}`,
+  );
   if (!existsSync(path)) return [];
   return readdirSync(path)
     .filter((name) => /^[a-f0-9-]{36}$/.test(name))
     .filter((id) => {
-      const journal = safePath(root, `${sessionRelative(id)}/journal`);
+      const directory = deleted ? deletedSessionRelative(id) : sessionRelative(id);
+      const journal = safePath(root, `${directory}/journal`);
       return (
         existsSync(journal) &&
         readdirSync(journal).some((file) =>
@@ -287,7 +307,7 @@ export function listSessions(
       );
     })
     .map((id) => {
-      const s = loadSession(root, id);
+      const s = deleted ? loadDeletedSession(root, id) : loadSession(root, id);
       return {
         id,
         status: s.status,

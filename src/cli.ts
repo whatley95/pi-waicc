@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { json, recoverLock, loadSession } from "./files.ts";
 import { configureSvnIgnore } from "./ignore.ts";
+import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { curate, propose, recall } from "./memory.ts";
 import { projectRoot } from "./source.ts";
 import {
@@ -12,6 +13,7 @@ import {
   closeSession,
   createSession,
   exportHandoff,
+  forceCloseSession,
   ingest,
   issue,
   prepare,
@@ -20,7 +22,7 @@ import {
   status,
 } from "./workflow.ts";
 import { advisorInput, ensure } from "./validation.ts";
-import type { Assessment } from "./workflow.ts";
+import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode } from "./types.ts";
 
 const args = process.argv.slice(2);
@@ -41,7 +43,25 @@ try {
       output = createSession(cwd, args.slice(1).join(" "));
       break;
     case "status":
-      output = status(cwd, id === "all" ? undefined : id);
+      output = ["open", "all", "closed", "deleted"].includes(id)
+        ? status(cwd, undefined, id as SessionListFilter)
+        : status(cwd, id);
+      break;
+    case "list":
+      ensure(
+        (!id || ["open", "all", "closed", "deleted"].includes(id)) &&
+          rest.length === 0,
+        "Usage: waicc list [open|all|closed|deleted]",
+      );
+      output = status(cwd, undefined, (id || "open") as SessionListFilter);
+      break;
+    case "delete":
+      ensure(id && rest.length === 0, "Usage: waicc delete <session-id>");
+      output = deleteSession(cwd, id);
+      break;
+    case "restore":
+      ensure(id && rest.length === 0, "Usage: waicc restore <session-id>");
+      output = restoreSession(cwd, id);
       break;
     case "prepare": {
       const s = loadSession(projectRoot(cwd), id);
@@ -78,10 +98,13 @@ try {
       break;
     }
     case "cancel":
-      output = cancel(cwd, id, rest.join(" "));
+      output = cancel(cwd, id, rest.join(" ") || undefined);
       break;
     case "close":
-      output = closeSession(cwd, id, rest.join(" "));
+      output =
+        rest[0] === "--force"
+          ? forceCloseSession(cwd, id, rest.slice(1).join(" ") || undefined)
+          : closeSession(cwd, id, rest.join(" "));
       break;
     case "reopen":
       output = reopenSession(cwd, id, rest.join(" "));
@@ -120,7 +143,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start <requirements> | status [session] | prepare <session> <contract.json> [planning|review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | reopen <session> <reason> | cancel <session> <reason> | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start <requirements> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));

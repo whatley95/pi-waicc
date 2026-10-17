@@ -265,12 +265,17 @@ model assessment is not proof of tested delivery.
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
 | `/waicc-handoff [session-id]`                    | Show a copy-only manual recipient prompt, access requirements and separate human return steps         |
 | `/waicc-receive <session-id> [--implement]`      | Receive one pinned handoff in this Pi chat; implementation edits require explicit opt-in              |
-| `/waicc-status [all\|session-id]`                | Show selected progress or list project sessions                                                       |
+| `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
+| `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |
+| `/waicc-delete <session-id>`                    | Move one CLOSED session to project-local recovery storage; no source or shared-memory deletion           |
+| `/waicc-restore <session-id>`                   | Restore a deleted session as CLOSED, preserving history without selecting or reopening it               |
 | `/waicc-use <session-id>`                        | Select coordinator mode for an existing project session; explicitly leaves recipient mode             |
-| `/waicc-close <reason>`                          | Explicitly close a fresh, passing full-contract review in READY_TO_CLOSE                              |
+| `/waicc-close [session-id] <reason>`             | Accept and close a fresh, passing full-contract review in READY_TO_CLOSE                               |
+| `/waicc-close [session-id] --force [reason]`     | Stop the contract immediately, cancel pending handoffs and preserve history; no review PASS             |
+| `/waicc-force-close [session-id] [reason]`       | Shortcut for force-close; ID alone works, or omit it for the selected session                           |
 | `/waicc-reopen <reason>`                         | Reopen a closed contract; clears PASS and requires a fresh review                                     |
 | `/waicc-amend <requirement change>`              | Append original-scope amendments and invalidate pending requests                                      |
-| `/waicc-cancel <reason>`                         | Cancel an outstanding handoff without deleting history                                                |
+| `/waicc-cancel [session-id] [reason]`            | Cancel a pending handoff by ID or in the selected session; reason optional, history preserved           |
 | `/waicc-export`                                  | Package the pending handoff, requirements, contract and selected skill references                     |
 | `/waicc-limit <2–20>`                            | Explicitly adjust the default 12-round limit                                                          |
 | `/waicc-memory [query]`                          | Inspect candidate/active/stale memory                                                                 |
@@ -281,7 +286,24 @@ Bindings are per Pi chat and repository, persisted in Pi's session entries. Mult
 sessions are never silently resolved by choosing the newest. `/waicc-use` provides
 explicit recovery if Pi's history is unavailable.
 
-`/waicc-status all` lists each session's ID, status, `createdAt` and `updatedAt`,
+To cancel, use `/waicc-cancel <session-id>` directly in a coordinator chat—no
+`/waicc-use` or `/waicc-receive` needed. If a session is already selected, just
+`/waicc-cancel` works. A reason is optional and defaults to `Cancelled by user.`;
+`/waicc-cancel <reason>` still cancels the selected session's pending handoff.
+An explicit ID does not change this chat's selected session. Cancellation marks
+the pending round CANCELLED and the session NEEDS_CHANGES; it does not delete or
+close the contract, stop an external process, or automatically inherit context into
+a new session. Start a fresh contract with `/waicc-planning <requirements>` and
+explicitly reference the old session if its history should be used as context.
+Recipient chats still require `/waicc-use <session-id>` to leave recipient mode
+before coordinator actions such as cancellation.
+
+`/waicc-list` hides CLOSED sessions, regardless of the chat's selection. Use
+`/waicc-list all` to include them or `/waicc-list closed` to see only closed sessions.
+`/waicc-status` without a selection also defaults to the open-session list; with a
+selection it still shows that session's details, including a closed one.
+
+`/waicc-status all` (equivalent to `/waicc-list all`) lists each retained session's ID, status, `createdAt` and `updatedAt`,
 plus `contractReview` and `deliveryVerified`, sorted by most recent activity first.
 Both timestamps also appear in single-session
 status. Times are UTC: creation stays fixed; update time is the latest committed
@@ -290,12 +312,58 @@ and round-limit changes). Reading status or waiting for a reply does not update 
 neither do unrelated file edits or writing an external reply before intake. Older
 sessions recover their update time from the existing journal without migration.
 
+### Remove a closed session
+
+```text
+/waicc-delete <session-id>
+```
+
+This requires an explicit ID and a CLOSED session; it never closes or deletes open
+work automatically. The entire session directory moves from
+`.pi/pi-waicc/sessions/<id>` to `.pi/pi-waicc/deleted-sessions/<id>`. It disappears
+even from `/waicc-list all`, but remains recoverable:
+
+```text
+/waicc-list deleted
+/waicc-restore <session-id>
+```
+
+Restoration returns the original history and verdict, still CLOSED, without
+reopening or selecting the session. Neither operation rewrites journals or changes
+their activity timestamps. They leave project source, other sessions and shared
+project memory unchanged. This is recoverable deletion, not permanent erasure or
+the operating system's recycle bin; no automatic purge is performed.
+
+Delete/restore are human coordinator commands, not agent tools. Deleting the current
+selection clears that chat's saved selection. Other chats pointing to the deleted
+session report it unavailable without selecting another session. CLI equivalents:
+`waicc list [open|all|closed|deleted]`, `waicc delete <id>`, `waicc restore <id>`.
+
 ## Finish a contract discussion
 
 `READY_TO_CLOSE` means **review passed; waiting for your final decision**.
 `CLOSED` means **you explicitly finished the contract discussion**. Review agents
 recommend readiness; only an assessed full-contract review can record PASS. No
 assessment closes the contract automatically.
+
+To stop an unfinished contract immediately, use:
+
+```text
+/waicc-force-close <session-id>
+```
+
+Or just `/waicc-force-close` for the selected session. No separate cancel,
+receive, review or reason is required; append a reason only if useful.
+This also works as a human stop command in a recipient chat, without granting the
+recipient coordinator tools or changing its binding. It records `status: CLOSED`,
+`closure.kind: forced`, `contractReview: NOT_REVIEWED`, and `deliveryVerified: false`.
+Pending handoffs are CANCELLED and history is retained. This is termination, not
+contract acceptance or a claim of successful review. It does not kill external
+agent processes. Repeating force-close on an already closed contract is a no-op;
+an existing reviewed closure is not downgraded. `/waicc-close [session-id] --force [reason]`
+is an equivalent form. CLI: `waicc close <session-id> --force [reason]`.
+
+To accept a successfully reviewed contract, use normal closure instead:
 
 ```text
 /waicc-close Contract accepted for implementation
@@ -318,7 +386,7 @@ If a legacy implementation handoff is already pending, first explicitly
 Send that handoff to a reviewer. When its reply is ready, `/waicc-continue` starts
 assessment; close only after it reaches `READY_TO_CLOSE`.
 
-Closure requires the latest passing review to match the current contract,
+Normal, reviewed closure requires the latest passing review to match the current contract,
 requirements and source, with no reply pending. A changed source makes status show
 `STALE` instead, without rewriting history or update time. A revised contract must
 be reviewed in a new round; task-only reviews, planning readiness and advice cannot
@@ -423,9 +491,10 @@ myproject/
         assessment.json
       exports/<export-id>/
       lifecycle/<closure-id>/
-        closure.json              # Pinned PASS, explicit reason and close time
+        closure.json              # Reviewed PASS or explicit forced closure, reason and time
         CLOSURE.md
         reopen.json               # Present if this closure was reopened
+    deleted-sessions/<session-id>/ # Recoverably deleted CLOSED session, complete original tree
 ```
 
 Git ignores generated state using a `.gitignore` inside `.pi/pi-waicc`; no root

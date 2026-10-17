@@ -22,12 +22,16 @@ export interface ReviewApproval {
   sourceFingerprint: string;
   assessedAt: string;
 }
-export interface Closure {
+interface ClosureRecord {
   id: string;
   closedAt: string;
   reason: string;
-  approval: ReviewApproval;
 }
+export type Closure = ClosureRecord &
+  (
+    | { kind?: "reviewed"; approval: ReviewApproval }
+    | { kind: "forced"; approval?: never; cancelledRequestIds: string[] }
+  );
 export interface Requirement {
   id: string;
   text: string;

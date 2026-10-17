@@ -8,6 +8,7 @@ import {
   digest,
   json,
   listSessions,
+  listDeletedSessions,
   loadSession,
   now,
   readJson,
@@ -659,18 +660,28 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     return commit(root, s, "reply.assessed", files);
   });
 }
-export function cancel(cwd: string, id: string, reason: string): Session {
+export function cancel(
+  cwd: string,
+  id: string,
+  reason = "Cancelled by user.",
+): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
     requireOpen(s);
-    text(reason, "Cancellation reason");
+    const rationale = text(
+      reason.trim() || "Cancelled by user.",
+      "Cancellation reason",
+    );
     const r = s.rounds.findLast((round) =>
       ["WAITING", "RECEIVED"].includes(round.status),
     );
-    ensure(r, "There is no pending request");
+    ensure(
+      r,
+      "There is no pending handoff to cancel. History is preserved; start /waicc-planning <requirements> for a new contract.",
+    );
     r.status = "CANCELLED";
-    r.rationale = reason;
+    r.rationale = rationale;
     s.status = "NEEDS_CHANGES";
     resetReview(s);
     return commit(root, s, "request.cancelled");
@@ -690,6 +701,63 @@ export function amend(cwd: string, id: string, amendment: string): Session {
     return commit(root, s, "requirements.amended", {
       [`amendments/${s.requirements.length - 1}.md`]: `${amendment}\n`,
     });
+  });
+}
+function closureFiles(s: Session, detail: string): Record<string, string> {
+  ensure(s.closure, "Closure record is required");
+  const dir = `lifecycle/${s.closure.id}`;
+  return {
+    [`${dir}/closure.json`]: json({
+      schemaVersion: 1,
+      sessionId: s.id,
+      status: s.status,
+      contractReview: s.contractReview,
+      closure: s.closure,
+      deliveryVerified: false,
+      verified: false,
+    }),
+    [`${dir}/CLOSURE.md`]: `# CLOSED\n\n${s.closure.reason}\n\nClosure kind: ${s.closure.kind ?? "reviewed"}.\nContract v${s.contractVersion}; session ${s.id}.\nClosed at: ${s.closure.closedAt}.\n\n${detail}\n\nThis ends the contract discussion, not code delivery. Delivery verified: false.\n`,
+  };
+}
+export function forceCloseSession(
+  cwd: string,
+  id: string,
+  reason = "Force-closed by user.",
+): Session {
+  const root = projectRoot(cwd);
+  return withLock(root, () => {
+    const s = loadSession(root, id);
+    const rationale = text(
+      reason.trim() || "Force-closed by user.",
+      "Force-closure reason",
+    );
+    if (s.status === "CLOSED") return s;
+    const cancelledRequestIds: string[] = [];
+    for (const r of s.rounds) {
+      if (r.status === "WAITING" || r.status === "RECEIVED") {
+        r.status = "CANCELLED";
+        r.rationale = rationale;
+        cancelledRequestIds.push(r.id);
+      }
+    }
+    resetReview(s);
+    s.closure = {
+      kind: "forced",
+      id: randomUUID(),
+      closedAt: now(),
+      reason: rationale,
+      cancelledRequestIds,
+    };
+    s.status = "CLOSED";
+    return commit(
+      root,
+      s,
+      "contract.force-closed-by-explicit-command",
+      closureFiles(
+        s,
+        `Force-closed without review approval. This is termination, not contract acceptance.\nContract review: NOT_REVIEWED. Pending handoffs cancelled: ${cancelledRequestIds.length}.`,
+      ),
+    );
   });
 }
 export function closeSession(cwd: string, id: string, reason: string): Session {
@@ -722,25 +790,19 @@ export function closeSession(cwd: string, id: string, reason: string): Session {
     ])
       artifact(root, s, `${roundDirectory(round)}/${file}`);
     s.closure = {
+      kind: "reviewed",
       id: randomUUID(),
       closedAt: now(),
       reason,
       approval: { ...s.reviewApproval! },
     };
     s.status = "CLOSED";
-    const dir = `lifecycle/${s.closure.id}`;
-    return commit(root, s, "contract.closed-by-explicit-command", {
-      [`${dir}/closure.json`]: json({
-        schemaVersion: 1,
-        sessionId: s.id,
-        status: s.status,
-        contractReview: s.contractReview,
-        closure: s.closure,
-        deliveryVerified: false,
-        verified: false,
-      }),
-      [`${dir}/CLOSURE.md`]: `# CLOSED\n\n${reason}\n\nContract v${s.contractVersion}; session ${s.id}.\nContract review: PASS. Assessment request: ${round.id}.\nClosed at: ${s.closure.closedAt}.\n\nThis closes the contract discussion, not code delivery. Delivery verified: false.\n`,
-    });
+    return commit(
+      root,
+      s,
+      "contract.closed-by-explicit-command",
+      closureFiles(s, `Contract review: PASS. Assessment request: ${round.id}.`),
+    );
   });
 }
 export function reopenSession(
@@ -774,15 +836,30 @@ export function reopenSession(
     });
   });
 }
-export function status(cwd: string, id?: string): unknown {
+export type SessionListFilter = "open" | "all" | "closed" | "deleted";
+export function status(
+  cwd: string,
+  id?: string,
+  filter: SessionListFilter = "open",
+): unknown {
   const root = projectRoot(cwd);
   if (!id) {
-    const sessions = listSessions(root);
+    const sessions =
+      filter === "deleted"
+        ? listDeletedSessions(root)
+        : listSessions(root).filter((s) =>
+            filter === "all"
+              ? true
+              : filter === "closed"
+                ? s.status === "CLOSED"
+                : s.status !== "CLOSED",
+          );
     const fingerprint = sessions.some((s) => s.status === "READY_TO_CLOSE")
       ? snapshot(root).fingerprint
       : undefined;
     return {
       projectRoot: root,
+      filter,
       sessions: sessions.map((s) =>
         s.status === "READY_TO_CLOSE" &&
         !approvalIsCurrent(loadSession(root, s.id), fingerprint!)
@@ -905,7 +982,9 @@ export function status(cwd: string, id?: string): unknown {
       : null,
     nextAction:
       s.status === "CLOSED"
-        ? "Contract discussion is closed; delivery remains unverified. Read its history, or explicitly /waicc-reopen <reason> before changes and a fresh review."
+        ? s.closure?.kind === "forced"
+          ? "Contract was force-closed without review approval; this is not acceptance or verified delivery. Read its history, start a new /waicc-planning session, or explicitly /waicc-reopen <reason> before changes and a fresh review."
+          : "Contract discussion is closed; delivery remains unverified. Read its history, or explicitly /waicc-reopen <reason> before changes and a fresh review."
         : staleApproval
           ? "The passing review is stale. Request a fresh full-contract review before closing."
           : s.status === "READY_TO_CLOSE"
