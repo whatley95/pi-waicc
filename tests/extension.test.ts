@@ -31,6 +31,7 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
     "waicc-advisor",
     "waicc-continue",
     "waicc-receive",
+    "waicc-handoff",
     "waicc-status",
     "waicc-close",
     "waicc-reopen",

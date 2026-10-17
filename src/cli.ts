@@ -90,7 +90,12 @@ try {
       output = amend(cwd, id, rest.join(" "));
       break;
     case "export":
-      output = { exportPath: exportHandoff(cwd, id) };
+      output = {
+        exportPath: exportHandoff(cwd, id),
+        includesSourceCode: false,
+        whatToSend:
+          "Provide the ENTIRE export folder and paste its STARTER.txt CONTENTS; the recipient also needs matching project source. Return reply.json to manifest.returnReplyTo, then continue in the coordinator.",
+      };
       break;
     case "limit":
       output = setRoundLimit(cwd, id, Number(rest[0]));

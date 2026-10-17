@@ -34,6 +34,7 @@ import {
   ingest,
   issue,
   prepare,
+  status,
 } from "../src/workflow.ts";
 import type { Contract, Reply } from "../src/types.ts";
 
@@ -395,7 +396,7 @@ test("implementation needs explicit opt-in, restricts edits, and accepts assigne
 });
 
 // No inference/network: exercise actual registered callbacks with two independent Pi chat identities.
-function harness(root: string) {
+function harness(root: string, clipboardFailure = false) {
   const commands = new Map<
     string,
     { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
@@ -406,6 +407,7 @@ function harness(root: string) {
     shown: string[] = [],
     notices: string[] = [];
   const entries: { type: "custom"; customType: string; data: any }[] = [];
+  const clipboard: string[] = [];
   const originalTools = [
     "read",
     "grep",
@@ -443,10 +445,16 @@ function harness(root: string) {
       active = [...names];
     },
   };
-  waicc(api as unknown as ExtensionAPI);
+  waicc(api as unknown as ExtensionAPI, {
+    copyText: async (text) => {
+      if (clipboardFailure) throw new Error("Display unavailable");
+      clipboard.push(text);
+    },
+  });
   const ctx = (chat = "recipient", trusted = true, idle = true) =>
     ({
       cwd: root,
+      mode: "json",
       isProjectTrusted: () => trusted,
       isIdle: () => idle,
       model: { provider: "anthropic", id: "test-claude" },
@@ -461,6 +469,7 @@ function harness(root: string) {
     shown,
     notices,
     entries,
+    clipboard,
     ctx,
     api,
     originalTools,
@@ -473,6 +482,122 @@ function harness(root: string) {
       hooks.get("tool_call")!({ toolName: name, input }, context),
   };
 }
+
+test("new interactive handoffs auto-copy only the prompt; status does not overwrite and explicit copy can repeat", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  const ctx = { ...h.ctx(), mode: "tui" as const, hasUI: true };
+  await h.commands.get("waicc-use")!.handler(id, ctx);
+  await h.commands.get("waicc-limit")!.handler("12", ctx);
+  await h.commands.get("waicc-continue")!.handler("", ctx);
+  assert.equal(h.clipboard.length, 0);
+  cancel(root, id, "Prepare another focused handoff");
+  const prepared = await h.call(
+    "waicc_prepare",
+    {
+      sessionId: id,
+      contract: contract(),
+      expectedVersion: 1,
+      mode: "planning",
+      focus: "Inspect source",
+    },
+    ctx,
+  );
+  assert.equal(prepared.details.clipboard.status, "copied");
+  const view = status(root, id) as {
+    manualHandoff: { copyPastePrompt: string };
+  };
+  assert.deepEqual(h.clipboard, [view.manualHandoff.copyPastePrompt]);
+  assert.ok(!h.clipboard[0].includes("/waicc-continue"));
+  await h.commands.get("waicc-status")!.handler("", ctx);
+  await h.commands.get("waicc-continue")!.handler("", ctx);
+  assert.equal(h.clipboard.length, 1);
+  await h.commands.get("waicc-handoff")!.handler("", ctx);
+  assert.equal(h.clipboard.length, 2);
+  await h.commands.get("waicc-export")!.handler("", ctx);
+  assert.equal(h.clipboard.length, 3);
+  assert.ok(h.clipboard[2].includes("supplied export folder"));
+  assert.ok(!h.clipboard[2].includes(root));
+  await h.commands.get("waicc-receive")!.handler(id, ctx);
+  await h.call("waicc_reply", { reply: body() }, ctx);
+  assert.equal(h.clipboard.length, 3); // A recipient response is never a new manual handoff.
+});
+
+test("clipboard failure does not roll back a valid handoff and leaves a copyable fallback", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root, true);
+  const ctx = { ...h.ctx(), mode: "tui" as const, hasUI: true };
+  await h.commands.get("waicc-use")!.handler(id, ctx);
+  cancel(root, id, "Prepare fresh work");
+  const result = await h.call(
+    "waicc_prepare",
+    {
+      sessionId: id,
+      contract: contract(),
+      expectedVersion: 1,
+      mode: "planning",
+      focus: "Inspect",
+    },
+    ctx,
+  );
+  assert.equal(result.details.clipboard.status, "unavailable");
+  assert.equal(loadSession(root, id).status, "WAITING_FOR_REPLY");
+  assert.ok(h.shown.at(-1)!.includes("Copy ONLY the following block"));
+  await h.commands.get("waicc-handoff")!.handler("", ctx);
+  assert.ok(h.shown.at(-1)!.includes("Copy ONLY the following block"));
+  assert.ok(h.shown.at(-1)!.includes("Clipboard unavailable"));
+  assert.equal(h.clipboard.length, 0);
+});
+
+test("manual handoff command displays only the existing pinned assignment without inference or rebinding", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  const before = loadSession(root, id);
+  const delivery = (
+    status(root, id) as { manualHandoff: { copyPastePrompt: string } }
+  ).manualHandoff;
+  await h.commands.get("waicc-handoff")!.handler(id, h.ctx());
+  const match = /^(`{3,})text\n([\s\S]*?)\n\1$/m.exec(h.shown.at(-1)!)!;
+  assert.ok(match);
+  assert.equal(match[2] + "\n", delivery.copyPastePrompt);
+  assert.equal(h.prompts.length, 0);
+  assert.equal(h.entries.length, 0);
+  assert.deepEqual(loadSession(root, id), before);
+  await h.commands.get("waicc-handoff")!.handler("", h.ctx());
+  assert.match(h.notices.at(-1)!, /No WAICC session selected/); // Explicit view did not bind.
+  await h.commands.get("waicc-use")!.handler(id, h.ctx());
+  await h.commands.get("waicc-handoff")!.handler("", h.ctx());
+  assert.ok(h.shown.at(-1)!.includes(delivery.copyPastePrompt));
+  const count = h.shown.length;
+  await h.commands.get("waicc-handoff")!.handler(`${id} --other`, h.ctx());
+  assert.match(h.notices.at(-1)!, /Usage/);
+  assert.equal(h.shown.length, count);
+  await h.commands.get("waicc-receive")!.handler(id, h.ctx());
+  await h.commands.get("waicc-handoff")!.handler("", h.ctx());
+  assert.match(h.notices.at(-1)!, /handoff recipient/);
+  await h.call("waicc_reply", { reply: body() });
+  const reader = harness(root);
+  await reader.commands.get("waicc-handoff")!.handler(id, reader.ctx());
+  assert.match(reader.notices.at(-1)!, /No unanswered waiting handoff/);
+  assert.equal(reader.shown.length, 0);
+  assert.equal(reader.prompts.length, 0);
+});
+
+test("copy-ready handoff survives a bounded tool preview for a large contract", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  cancel(root, id, "Expand the contract context");
+  const large = contract();
+  large.exclusions = ["x".repeat(32_000), "y".repeat(32_000)];
+  prepare(root, id, large, "planning", "Inspect search", 1);
+  const view = status(root, id) as {
+    manualHandoff: { copyPastePrompt: string };
+  };
+  const text = (await h.call("waicc_status", { sessionId: id })).content[0]
+    .text;
+  assert.ok(text.includes("[Preview bounded;"));
+  assert.ok(text.includes(JSON.stringify(view.manualHandoff.copyPastePrompt)));
+});
 
 test("Pi recipient is reply-only, denies coordinator/exec tools, and coordinator continues separately", async (t) => {
   const { root, id } = fixture(t),
