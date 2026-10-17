@@ -8,6 +8,7 @@ export type SessionStatus =
   | "STALE"
   | "BLOCKED"
   | "READY_FOR_HANDOFF"
+  | "PLAN_READY"
   | "ADVICE_READY"
   | "READY_TO_CLOSE"
   | "CLOSED"
@@ -55,6 +56,17 @@ export interface Contract {
   risks: string[];
   tasks: Task[];
   skills: string[];
+  decisions?: ContractDecision[];
+}
+export interface ContractDecision {
+  id: string;
+  question: string;
+  owner: "agent" | "human" | "external";
+  status: "open" | "resolved" | "deferred";
+  affectedTaskIds: string[];
+  evidence: string[];
+  recommendation: string;
+  answer?: string;
 }
 export interface SourceSnapshot {
   vcs: "git" | "svn" | "none";
@@ -80,7 +92,8 @@ export interface Reply {
   requirementsDigest: string;
   sourceFingerprint: string;
   mode: Mode;
-  outcome: "ready" | "needs_changes" | "needs_clarification" | "blocked";
+  outcome:
+    "ready" | "planned" | "needs_changes" | "needs_clarification" | "blocked";
   summary: string;
   coverage: {
     requirementId: string;

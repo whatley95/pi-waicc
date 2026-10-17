@@ -56,6 +56,87 @@ For a requirement withdrawn by the user, preserve its provenance and explain the
 supersession in the revised requirement/acceptance text and amendment. V1 does not
 provide a separate superseded-requirement lifecycle.
 
+## Source-first planning and decision gates
+
+The coordinator owns scope, evidence checks, intentional adoption, decision carry-
+forward and question triage. A first planning contract may be a requirements/context
+brief with tasks [], not a speculative full plan. The recipient investigates source,
+tests/docs/history and accessible references and returns the detailed proposedContract.
+Escalate only genuine unavailable human/external choices with recommendations and
+evidence. Reversible technical assumptions stay explicit; product changes, credentials,
+security and production authority are never inferred. Avoid unchanged question loops.
+
+Optional `contract.decisions` entries:
+
+```json
+{
+  "id": "DEC-001",
+  "question": "Which client presentation does the owner want?",
+  "owner": "human",
+  "status": "deferred",
+  "affectedTaskIds": ["CLIENT"],
+  "evidence": [
+    "Source establishes the API but does not specify the presentation choice."
+  ],
+  "recommendation": "Keep existing presentation until the owner chooses; gate CLIENT."
+}
+```
+
+owner is agent/human/external; status is open/resolved/deferred. Affected IDs must
+be nonempty, unique and known tasks. Evidence and recommendation are required.
+resolved requires answer; open/deferred cannot carry a claimed confirmed answer.
+Decision IDs/questions survive revisions. Answers/evidence are claims for the owner
+to check, not engine-authenticated approval. Status decisionGates exposes pendingDecisions,
+decisionBlockedTaskIds and decisionUnblockedTaskIds, propagating gates through dependsOn.
+Unblocked is not implemented/tested/dependency-complete or authorized to execute.
+
+Only planning replies/assessments may use planned. The owner can assess a planned/ready
+planning reply as planned, intentionally adopting the complete contract with
+assessment.contract when needed. Acceptance still requires task paths/acceptance for
+every requirement, no specification-blocking questions, addressed coverage, no failed
+checks and high/critical dispositions. Agent-owned unresolved decisions must first be
+investigated. Future human/external decisions may remain on affected tasks. Success
+sets PLAN_READY and creates no request/implementation handoff. Not-run checks stay
+not_run. Planning addressed is source-backed specification coverage, not delivery proof.
+
+Do not silently erase blockers or relabel defects as future decisions just to pass.
+Review ready and explicit closure can accept a complete specification with documented
+future gates; they never resolve those gates or authorize execution. All freshness,
+coverage and review re-checks remain. Legacy planning ready still uses execution-ready
+validation (all decisions resolved) and creates an implementation handoff. Existing
+replies are not automatically reclassified or promoted to planned.
+
+## Manual delivery instructions
+
+New round `STARTER.txt` files contain a complete copyable recipient prompt with the
+project, session/request/version, role boundaries, handoff and reply/template paths,
+required linked inputs, and stopping conditions. Copy the **contents**, not merely
+the filename or a coordinator status/assessment message. It is not a shell script.
+The recipient reads `HANDOFF.md` and its linked files; the human need not separately
+paste the contract, assessment or conversation when those paths are accessible.
+
+For an unanswered WAITING request, single-session status exposes `manualHandoff`
+before the potentially large requirements/contract. It includes copyPastePrompt,
+whatToSend/notNeeded, differentMachine guidance and separate human return commands.
+`/waicc-handoff [session-id]` renders a clearly delimited copy-only prompt followed
+by those return steps without inference, new artifacts or a role/session switch.
+It uses the existing selected session unless explicitly given an ID. An explicit
+ID only selects the view, not the coordinator binding; select the correct session
+with `/waicc-use <id>` before intake if needed. Existing pending rounds receive the
+new display instructions from their original pins without rewriting committed files.
+
+Any existing reply.json withholds the copy view, even before intake; status reports
+pending.replyExists and recommends coordinator /waicc-continue instead of duplicate
+work. Received/cancelled/closed rounds do not expose a manual copy view. This is a
+delivery aid, not a worker reservation, source-freshness verdict or OS permission.
+
+If the recipient lacks access to the same project paths, export the pending round
+and send the **whole export folder**, including its portable STARTER.txt and linked
+inputs, plus access to matching source separately. Export excludes source code.
+The recipient writes reply.json beside the exported HANDOFF.md; the human returns
+it to manifest.returnReplyTo before coordinator intake. Review content before
+sharing. Do not send only a HANDOFF.md attachment or the origin's inaccessible paths.
+
 ## External reply
 
 Start from the generated `reply.example.json`; its identity values are real and
@@ -64,7 +145,7 @@ must remain unchanged. Save the completed object as `reply.json`, not a fenced b
 - `schemaVersion`, `sessionId`, `requestId`, `contractVersion`, `requirementsDigest`,
   `sourceFingerprint`, `mode`: pinned request identity. Modes are planning, review,
   implementation and advisor.
-- `outcome`: `ready`, `needs_changes`, `needs_clarification`, or `blocked`.
+- `outcome`: `ready`, `planned` (planning only), `needs_changes`, `needs_clarification`, or `blocked`.
 - `summary`: the actual result.
 - `coverage`: exactly one `{requirementId,status,evidence}` row per requirement.
   For advisor, only the explicitly selected IDs are covered (default `[]`).
@@ -124,6 +205,19 @@ Only coordinator intake creates the frozen raw/normalized/audit artifacts. Missi
 severity, evidence or usable description still requires a corrected reply; request
 pins, coverage, freshness, high/critical dispositions and human closure rules remain
 unchanged. Nothing is automatically adopted into the master contract.
+
+### Clipboard delivery
+
+Interactive TUI creation of an unanswered handoff attempts to copy only its recipient
+prompt through Pi's public copyToClipboard utility. Automatic copies are deduplicated
+per request/chat; ordinary status/use reads do not write the clipboard. Explicit
+/waicc-handoff always retries copying. Export copies its portable starter rather
+than the origin's inaccessible local paths. Clipboard failure does not roll back the
+request: UI/tool details report the failure and retain a visible manual copy block.
+RPC/JSON/print contexts never call the writer, even when they expose UI dialogs;
+terminal clipboard sequences must not corrupt their protocol output. Native platform
+and terminal permissions still apply. Remote OSC 52 cannot be independently confirmed;
+the host's success is a delivery attempt, not a verified client clipboard readback.
 
 ## Pi-native recipient transport
 
@@ -246,7 +340,7 @@ The primary Pi agent uses `waicc_assess`; CLI users can supply an assessment JSO
 }
 ```
 
-`decision` is ready, noted, followup, needs_changes or blocked. `contract` optionally carries
+`decision` is ready, planned, noted, followup, needs_changes or blocked. `contract` optionally carries
 an explicitly adopted revision, except on a ready review: changed contracts need
 a fresh review round. Adopt a reviewer's proposal with followup or needs_changes.
 Each disposition is `{findingId,disposition,evidence}`
@@ -254,7 +348,7 @@ with disposition resolved or disputed. High/critical findings require dispositio
 before readiness. Dispositions are recorded claims with evidence, not independent
 proof. Structural checks do not establish the quality of Pi's judgment.
 
-For advisor, ready and contract are forbidden. Use noted only for a ready advisor
+For advisor, ready, planned and contract are forbidden. Use noted only for a ready advisor
 reply with no unresolved questions; this closes the exchange as ADVICE_READY without
 adding a round, changing the contract, or resolving findings automatically. Scoped
 unverified coverage, remaining risks and not-run checks do not become passes.
@@ -264,7 +358,8 @@ needs_changes/blocked records the issue without starting contract preparation.
 noted is rejected for other modes. Adoption requires a human decision and a separate
 explicit contract revision; new requirements still require an amendment.
 
-Ready planning creates an implementation handoff; ready implementation requests
+Planned planning accepts the specification as PLAN_READY without implementation.
+Legacy ready planning creates an implementation handoff; ready implementation requests
 independent review; ready full-contract review records PASS and READY_TO_CLOSE.
 A task-scoped ready review still requires full review and cannot authorize closure.
 No state means
