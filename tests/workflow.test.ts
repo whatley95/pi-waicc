@@ -1502,12 +1502,69 @@ test("flexible external findings preserve original bytes and audit the coordinat
   assert.equal(loadSession(root, s.id).contractVersion, 1);
 });
 
+test("planning intake handles pass and fifteen scalar decision evidence entries with immutable raw/audit records", (t) => {
+  const root = fixture(t), s = planned(root), original = respond(root, s);
+  const proposed = gatedPlan();
+  const input = {
+    ...original, outcome: "planned",
+    checks: [
+      { description: "Read-only source inspection", outcome: "pass", evidence: "Inspected app.txt; not behavioral proof" },
+      { description: "Build and tests", outcome: "not_run", evidence: "Planning only; no execution" },
+      { description: "Device verification", outcome: "not_run", evidence: "No device access used" },
+    ],
+    proposedContract: { ...proposed, decisions: Array.from({ length: 15 }, (_, i) => ({
+      ...proposed.decisions![0], id: `D${i + 1}`, evidence: `Inspected source for decision ${i + 1}; genuine owner choice remains`,
+    })) },
+  };
+  const dir = roundDirectory(s.rounds[0]),
+    path = join(root, sessionRelative(s.id), dir, "reply.json"),
+    raw = json(input);
+  writeFileSync(path, raw);
+  const received = ingest(root, s.id), r = received.rounds[0];
+  assert.equal(received.status, "AWAITING_ASSESSMENT");
+  assert.equal(received.contractVersion, 1); // Reading a proposal is not adoption.
+  assert.equal(r.reply!.checks[0].outcome, "passed");
+  assert.deepEqual(r.reply!.checks.slice(1).map((c) => c.outcome), ["not_run", "not_run"]);
+  assert.equal(r.replyNormalization!.length, 16);
+  assert.equal(readFileSync(path, "utf8"), raw);
+  assert.equal(artifact(root, received, `${dir}/received.json`), raw);
+  assert.equal(r.replyDigest, digest(raw));
+  assert.deepEqual(JSON.parse(artifact(root, received, `${dir}/received.normalized.json`)), r.reply);
+  const audit = JSON.parse(artifact(root, received, `${dir}/reply-normalization.json`));
+  assert.equal(audit.normalizerVersion, 2);
+  assert.deepEqual(audit.changes, r.replyNormalization);
+  assert.deepEqual(r.reply!.proposedContract!.decisions!.map((d) => d.evidence), input.proposedContract.decisions.map((d) => [d.evidence]));
+  assert.deepEqual(ingest(root, s.id), received);
+  const accepted = assess(root, s.id, {
+    ...assessment(received), decision: "planned", contract: r.reply!.proposedContract,
+  });
+  assert.equal(accepted.status, "PLAN_READY");
+  assert.equal(accepted.contractVersion, 2);
+  assert.equal(accepted.rounds.length, 1);
+  assert.equal(accepted.deliveryVerified, false);
+  assert.equal(accepted.contractReview, "NOT_REVIEWED");
+  assert.equal(readFileSync(path, "utf8"), raw);
+});
+
+test("a failure alias is ingested as failed and still prevents planning acceptance", (t) => {
+  const root = fixture(t), s = planned(root), original = respond(root, s);
+  const path = join(root, sessionRelative(s.id), roundDirectory(s.rounds[0]), "reply.json");
+  writeFileSync(path, json({ ...original, outcome: "planned", checks: [{
+    name: "Source inspection", result: "FAIL", details: ["A required path is missing"],
+  }] }));
+  const received = ingest(root, s.id);
+  assert.equal(received.rounds[0].reply!.checks[0].outcome, "failed");
+  assert.throws(() => assess(root, s.id, { ...assessment(received), decision: "planned" }), /failed checks/);
+  assert.deepEqual(loadSession(root, s.id), received);
+});
+
 test("normalization cannot bypass reply identity, coverage or source-freshness checks", (t) => {
   const root = fixture(t),
     s = planned(root);
   const original = respond(root, s);
   const input = {
     ...original,
+    checks: [{ description: "Read source", outcome: "pass", evidence: ["Inspected source only"] }],
     findings: [{ severity: "low", title: "Concern", evidence: "Source" }],
   };
   const path = join(

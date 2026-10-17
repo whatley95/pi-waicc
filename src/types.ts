@@ -116,6 +116,7 @@ export interface Reply {
     description: string;
     outcome: "passed" | "failed" | "not_run";
     evidence: string;
+    extensions?: Record<string, unknown>;
   }[];
   proposedContract?: Contract;
   advice?: {

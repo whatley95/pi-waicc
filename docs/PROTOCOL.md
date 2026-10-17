@@ -154,7 +154,8 @@ must remain unchanged. Save the completed object as `reply.json`, not a fenced b
   high, medium, low, or info. IDs are unique within the reply. `extensions` optionally
   holds untrusted annotation fields; it does not change scope or workflow decisions.
 - `questions`: unresolved questions, or `[]`.
-- `checks`: `{description,outcome,evidence}`. Outcome is passed, failed or not_run.
+- `checks`: `{description,outcome,evidence,extensions?}`. Outcome is passed, failed or not_run.
+  Description/evidence are nonempty strings; extensions are inert JSON annotations.
   Do not describe a planned check as passed.
 - `proposedContract`: optional complete contract body, offered for explicit adoption;
   forbidden for advisor replies, which suggest amendments as text instead.
@@ -184,23 +185,54 @@ Both manual replies and `waicc_reply` accept these common external-agent variant
 
 For example, `{"severity":"Medium","title":"Concern","evidence":["REQ-001","file:12"]}`
 becomes `{"id":"F-001","severity":"medium","description":"Concern","evidence":"REQ-001\nfile:12"}`.
-This does not manufacture evidence, repair identity, change coverage/check outcomes,
+This does not manufacture evidence, repair identity, promote coverage or hide failures,
 relax proposed-contract validation, execute annotations or accept a proposed change.
 The canonical validator remains strict after this transport conversion. Prefer the
 canonical format in new replies; this is compatibility, not arbitrary free-form intake.
+
+### Flexible check, coverage and decision intake
+
+Transport normalization version 2 additionally supports:
+
+- Check outcome `pass`, `success`, `succeeded` → `passed`; `fail`, `failure` →
+  `failed`; `notrun`, `not_executed`, `not_attempted`, `skipped` → `not_run`.
+  Canonical outcomes and aliases accept casing, surrounding whitespace, spaces
+  or hyphens in place of underscores. No other outcome is guessed.
+- Check `status`/`result` as aliases for `outcome`. Multiple result fields must
+  normalize to the same result; a pass/failure conflict is rejected.
+- Missing check `description` can use `name`, `check`, or `command`; missing
+  `evidence` can use `details` or `output`, in that precedence order. Remaining
+  annotations, including unused aliases, stay under optional `extensions`.
+  Extension-key collisions fail rather than overwrite data. Command text is
+  description/provenance only, never executed.
+- Check and coverage evidence arrays join nonempty strings with newlines.
+  Proposed-contract decision evidence as one nonempty string wraps into a
+  one-item array, without splitting text, inventing answers or changing task IDs.
+- Top-level reply outcomes, coverage statuses, and proposed decision owner/status
+  accept casing/spacing/separator variants only of their existing canonical
+  words. No `PASS` → `ready`, `verified` → `addressed`, or `approved` → `resolved`.
+
+Checks still need a description, actual evidence and one unambiguous result.
+`unknown`, `pending`, `blocked`, `error`, booleans and missing outcomes are not
+silently converted to success or not_run. The error identifies the indexed field
+and canonical choices. All required root arrays, request pins, coverage rows,
+requirement quotes, task references, decision rules and source freshness remain
+validated. No normalization creates approval, adoption, execution permissions or
+verified delivery. Unknown root/proposed-contract fields still fail validation.
 
 At coordinator intake, `received.json` retains the original reply bytes and
 replyDigest still hashes those bytes. The journal's round.reply is the normalized
 canonical view. When conversion occurred, `received.normalized.json` and
 `reply-normalization.json` are committed alongside it; the latter records normalizer
-version and conversions. Status and subsequent conversation expose replyNormalization
+version and conversions. Version 2 applies only to new intake; older frozen rounds
+remain unchanged. Status and subsequent conversation expose replyNormalization
 and canonical finding IDs for assessment/dispositions. Repeated intake never
 rewrites an already frozen reply, generated IDs or its conversion history. Legacy
 received rounds are not re-normalized. Normalized review artifacts are also checked
 for modification before closure.
 
 `waicc_reply` validates the same conversion before writing, reports conversions in
-its result, and preserves supplied finding fields in the submitted reply.json.
+its result, and preserves supplied fields in the submitted reply.json.
 Only coordinator intake creates the frozen raw/normalized/audit artifacts. Missing
 severity, evidence or usable description still requires a corrected reply; request
 pins, coverage, freshness, high/critical dispositions and human closure rules remain
