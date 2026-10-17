@@ -92,10 +92,24 @@ choices remain unresolved and execution stays gated. PASS is not their approval.
 
 Closing/reopening is an explicit human decision through `/waicc-close <reason>` or
 `/waicc-reopen <reason>`, not an agent tool or an action to invoke yourself through
-shell, commands or file edits. Closed sessions are read-only until explicitly
-reopened. Reopening clears PASS and requires fresh review; preserve closure history.
+shell, commands or file edits. The human can instead terminate unfinished work with
+`/waicc-force-close [session-id] [reason]` (also
+`/waicc-close [session-id] --force [reason]`): pending handoffs are cancelled,
+history is preserved, and closure.kind is forced with NOT_REVIEWED, not PASS or acceptance.
+This human stop command also works in recipient chats but does not grant coordinator
+tools. A repeated force-close leaves an already closed session unchanged.
+Closed sessions are read-only until explicitly reopened. Reopening clears PASS
+and requires fresh review; preserve closure history.
 Source changes can make a passing review stale before closure. Neither PASS nor
 CLOSED means verified code delivery; deliveryVerified and verified remain false.
+
+`/waicc-list` omits closed sessions; `all` includes them, `closed` selects only them,
+and `deleted` lists recovery storage. A hidden session is not missing work or
+permission to create a replacement. Human coordinator commands `/waicc-delete <id>`
+and `/waicc-restore <id>` move only CLOSED sessions to/from project-local recovery
+storage without erasing history or reopening them. They are not agent tools or
+actions to invoke yourself through commands, shell or file edits. A deleted binding
+must not automatically retarget another contract; stop and let the human choose.
 
 For focused advice, issue `waicc_request` with mode advisor, focus as the decision
 question and optional requirementIds (default [], question only), against the saved

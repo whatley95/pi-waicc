@@ -371,6 +371,16 @@ is assessed through the existing Pi agent on /waicc-continue.
 
 ## Review verdict and explicit closure
 
+`/waicc-cancel [session-id] [reason]` cancels the most recent pending
+WAITING/RECEIVED round. A UUID explicitly targets that session without changing
+the chat's coordinator selection; without a UUID it uses the selected session.
+The reason is optional (default `Cancelled by user.`); legacy reason-only input
+is still supported. CLI syntax is `cancel <session> [reason]`. Cancellation records
+CANCELLED on the round, NEEDS_CHANGES on the session and clears review approval,
+while retaining contract and conversation history. It is not contract closure,
+context cloning or external-process termination. Missing pending work makes no
+session change. Trust and recipient/coordinator guards remain unchanged.
+
 `contractReview` is separate from session `status`. Values are NOT_REVIEWED,
 PENDING, PASS, NEEDS_CHANGES, BLOCKED or STALE. Issuing a new request clears any
 previous approval; review sets PENDING. Amendments and revisions invalidate PASS.
@@ -378,7 +388,7 @@ A ready full review pins `reviewApproval` with requestId, contractVersion,
 requirementsDigest, sourceFingerprint and assessedAt. These describe a reviewed
 specification and evidence, not proof that code was implemented or tests passed.
 
-`/waicc-close <reason>` (CLI: `close <session> <reason>`) requires READY_TO_CLOSE,
+Normal `/waicc-close [session-id] <reason>` (CLI: `close <session> <reason>`) requires READY_TO_CLOSE,
 no pending WAITING/RECEIVED round, and that pinned approval still matches the latest
 contract, requirements and actual source. The contract and committed review evidence
 are checked for modification. It records CLOSED, keeps contractReview PASS, and
@@ -386,6 +396,28 @@ saves a closure UUID, closedAt, reason and the approval pins. No model assessmen
 or responding reviewer can automatically close a session. Close/reopen are not
 registered as agent tools; guidance reserves their explicit commands for the user.
 This is not authentication or a sandbox against agents with shell/file access.
+
+`/waicc-close [session-id] --force [reason]` (CLI: `close <session> --force [reason]`)
+or the shortcut `/waicc-force-close [session-id] [reason]` is a separate human
+termination path. It accepts any open lifecycle state, including
+a draft without a contract, pending reply, failed assessment or stale approval.
+It cancels WAITING/RECEIVED rounds, clears current review approval, records
+NOT_REVIEWED and CLOSED, and retains all previous requirements, contracts, replies,
+assessments and journal entries. The default reason is `Force-closed by user.`.
+It never fabricates review PASS, contract acceptance or delivery verification.
+It does not read/trust modified evidence to approve it, nor stop external processes.
+The closure has `kind: forced`, `cancelledRequestIds` and no `approval`;
+normal closures have `kind: reviewed` plus the pinned approval. Older closures
+without `kind` retain their existing reviewed meaning. Repeating force-close on
+any already closed session makes no change, including to a reviewed PASS.
+
+An explicit close UUID targets only that project session without rebinding the
+chat. Without a UUID the selected session is required; no newest-session guess.
+Force-close is permitted as a human stop command in recipient chats, but leaves
+their role/tool restrictions intact and invalidates the pinned assignment.
+Normal close and cancellation retain coordinator guards. All forms require project
+trust, and neither close path is exposed as an agent tool. Force-closed sessions
+use the same explicit reopening path and require fresh review before acceptance.
 
 Closure artifacts live at `lifecycle/<closure-id>/closure.json` and `CLOSURE.md`.
 Closed sessions stay readable; contract preparation, requests, assessment, amendments,
@@ -405,6 +437,40 @@ reads without a state write; close also rechecks freshness under the writer lock
 Both deliveryVerified and legacy verified remain false throughout. Legacy sessions
 without these fields default to NOT_REVIEWED and deliveryVerified false; they do
 not inherit an approval from an old READY_FOR_HANDOFF record.
+
+## Session lists and recoverable deletion
+
+`/waicc-list` lists open sessions, independently of the selected session. `all`
+includes retained CLOSED sessions; `closed` shows only those sessions. Default
+unselected `/waicc-status` and CLI `status` also hide CLOSED; explicit
+`/waicc-status all` remains an all-retained-session view. A selected session or
+explicit ID can still be inspected when CLOSED. Listing does not mutate state,
+change bindings or perform model inference. Ordering and timestamps are unchanged.
+
+`/waicc-delete <session-id>` (CLI: `delete <session>`) requires an explicit ID,
+project trust, coordinator mode and a CLOSED journal state. Under the project
+writer lock it validates both complete paths and atomically renames exactly
+`sessions/<id>` to `deleted-sessions/<id>` within `.pi/pi-waicc`. It never recursively
+erases data, follows junctions, overwrites another copy or deletes source, shared
+memory or other sessions. The complete original journal/artifact tree remains
+unchanged. An already-deleted session is an idempotent no-op after validating its
+stored identity and CLOSED state. Open sessions must be closed explicitly first.
+
+Deleted sessions are excluded even from `all`. `/waicc-list deleted` (also
+`/waicc-status deleted`, CLI: `list deleted`) reads only recovery storage.
+`/waicc-restore <session-id>` (CLI: `restore <session>`) uses the same trust/role/lock
+and path protections, requires a deleted CLOSED session and no existing destination,
+and moves it back with identical history, verdict, closure and activity timestamps.
+It does not reopen, select, approve, resume or regenerate a handoff. No purge or
+OS recycle-bin integration is provided; deleted data still occupies disk space.
+
+Both mutations are human commands, never agent tools or permissions for agents to
+move files themselves. Deleting the current coordinator selection persists a null
+session binding without selecting another. Other chats keep their original binding
+and report an unavailable/STOP context until the user chooses a session or restores
+it; recipient role/tool restrictions remain intact. Restoration does not silently
+rebind a cleared chat. The session directory's presence in one store or the other
+is the commit point for these moves; no canonical journal entry is rewritten.
 
 ## Persistence and concurrency
 
