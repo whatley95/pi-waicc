@@ -33,7 +33,11 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
     "waicc-receive",
     "waicc-handoff",
     "waicc-status",
+    "waicc-list",
+    "waicc-delete",
+    "waicc-restore",
     "waicc-close",
+    "waicc-force-close",
     "waicc-reopen",
   ])
     assert.ok(result.extensions[0].commands.has(name));

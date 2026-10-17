@@ -39,6 +39,7 @@ import {
   closeSession,
   createSession,
   exportHandoff,
+  forceCloseSession,
   ingest,
   issue,
   prepare,
@@ -672,6 +673,169 @@ test("closed contracts block mutations; explicit reopening preserves history and
   assert.notEqual(s.closure!.id, closureId);
   assert.equal(readFileSync(closurePath, "utf8"), closed);
   assert.equal(s.deliveryVerified, false);
+});
+
+test("force-close terminates drafts and pending or assessed sessions without review approval", (t) => {
+  const root = fixture(t);
+  for (const stage of ["draft", "waiting", "received", "assessed"] as const) {
+    let s = stage === "draft" ? createSession(root, requirements) : planned(root);
+    if (stage === "received" || stage === "assessed") {
+      respond(root, s);
+      s = ingest(root, s.id);
+    }
+    if (stage === "assessed")
+      s = assess(root, s.id, { ...assessment(s), decision: "needs_changes" });
+    const before = s;
+    const oldArtifacts = Object.entries(before.artifacts).map(([path]) => [
+      path,
+      artifact(root, before, path),
+    ]);
+    s = forceCloseSession(root, s.id);
+    assert.equal(s.status, "CLOSED");
+    assert.equal(s.contractReview, "NOT_REVIEWED");
+    assert.equal(s.reviewApproval, undefined);
+    assert.equal(s.closure!.kind, "forced");
+    assert.equal(s.closure!.approval, undefined);
+    assert.equal(s.deliveryVerified, false);
+    assert.equal(s.verified, false);
+    assert.equal(s.contractVersion, before.contractVersion);
+    assert.equal(s.createdAt, before.createdAt);
+    assert.equal(s.sequence, before.sequence + 1);
+    assert.deepEqual(s.requirements, before.requirements);
+    assert.equal(s.rounds.length, before.rounds.length);
+    assert.deepEqual(
+      s.rounds.filter((r) => r.status === "ASSESSED"),
+      before.rounds.filter((r) => r.status === "ASSESSED"),
+    );
+    assert.equal(
+      s.rounds.some((r) => ["WAITING", "RECEIVED"].includes(r.status)),
+      false,
+    );
+    assert.deepEqual(
+      s.closure!.kind === "forced" && s.closure!.cancelledRequestIds,
+      before.rounds
+        .filter((r) => ["WAITING", "RECEIVED"].includes(r.status))
+        .map((r) => r.id),
+    );
+    for (const [path, content] of oldArtifacts)
+      assert.equal(artifact(root, s, path), content);
+    const record = JSON.parse(
+      artifact(root, s, `lifecycle/${s.closure!.id}/closure.json`),
+    );
+    assert.equal(record.closure.kind, "forced");
+    assert.equal(record.closure.approval, undefined);
+    assert.equal(record.contractReview, "NOT_REVIEWED");
+    assert.equal(record.deliveryVerified, false);
+    const view = status(root, s.id) as { pending: unknown; nextAction: string };
+    assert.equal(view.pending, null);
+    assert.match(view.nextAction, /force-closed without review approval/);
+    assert.deepEqual(forceCloseSession(root, s.id, "Already stopped"), s);
+    assert.deepEqual(loadSession(root, s.id), s);
+    assert.equal(ingest(root, s.id).sequence, s.sequence);
+    assert.throws(
+      () => issue(root, s.id, "planning", "Cannot resume closed work"),
+      /closed/,
+    );
+  }
+  assert.equal(readFileSync(join(root, "app.txt"), "utf8"), "original source\n");
+});
+
+test("force-close clears prior PASS even on changed source, retains its audit and can be reopened", (t) => {
+  const root = fixture(t);
+  const before = passedReview(root);
+  writeFileSync(join(root, "app.txt"), "new source after review");
+  assert.throws(
+    () => closeSession(root, before.id, "Old approval"),
+    /no longer matches/,
+  );
+  const closed = forceCloseSession(root, before.id, "Superseded by another contract");
+  assert.equal(closed.contractReview, "NOT_REVIEWED");
+  assert.equal(closed.reviewApproval, undefined);
+  assert.deepEqual(closed.rounds, before.rounds);
+  const closurePath = `lifecycle/${closed.closure!.id}/closure.json`;
+  const historicalClosure = artifact(root, closed, closurePath);
+  const s = reopenSession(root, closed.id, "Resume the investigation");
+  assert.equal(s.status, "NEEDS_REVIEW");
+  assert.equal(s.contractReview, "NOT_REVIEWED");
+  assert.equal(s.closure, undefined);
+  assert.equal(s.reviewApproval, undefined);
+  assert.equal(artifact(root, s, closurePath), historicalClosure);
+  assert.throws(
+    () => closeSession(root, s.id, "Cannot reuse earlier PASS"),
+    /READY_TO_CLOSE/,
+  );
+});
+
+test("force-close keeps existing reviewed closure and rejects invalid reasons without mutation", (t) => {
+  const root = fixture(t);
+  const initial = planned(root);
+  const pending = loadSession(root, initial.id);
+  assert.throws(
+    () => forceCloseSession(root, pending.id, "x".repeat(32_001)),
+    /Force-closure reason/,
+  );
+  assert.deepEqual(loadSession(root, pending.id), pending);
+  const reviewed = passedReview(root);
+  const closed = closeSession(root, reviewed.id, "Reviewed and accepted");
+  assert.deepEqual(forceCloseSession(root, closed.id), closed);
+  assert.equal(loadSession(root, closed.id).contractReview, "PASS");
+  assert.equal(closed.closure!.kind, "reviewed");
+});
+
+test("force-close needs no reply parsing and ignores late replies even after reopening", (t) => {
+  const root = fixture(t),
+    s = planned(root);
+  const replyPath = join(
+    root,
+    sessionRelative(s.id),
+    roundDirectory(s.rounds[0]),
+    "reply.json",
+  );
+  writeFileSync(replyPath, "invalid JSON from an external agent");
+  const closed = forceCloseSession(root, s.id);
+  assert.equal(readFileSync(replyPath, "utf8"), "invalid JSON from an external agent");
+  assert.deepEqual(ingest(root, s.id), closed);
+  respond(root, s); // Simulate a late external reply for the cancelled assignment.
+  assert.deepEqual(ingest(root, s.id), closed);
+  const reopened = reopenSession(root, s.id, "Use a fresh assignment");
+  assert.deepEqual(ingest(root, s.id), reopened);
+  assert.equal(loadSession(root, s.id).rounds[0].status, "CANCELLED");
+  assert.equal((status(root, s.id) as { pending: unknown }).pending, null);
+});
+
+test("CLI supports reason-optional cancellation and force-close without a Pi process", (t) => {
+  const root = fixture(t);
+  const s = planned(root);
+  const invoke = (...args: string[]) =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [resolve("src/cli.ts"), "--root", root, ...args],
+        { encoding: "utf8", windowsHide: true },
+      ),
+    );
+  assert.equal(invoke("cancel", s.id).rounds[0].rationale, "Cancelled by user.");
+  issue(root, s.id, "planning", "Try another plan");
+  assert.equal(
+    invoke("cancel", s.id, "Custom reason").rounds.at(-1).rationale,
+    "Custom reason",
+  );
+  issue(root, s.id, "planning", "Final handoff");
+  const closed = invoke("close", s.id, "--force");
+  assert.equal(closed.status, "CLOSED");
+  assert.equal(closed.closure.kind, "forced");
+  assert.equal(closed.closure.reason, "Force-closed by user.");
+  assert.equal(closed.contractReview, "NOT_REVIEWED");
+  assert.equal(closed.rounds.at(-1).status, "CANCELLED");
+  const draft = createSession(root, requirements);
+  assert.equal(
+    invoke("close", draft.id, "--force", "Restart from scratch").closure.reason,
+    "Restart from scratch",
+  );
+  assert.equal(
+    invoke("status", "all").sessions.every((s: Session) => s.status === "CLOSED"),
+    true,
+  );
 });
 
 test("closure rejects tampered review evidence", (t) => {

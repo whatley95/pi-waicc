@@ -18,6 +18,7 @@ import type {
 import waicc from "../src/index.ts";
 import { loadSession } from "../src/files.ts";
 import { curate, propose } from "../src/memory.ts";
+import { deleteSession, restoreSession } from "../src/lifecycle.ts";
 import {
   assertRecipientCurrent,
   assertRecipientEdit,
@@ -31,6 +32,7 @@ import {
   cancel,
   closeSession,
   createSession,
+  forceCloseSession,
   ingest,
   issue,
   prepare,
@@ -482,6 +484,297 @@ function harness(root: string, clipboardFailure = false) {
       hooks.get("tool_call")!({ toolName: name, input }, context),
   };
 }
+
+test("cancel by UUID needs neither a selected session nor inference and preserves history", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root),
+    before = loadSession(root, id);
+  await h.commands.get("waicc-cancel")!.handler(id, h.ctx());
+  const after = loadSession(root, id);
+  assert.equal(after.status, "NEEDS_CHANGES");
+  assert.equal(after.rounds[0].status, "CANCELLED");
+  assert.equal(after.rounds[0].rationale, "Cancelled by user.");
+  assert.equal(after.sequence, before.sequence + 1);
+  assert.equal(after.contractVersion, before.contractVersion);
+  assert.deepEqual(after.requirements, before.requirements);
+  assert.deepEqual(after.artifacts, before.artifacts);
+  assert.equal(readFileSync(join(root, "source.txt"), "utf8"), "source");
+  assert.equal(h.prompts.length, 0);
+  assert.equal(h.entries.length, 0);
+  assert.equal(h.clipboard.length, 0);
+  assert.equal(h.notices.length, 0);
+  await h.commands.get("waicc-cancel")!.handler("", h.ctx());
+  assert.match(h.notices.at(-1)!, /No WAICC session selected/);
+  assert.deepEqual(loadSession(root, id), after); // Explicit cancellation did not bind.
+});
+
+test("cancel defaults to the selection, preserves reason-only syntax and never retargets an explicit ID", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  const other = createSession(root, "Add search");
+  prepare(root, other.id, contract(), "planning", "Another plan", 0);
+  await h.commands.get("waicc-use")!.handler(id, h.ctx());
+  const selectedBefore = loadSession(root, id);
+  await h.commands
+    .get("waicc-cancel")!
+    .handler(`${other.id.toUpperCase()} Superseded by a new contract`, h.ctx());
+  assert.deepEqual(loadSession(root, id), selectedBefore);
+  assert.equal(
+    loadSession(root, other.id).rounds[0].rationale,
+    "Superseded by a new contract",
+  );
+  await h.commands.get("waicc-cancel")!.handler("", h.ctx());
+  assert.equal(loadSession(root, id).rounds[0].status, "CANCELLED");
+  issue(root, id, "planning", "New plan");
+  await h.commands.get("waicc-cancel")!.handler("Pause for advice", h.ctx());
+  const after = loadSession(root, id);
+  assert.equal(after.rounds.at(-1)!.rationale, "Pause for advice");
+  await h.commands.get("waicc-cancel")!.handler("", h.ctx());
+  assert.match(h.notices.at(-1)!, /no pending handoff to cancel/i);
+  assert.deepEqual(loadSession(root, id), after);
+  assert.equal(h.prompts.length, 0);
+});
+
+test("unknown explicit cancellation and force-close IDs never affect the selected session", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root),
+    before = loadSession(root, id);
+  await h.commands.get("waicc-use")!.handler(id, h.ctx());
+  const unknown = "00000000-0000-0000-0000-000000000000";
+  for (const [command, args] of [
+    ["waicc-cancel", unknown],
+    ["waicc-close", `${unknown} --force`],
+    ["waicc-force-close", unknown],
+  ]) {
+    await h.commands.get(command)!.handler(args, h.ctx());
+    assert.match(h.notices.at(-1)!, /Unknown WAICC session/);
+    assert.deepEqual(loadSession(root, id), before);
+  }
+  for (const [command, args] of [
+    ["waicc-cancel", "12345678-1234-incomplete"],
+    ["waicc-close", "12345678-1234-incomplete --force"],
+    ["waicc-force-close", "12345678-1234-incomplete"],
+  ]) {
+    await h.commands.get(command)!.handler(args, h.ctx());
+    assert.match(h.notices.at(-1)!, /Invalid session UUID/);
+    assert.deepEqual(loadSession(root, id), before);
+  }
+});
+
+test("force-close by UUID works without selection, keeps history and never synthesizes review PASS", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root),
+    before = loadSession(root, id);
+  await h.commands.get("waicc-close")!.handler(`${id} --force`, h.ctx());
+  const after = loadSession(root, id);
+  assert.equal(after.status, "CLOSED");
+  assert.equal(after.closure!.kind, "forced");
+  assert.equal(after.closure!.reason, "Force-closed by user.");
+  assert.equal(after.closure!.approval, undefined);
+  assert.equal(after.contractReview, "NOT_REVIEWED");
+  assert.equal(after.deliveryVerified, false);
+  assert.deepEqual(after.requirements, before.requirements);
+  assert.equal(after.contractVersion, before.contractVersion);
+  assert.equal(after.rounds[0].status, "CANCELLED");
+  assert.equal(h.prompts.length, 0);
+  assert.equal(h.entries.length, 0);
+  assert.equal(h.notices.length, 0);
+  assert.equal(h.active().includes("bash"), true);
+  await h.commands.get("waicc-close")!.handler("--force", h.ctx());
+  assert.match(h.notices.at(-1)!, /No WAICC session selected/);
+  assert.deepEqual(loadSession(root, id), after);
+});
+
+test("force-close uses the selected session and records an optional reason without rebinding", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  const other = createSession(root, "Another requirement");
+  await h.commands.get("waicc-use")!.handler(id, h.ctx());
+  const before = loadSession(root, id);
+  await h.commands
+    .get("waicc-close")!
+    .handler(`${other.id} --force Superseded by a fresh plan`, h.ctx());
+  assert.equal(
+    loadSession(root, other.id).closure!.reason,
+    "Superseded by a fresh plan",
+  );
+  assert.deepEqual(loadSession(root, id), before);
+  const forceFirst = createSession(root, "Another forced closure");
+  await h.commands
+    .get("waicc-close")!
+    .handler(`--force ${forceFirst.id} Explicit stop`, h.ctx());
+  assert.equal(loadSession(root, forceFirst.id).closure!.reason, "Explicit stop");
+  assert.deepEqual(loadSession(root, id), before);
+  await h.commands.get("waicc-close")!.handler("--force", h.ctx());
+  assert.equal(loadSession(root, id).status, "CLOSED");
+  assert.equal(h.entries.length, 1);
+  assert.equal(h.prompts.length, 0);
+});
+
+test("force-close shortcut needs only an ID or the existing selection, with no flag or reason", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  await h.commands.get("waicc-force-close")!.handler(id, h.ctx());
+  assert.equal(loadSession(root, id).status, "CLOSED");
+  assert.equal(loadSession(root, id).closure!.reason, "Force-closed by user.");
+  assert.equal(h.entries.length, 0);
+  const next = createSession(root, "Add search");
+  prepare(root, next.id, contract(), "planning", "A new assignment", 0);
+  await h.commands.get("waicc-receive")!.handler(next.id, h.ctx());
+  const active = h.active();
+  await h.commands.get("waicc-force-close")!.handler("", h.ctx());
+  const closed = loadSession(root, next.id);
+  assert.equal(closed.status, "CLOSED");
+  assert.equal(closed.contractReview, "NOT_REVIEWED");
+  assert.equal(closed.closure!.kind, "forced");
+  assert.deepEqual(h.active(), active);
+  assert.equal(h.entries.length, 1); // Only receive binds the chat.
+  assert.equal(h.prompts.length, 1); // Only receive starts inference.
+  assert.equal(h.clipboard.length, 0);
+});
+
+test("human force-close can stop a recipient assignment without unlocking tools or permitting self-closure", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  await h.commands.get("waicc-receive")!.handler(id, h.ctx());
+  const active = h.active(),
+    before = loadSession(root, id);
+  await h.commands.get("waicc-close")!.handler("done", h.ctx());
+  assert.match(h.notices.at(-1)!, /handoff recipient/);
+  assert.deepEqual(loadSession(root, id), before);
+  await h.commands
+    .get("waicc-close")!
+    .handler("--force Stop this assignment", h.ctx());
+  assert.equal(loadSession(root, id).status, "CLOSED");
+  assert.deepEqual(h.active(), active);
+  assert.equal(h.entries.length, 1);
+  assert.equal(h.prompts.length, 1); // Receiving only; closing invokes no model.
+  assert.equal(h.tools.has("waicc_close"), false);
+  assert.equal(h.tools.has("waicc_force_close"), false);
+  assert.equal((await h.guard("bash")).block, true);
+  await assert.rejects(() => h.call("waicc_reply", { reply: body() }), /closed/);
+  const turn = await h.hooks.get("before_agent_start")!({}, h.ctx());
+  assert.match(turn.message.content, /STOP:.*closed/);
+});
+
+test("untrusted chats cannot cancel or force-close sessions", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root),
+    before = loadSession(root, id);
+  for (const [command, args] of [
+    ["waicc-cancel", id],
+    ["waicc-close", `${id} --force`],
+    ["waicc-force-close", id],
+  ]) {
+    await h.commands.get(command)!.handler(args, h.ctx("untrusted", false));
+    assert.match(h.notices.at(-1)!, /Trust the project/);
+    assert.deepEqual(loadSession(root, id), before);
+  }
+});
+
+test("list defaults to open sessions even with a closed selection; all and closed are explicit without rebinding", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  await h.commands.get("waicc-use")!.handler(id, h.ctx());
+  const closed = forceCloseSession(root, id),
+    open = createSession(root, "Another objective");
+  await h.commands.get("waicc-list")!.handler("", h.ctx());
+  assert.deepEqual(JSON.parse(h.shown.at(-1)!).sessions.map((s: any) => s.id), [open.id]);
+  await h.commands.get("waicc-list")!.handler("all", h.ctx());
+  assert.equal(JSON.parse(h.shown.at(-1)!).sessions.length, 2);
+  await h.commands.get("waicc-list")!.handler("closed", h.ctx());
+  assert.deepEqual(JSON.parse(h.shown.at(-1)!).sessions.map((s: any) => s.id), [id]);
+  await h.commands.get("waicc-status")!.handler("all", h.ctx());
+  assert.equal(JSON.parse(h.shown.at(-1)!).sessions.length, 2);
+  await h.commands.get("waicc-status")!.handler("", h.ctx());
+  assert.equal(JSON.parse(h.shown.at(-1)!).sessionId, id);
+  assert.equal(JSON.parse(h.shown.at(-1)!).status, "CLOSED");
+  await h.commands.get("waicc-list")!.handler("all unexpected", h.ctx());
+  assert.match(h.notices.at(-1)!, /Usage/);
+  assert.equal(h.entries.length, 1);
+  assert.equal(h.prompts.length, 0);
+  assert.deepEqual(loadSession(root, id), closed);
+  assert.deepEqual(loadSession(root, open.id), open);
+});
+
+test("delete and restore require an exact UUID, protect open sessions and do not infer a selection", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  const before = loadSession(root, id);
+  for (const command of ["waicc-delete", "waicc-restore"]) {
+    for (const args of ["", "all", "../sessions", `${id} unexpected`]) {
+      await h.commands.get(command)!.handler(args, h.ctx());
+      assert.match(h.notices.at(-1)!, /Usage/);
+      assert.deepEqual(loadSession(root, id), before);
+    }
+  }
+  await h.commands.get("waicc-delete")!.handler(id, h.ctx());
+  assert.match(h.notices.at(-1)!, /Only CLOSED/);
+  const closed = forceCloseSession(root, id);
+  await h.commands.get("waicc-delete")!.handler(id, h.ctx());
+  assert.equal(JSON.parse(h.shown.at(-1)!).recoverable, true);
+  await h.commands.get("waicc-list")!.handler("all", h.ctx());
+  assert.deepEqual(JSON.parse(h.shown.at(-1)!).sessions, []);
+  await h.commands.get("waicc-list")!.handler("deleted", h.ctx());
+  assert.equal(JSON.parse(h.shown.at(-1)!).sessions[0].id, id);
+  await h.commands.get("waicc-restore")!.handler(id, h.ctx());
+  assert.equal(JSON.parse(h.shown.at(-1)!).status, "CLOSED");
+  assert.deepEqual(loadSession(root, id), closed);
+  assert.equal(h.entries.length, 0);
+  assert.equal(h.prompts.length, 0);
+  assert.equal(h.clipboard.length, 0);
+  await assert.rejects(() => h.call("waicc_status", {}), /No WAICC session selected/);
+  assert.equal(h.tools.has("waicc_delete"), false);
+  assert.equal(h.tools.has("waicc_restore"), false);
+});
+
+test("deleting the selection persists an unbinding while deletion elsewhere gives a safe STOP context", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  forceCloseSession(root, id);
+  await h.commands.get("waicc-use")!.handler(id, h.ctx());
+  await h.commands.get("waicc-use")!.handler(id, h.ctx("other-chat"));
+  await h.commands.get("waicc-delete")!.handler(id, h.ctx());
+  assert.equal(h.entries.at(-1)!.data.sessionId, null);
+  assert.equal(await h.hooks.get("before_agent_start")!({}, h.ctx()), undefined);
+  const stale = await h.hooks.get("before_agent_start")!({}, h.ctx("other-chat"));
+  assert.match(stale.message.content, /STOP:.*unavailable/);
+  assert.match(stale.message.content, /Do not select another session automatically/);
+  await assert.rejects(() => h.call("waicc_status", {}), /No WAICC session selected/);
+  const resumed = harness(root);
+  resumed.entries.push(h.entries.at(-1)!);
+  await resumed.hooks.get("session_start")!({}, resumed.ctx());
+  assert.equal(await resumed.hooks.get("before_agent_start")!({}, resumed.ctx()), undefined);
+  restoreSession(root, id);
+  assert.equal(await h.hooks.get("before_agent_start")!({}, h.ctx()), undefined);
+  const restored = await h.hooks.get("before_agent_start")!({}, h.ctx("other-chat"));
+  assert.match(restored.message.content, /status CLOSED/);
+  assert.equal(h.prompts.length, 0);
+});
+
+test("session deletion is trust/coordinator guarded and a deleted recipient pin stays stopped", async (t) => {
+  const { root, id } = fixture(t),
+    h = harness(root);
+  await h.commands.get("waicc-receive")!.handler(id, h.ctx());
+  const active = h.active();
+  forceCloseSession(root, id);
+  for (const command of ["waicc-delete", "waicc-restore"]) {
+    await h.commands.get(command)!.handler(id, h.ctx());
+    assert.match(h.notices.at(-1)!, /handoff recipient/);
+    await h.commands.get(command)!.handler(id, h.ctx("untrusted", false));
+    assert.match(h.notices.at(-1)!, /Trust the project/);
+  }
+  deleteSession(root, id); // Another coordinator removes this now-closed session.
+  await h.commands.get("waicc-list")!.handler("deleted", h.ctx());
+  assert.equal(JSON.parse(h.shown.at(-1)!).sessions[0].id, id);
+  const view = JSON.parse((await h.call("waicc_status", {})).content[0].text);
+  assert.equal(view.stopped, true);
+  assert.equal(view.pin.sessionId, id);
+  assert.equal((await h.guard("read")).block, true);
+  assert.deepEqual(h.active(), active);
+  assert.equal(h.entries.length, 1);
+  assert.equal(h.prompts.length, 1);
+});
 
 test("new interactive handoffs auto-copy only the prompt; status does not overwrite and explicit copy can repeat", async (t) => {
   const { root, id } = fixture(t),
