@@ -92,6 +92,60 @@ Use one session for one development objective, with multiple request/reply round
 `/waicc-status` shows the current state, pending reply, last assessment and next
 action. After an interruption, use `/waicc-use <session-id>` to resume.
 
+## Receive in another Pi chat
+
+You can use different models for the two roles without launching another process
+from WAICC. For example, prepare the contract with DeepSeek in Pi chat A, then
+manually open Pi chat B in the **same project checkout**, select Claude using Pi's
+normal model controls, and run:
+
+```text
+/waicc-receive <session-id>
+```
+
+Use the WAICC session ID from `/waicc-status`, not a Pi chat ID. The receiver finds
+that session's single waiting request and pins its request ID, contract version,
+requirements digest, source fingerprint and mode. It loads the original scope,
+handoff, exact contract, conversation, selected skill paths and relevant current
+human-confirmed memory. The current Pi model then performs the recipient role.
+
+The recipient submits through `waicc_reply` and stops. Back in coordinating chat A:
+
+```text
+/waicc-continue
+```
+
+Submission only writes the designated `reply.json`; it does not import, assess,
+revise or close the contract. The coordinator validates and assesses the reply as
+usual. External CLI/agent handoffs remain available using `STARTER.txt` and the
+same reply format. Choose one recipient per request: receiving is not a worker
+reservation, and multiple workers could duplicate investigation. The first reply
+file wins; the receiver never overwrites an existing reply.
+
+Recipient mode exposes read/search tools, confirmed-memory recall and reply
+submission. It blocks coordinator mutations and shell/MCP/custom execution tools.
+Planning, review and advisor recipients cannot edit source. For an implementation
+request, **only if you want this Pi chat to edit the assigned code**, opt in with:
+
+```text
+/waicc-receive <session-id> --implement
+```
+
+This also enables direct `edit`/`write`, restricted to the request's task paths.
+Shell execution remains blocked, including test commands; unavailable checks must
+be reported as `not_run`. Use an appropriately permissioned external coding agent
+when the assignment needs a full shell/tool environment. These are Pi tool guards,
+not an OS sandbox or protection against other trusted extensions/external programs.
+
+The recipient binding survives Pi chat resume. It never automatically receives a
+newer request: cancelled, replaced, closed or answered assignments stop. Source
+freshness is checked at receive and submission; implementation may change source
+within its assigned scope, checked again at coordinator intake/assessment.
+`waicc_status` in recipient mode recovers the pinned assignment. To deliberately
+leave that role, the human runs `/waicc-use <session-id>`; this restores the chat's
+previous active tool selection. Switching provider/model remains a normal Pi action;
+WAICC does not choose a model, spawn processes or run a background scheduler.
+
 ## Contracts for complicated work
 
 The master contract preserves the overall requirements. Task contracts inside it
@@ -117,6 +171,7 @@ schedule parallel implementations or certify that dependent tasks are complete.
 - Generates versioned JSON contracts and readable Markdown from the same data.
 - Produces starter prompts, detailed handoffs and matching reply templates.
 - Supports focused contract-advisor questions without implying planning readiness.
+- Receives a pinned handoff in a manually opened Pi chat, using its current model.
 - Validates and freezes replies before Pi assesses them.
 - Preserves original requirements, amendments, contract history and decisions.
 - Detects stale source, incomplete coverage and changes outside implementation scope.
@@ -125,7 +180,8 @@ schedule parallel implementations or certify that dependent tasks are complete.
 
 External agents run when you submit their prompts. Preparation and assessment use
 your existing Pi agent and configured model. This release does not launch native
-Claude/Codex processes, edit application source, commit, push or deploy.
+Claude/Codex processes, automatically implement code, commit, push or deploy.
+Explicitly opted-in Pi implementation recipients can edit only their assigned paths.
 
 Planning, review and advisor handoffs instruct agents to inspect source and write only their
 designated reply. Their actual permissions remain the responsibility of the invoking
@@ -140,8 +196,9 @@ model assessment is not proof of tested delivery.
 | `/waicc-review <focus>`                          | Prepare review in this chat's selected session; without a selection, start from supplied requirements |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
+| `/waicc-receive <session-id> [--implement]`      | Receive one pinned handoff in this Pi chat; implementation edits require explicit opt-in              |
 | `/waicc-status [all\|session-id]`                | Show selected progress or list project sessions                                                       |
-| `/waicc-use <session-id>`                        | Resume an existing project session in this Pi chat                                                    |
+| `/waicc-use <session-id>`                        | Select coordinator mode for an existing project session; explicitly leaves recipient mode             |
 | `/waicc-close <reason>`                          | Explicitly close a fresh, passing full-contract review in READY_TO_CLOSE                              |
 | `/waicc-reopen <reason>`                         | Reopen a closed contract; clears PASS and requires a fresh review                                     |
 | `/waicc-amend <requirement change>`              | Append original-scope amendments and invalidate pending requests                                      |
@@ -371,7 +428,8 @@ node src/cli.ts --help
 
 The automated suite covers contract and dependency validation, reply identity and
 freshness, crash recovery, writer locks, path boundaries, Git/SVN evidence, memory,
-exports, and actual Pi 1.2.0 extension loading and handoff-tool execution. Live-model
+exports, recipient pin/resume/tool boundaries, and actual Pi 1.2.0 extension loading
+and handoff-tool execution. Live-model
 output quality still needs validation on real project work.
 
 The standalone CLI can create, prepare, import, assess and export sessions without

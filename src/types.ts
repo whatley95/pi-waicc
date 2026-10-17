@@ -133,6 +133,14 @@ export interface Round {
     evidence: string;
   }[];
 }
+export interface RecipientPin {
+  sessionId: string;
+  requestId: string;
+  contractVersion: number;
+  requirementsDigest: string;
+  sourceFingerprint: string;
+  mode: Mode;
+}
 export interface Session {
   schemaVersion: 1;
   id: string;

@@ -83,6 +83,51 @@ its observed post-implementation source is pinned at intake. Any subsequent sour
 change invalidates assessment. Repeated intake cannot replace an already frozen reply.
 After fixing stale inputs, issue a fresh request with a new ID.
 
+## Pi-native recipient transport
+
+`/waicc-receive <session-id> [--implement]` is a human command in a manually opened,
+idle, trusted Pi chat in the same project checkout. It requires exactly one WAITING
+round with no reply file, and source matching that request. It does not create a
+WAICC session/round or mutate its journal, status or updatedAt. Pi's current model
+receives the assignment; no model switch, subprocess or scheduler is involved.
+
+The Pi chat persists role recipient plus a pin of sessionId, requestId,
+contractVersion, requirementsDigest, sourceFingerprint and mode. Resume restores
+that pin and recipient tool profile. Assignment recovery reads the exact committed
+contract version, handoff, template and conversation, selected skill paths, and
+relevant current confirmed memory. It never chooses a replacement/newer request.
+Cancellation, amendment, replacement, intake or closure invalidates the binding.
+An existing reply makes it stop. Per-tool guards check request metadata; full source
+fingerprints are checked at receive and submission, not on every read.
+
+`waicc_reply` accepts `{reply: <body or complete reply>}` only in recipient mode.
+The engine supplies the pinned identity fields; any supplied identity must match.
+Both transports share reply validation, including exact coverage, advisor question
+and proposed-contract rules. A project writer lock protects validation and exclusive
+creation of the designated UTF-8 `reply.json` (maximum 256 KB); an existing file is
+never replaced. Non-implementation submissions also require unchanged source.
+Implementation may change source; ordinary coordinator scope/freshness validation
+still applies. Submission records provider/model metadata in the Pi chat, not as an
+agent-controlled claim in the reply. It does not import or assess the reply, change
+readiness, adopt a proposal or close a session. The recipient stops; the coordinator
+runs `/waicc-continue` for ordinary intake and assessment.
+
+The active tool profile is read/grep/find/ls, memory recall, status and reply.
+Coordinator mutations are also rejected inside their tool callbacks. A tool-call
+guard blocks all other tools, including shell, MCP and custom execution, and stops
+work on an invalidated/already answered pin. Only explicitly opted-in implementation
+enables direct edit/write: each path must stay within the pinned request's task
+allowedPaths, excluding reserved runtime/VCS paths and symlink/junction components.
+No execution-tool exception is made for tests; unavailable checks are not_run.
+This is a Pi extension boundary, not an OS sandbox against user actions, trusted
+extensions or external programs. External recipients retain their own permissions.
+
+`/waicc-use <session-id>` deliberately leaves recipient mode for coordinator mode
+and restores the previous active tool selection. It is a human role change, not a
+model tool. Old role-less Pi binding entries remain coordinator-compatible.
+Receiving is not a lease: multiple chats can investigate the same request, but only
+the first reply file can be submitted. Choose one worker per request manually.
+
 ## Focused advisor replies
 
 An advisor request pins `advisor: {question, requirementIds}` on the round, request
