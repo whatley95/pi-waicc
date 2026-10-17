@@ -30,12 +30,18 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
     "waicc-review",
     "waicc-advisor",
     "waicc-continue",
+    "waicc-receive",
     "waicc-status",
     "waicc-close",
     "waicc-reopen",
   ])
     assert.ok(result.extensions[0].commands.has(name));
-  for (const name of ["waicc_prepare", "waicc_assess", "waicc_memory"])
+  for (const name of [
+    "waicc_prepare",
+    "waicc_assess",
+    "waicc_memory",
+    "waicc_reply",
+  ])
     assert.ok(result.extensions[0].tools.has(name));
   assert.ok(!result.extensions[0].tools.has("waicc_close"));
   assert.ok(!result.extensions[0].tools.has("waicc_reopen"));
@@ -89,6 +95,7 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
       {
         cwd: root,
         isProjectTrusted: () => true,
+        sessionManager: { getSessionId: () => "loader-chat" },
       } as unknown as ExtensionToolContext,
     );
   const content = prepared.content[0];
@@ -111,6 +118,7 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
       {
         cwd: root,
         isProjectTrusted: () => true,
+        sessionManager: { getSessionId: () => "loader-chat" },
       } as unknown as ExtensionToolContext,
     );
   assert.equal(advised.content[0].type, "text");

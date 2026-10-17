@@ -42,6 +42,7 @@ import type {
   Contract,
   ContractVersion,
   Mode,
+  Reply,
   Round,
   Session,
 } from "./types.ts";
@@ -356,35 +357,7 @@ export function ingest(cwd: string, id: string): Session {
     const path = safePath(root, `${sessionRelative(id)}/${dir}/reply.json`);
     if (!existsSync(path)) return s;
     const raw = readText(path, 256_000);
-    const reply = validateReply(JSON.parse(raw));
-    ensure(
-      reply.sessionId === id &&
-        reply.requestId === r.id &&
-        reply.contractVersion === r.contractVersion &&
-        reply.mode === r.mode &&
-        reply.sourceFingerprint === r.source.fingerprint &&
-        reply.requirementsDigest === r.requirementsDigest,
-      "Reply identity or pinned inputs do not match this request",
-    );
-    const v = contract(root, s, r.contractVersion);
-    const ids =
-      r.mode === "advisor"
-        ? r.advisor!.requirementIds
-        : v.contract.requirements.map((req) => req.id);
-    ensure(
-      reply.coverage.length === ids.length &&
-        reply.coverage.every((row) => ids.includes(row.requirementId)),
-      "Reply must cover every requirement in its assigned scope exactly once",
-    );
-    if (r.mode === "advisor")
-      ensure(
-        reply.advice!.question === r.advisor!.question,
-        "Advisor question does not match this request",
-      );
-    if (reply.proposedContract) {
-      validateContract(reply.proposedContract, requirementsText(s));
-      stableIds(v.contract, reply.proposedContract);
-    }
+    const reply = validateRoundReply(root, s, r, JSON.parse(raw));
     r.reply = reply;
     r.replyDigest = digest(raw);
     const source = snapshot(root);
@@ -404,6 +377,44 @@ export function ingest(cwd: string, id: string): Session {
       [`${dir}/observed-source.json`]: json(source),
     });
   });
+}
+/** The same identity, coverage and proposal rules apply to every reply transport. */
+export function validateRoundReply(
+  root: string,
+  s: Session,
+  r: Round,
+  value: unknown,
+): Reply {
+  const reply = validateReply(value);
+  ensure(
+    reply.sessionId === s.id &&
+      reply.requestId === r.id &&
+      reply.contractVersion === r.contractVersion &&
+      reply.mode === r.mode &&
+      reply.sourceFingerprint === r.source.fingerprint &&
+      reply.requirementsDigest === r.requirementsDigest,
+    "Reply identity or pinned inputs do not match this request",
+  );
+  const v = contract(root, s, r.contractVersion);
+  const ids =
+    r.mode === "advisor"
+      ? r.advisor!.requirementIds
+      : v.contract.requirements.map((req) => req.id);
+  ensure(
+    reply.coverage.length === ids.length &&
+      reply.coverage.every((row) => ids.includes(row.requirementId)),
+    "Reply must cover every requirement in its assigned scope exactly once",
+  );
+  if (r.mode === "advisor")
+    ensure(
+      reply.advice!.question === r.advisor!.question,
+      "Advisor question does not match this request",
+    );
+  if (reply.proposedContract) {
+    validateContract(reply.proposedContract, requirementsText(s));
+    stableIds(v.contract, reply.proposedContract);
+  }
+  return reply;
 }
 export interface Assessment {
   requestId: string;

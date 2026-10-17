@@ -1,6 +1,6 @@
 ---
 name: waicc-workflow
-description: Prepare or assess project-local WAICC contracts, planning/review/advisor handoffs, and agent replies. Use for waicc commands or a WAICC handoff; implementation begins only when explicitly assigned.
+description: Prepare, receive or assess project-local WAICC contracts, planning/review/advisor handoffs, and agent replies. Use for waicc commands or a WAICC handoff; distinguish coordinator from recipient before acting.
 license: MIT
 ---
 
@@ -11,7 +11,29 @@ current contract and request before acting. Keep requirement IDs stable and map
 each active requirement to task acceptance criteria and planned verification.
 Questions and assumptions stay visible until resolved by evidence or a user decision.
 
-In Pi, use `waicc_status` to recover the selected session. Inspect relevant project
+Determine your role first. A Pi chat bound by `/waicc-receive <session-id>` is a
+recipient, not the coordinator. Use `waicc_status` to recover its exact pinned
+assignment, not to select the newest pending request. Read its original scope,
+contract, conversation, relevant selected skill files/references and confirmed
+memory; verify important claims against source. Do only the assigned mode's work.
+
+Pi recipients submit once through `waicc_reply`, supplying the reply-template body;
+identity fields are added and checked by WAICC. Do not write reply files through
+generic tools, prepare/revise canonical contracts, issue requests, assess replies,
+propose/confirm memory, close/reopen, switch sessions or spawn agents. Stop after
+submission and ask the human to return to the coordinator for `/waicc-continue`.
+Old/cancelled/replaced/closed/answered assignments stop, never retarget automatically.
+Source changes invalidate non-implementation submissions; ask for a fresh handoff.
+
+Recipient planning/review/advisor is read-only. Implementation edits require the
+human's `/waicc-receive <session-id> --implement` and stay inside the assigned task
+paths. Shell/MCP/custom execution tools are blocked even for implementation; report
+unavailable checks as not_run. Do not bypass these limits using skills or alternate
+tools. Pi tool guards are not OS isolation. The human may explicitly leave recipient
+mode with `/waicc-use <session-id>`; do not invoke it yourself. The coordinator
+instructions below do not grant a recipient authority to act as coordinator.
+
+In a coordinating Pi chat, use `waicc_status` to recover the selected session. Inspect relevant project
 source, then use `waicc_prepare` to save the full contract and generate a planning
 or review handoff. Tool schemas and validation govern the file formats. Never write
 canonical contracts or session state using generic file-editing tools.
