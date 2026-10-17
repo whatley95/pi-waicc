@@ -27,6 +27,7 @@ import {
 } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { recall } from "./memory.ts";
+import { normalizeReply } from "./reply.ts";
 import {
   ensure,
   identifier,
@@ -357,8 +358,10 @@ export function ingest(cwd: string, id: string): Session {
     const path = safePath(root, `${sessionRelative(id)}/${dir}/reply.json`);
     if (!existsSync(path)) return s;
     const raw = readText(path, 256_000);
-    const reply = validateRoundReply(root, s, r, JSON.parse(raw));
+    const normalized = normalizeReply(JSON.parse(raw));
+    const reply = validateRoundReply(root, s, r, normalized.reply);
     r.reply = reply;
+    if (normalized.changes.length) r.replyNormalization = normalized.changes;
     r.replyDigest = digest(raw);
     const source = snapshot(root);
     const stale =
@@ -375,6 +378,16 @@ export function ingest(cwd: string, id: string): Session {
     return commit(root, s, stale ? "reply.stale" : "reply.received", {
       [`${dir}/received.json`]: raw,
       [`${dir}/observed-source.json`]: json(source),
+      ...(normalized.changes.length
+        ? {
+            [`${dir}/received.normalized.json`]: json(reply),
+            [`${dir}/reply-normalization.json`]: json({
+              schemaVersion: 1,
+              normalizerVersion: 1,
+              changes: normalized.changes,
+            }),
+          }
+        : {}),
     });
   });
 }
@@ -385,7 +398,7 @@ export function validateRoundReply(
   r: Round,
   value: unknown,
 ): Reply {
-  const reply = validateReply(value);
+  const reply = validateReply(normalizeReply(value).reply);
   ensure(
     reply.sessionId === s.id &&
       reply.requestId === r.id &&
@@ -676,6 +689,9 @@ export function closeSession(cwd: string, id: string, reason: string): Session {
       "assessment.json",
       "received.json",
       "observed-source.json",
+      ...(round.replyNormalization?.length
+        ? ["received.normalized.json", "reply-normalization.json"]
+        : []),
     ])
       artifact(root, s, `${roundDirectory(round)}/${file}`);
     s.closure = {
@@ -810,6 +826,7 @@ export function status(cwd: string, id?: string): unknown {
             "reply.json",
           ),
           reply: r.reply ?? null,
+          replyNormalization: r.replyNormalization ?? [],
         }
       : null,
     lastAssessment: last
@@ -824,6 +841,7 @@ export function status(cwd: string, id?: string): unknown {
           checks: last.reply?.checks,
           advisor: last.advisor,
           advice: last.reply?.advice,
+          replyNormalization: last.replyNormalization ?? [],
         }
       : null,
     lastReply: lastReply
@@ -833,6 +851,7 @@ export function status(cwd: string, id?: string): unknown {
           status: lastReply.status,
           summary: lastReply.reply!.summary,
           advice: lastReply.reply!.advice,
+          replyNormalization: lastReply.replyNormalization ?? [],
           rationale: lastReply.rationale,
           artifactPath: join(
             root,
