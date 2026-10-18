@@ -439,11 +439,14 @@ that waiting round. It never accepts implementation assignments, because an exte
 agent's own edit tools cannot be confined to task paths. One server process holds at
 most one pin and never retargets. Validation and submission use the same engine as
 `waicc_reply`; tool failures return `isError` results so the agent can correct and retry.
-`--session <id> --request <id>` restricts a server to one request.
+`--session <id> --request <id>` restricts a server to one request. Planning and review
+assignments include `proposedContractExample`, a minimal contract that passes validation;
+an invalid `proposedContract` error is prefixed `proposedContract:` and repeats that example.
 
 `/waicc-dispatch` and `waicc dispatch` are explicit human actions. They accept only a
-single WAITING planning, review or advisor round, with no reply, unchanged source and no
-unfinished dispatch for that round. A `dispatch/<id>/start.json` artifact is committed
+single WAITING planning, review or advisor round, or an implementation round with
+`--implement` and `--via pi`, with no reply, unchanged source and no unfinished dispatch
+for that round. Testing rounds are refused: their checks need interactive confirmation. A `dispatch/<id>/start.json` artifact is committed
 before launch: agent, model, program, arguments, start time and timeout. An unfinished
 start blocks another dispatch until its result is recorded or its timeout plus two
 minutes passes. The agent runs at project root with stdin closed and is killed with its
@@ -455,9 +458,10 @@ Adapters: Claude Code (`claude -p`, a per-run pinned MCP config with
 `--strict-mcp-config`, WAICC MCP plus Read/Grep/Glob allowed, Edit/Write/NotebookEdit/Bash
 disallowed); Codex (`codex exec --sandbox read-only`, a pinned MCP server through `-c`
 overrides, only the four recipient tools enabled and approved); Pi (`pi -p` loading this
-extension with `WAICC_DISPATCH_PIN=<session>:<request>`, which pins read-only recipient
-mode at session start, or removes all tools and instructs the run to stop when the pin
-is refused); Antigravity (`agy -p --sandbox`, using the user's own MCP configuration;
+extension with `WAICC_DISPATCH_PIN=<session>:<request>[:implement]`, which pins recipient
+mode at session start, read-only or, with `:implement`, edit/write confined to the task's
+allowedPaths with shell still blocked; a refused pin removes all tools and instructs the
+run to stop); Antigravity (`agy -p --sandbox`, using the user's own MCP configuration;
 experimental). Pin variables only ever narrow permissions.
 
 ## Focused advisor replies

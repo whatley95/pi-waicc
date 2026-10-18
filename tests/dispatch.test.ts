@@ -9,7 +9,7 @@ import waicc from "../src/index.ts";
 import { loadSession } from "../src/files.ts";
 import { dispatch, dispatchOptions, prepareDispatch, runAgent, runDispatch, windowsCommand, type AgentRunner } from "../src/dispatch.ts";
 import { mcpServer } from "../src/mcp.ts";
-import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
+import { receiveHandoff, submitRecipientReply, validateRecipientReply } from "../src/recipient.ts";
 import { assess, createSession, delegateWork, ingest, prepare } from "../src/workflow.ts";
 import type { Contract } from "../src/types.ts";
 
@@ -167,9 +167,30 @@ test("dispatch records an audit log, never assesses, and refuses answered reques
   assert.equal(ingest(root, id).status, "AWAITING_ASSESSMENT");
 });
 
-test("dispatch refuses implementation handoffs", (t) => {
-  const { root, id } = implementationWaiting(t);
-  assert.throws(() => prepareDispatch(root, id, { via: "codex" }), /read-only planning\/review\/advisor/);
+test("implementation dispatch needs --implement and Pi, whose recipient mode confines edits to task paths", async (t) => {
+  const { root, id, requestId } = implementationWaiting(t);
+  assert.throws(() => prepareDispatch(root, id, { via: "pi" }), /Add --implement/);
+  for (const via of ["claude", "codex", "agy"] as const)
+    assert.throws(() => prepareDispatch(root, id, { via, implement: true }), /Only --via pi/);
+  assert.deepEqual(dispatchOptions("--via pi --implement --model deepseek/x"), { via: "pi", implement: true, model: "deepseek/x" });
+  const plan = prepareDispatch(root, id, { via: "pi", implement: true });
+  assert.equal(plan.env.WAICC_DISPATCH_PIN, `${id}:${requestId}:implement`);
+  assert.match(plan.args.at(-1)!, /editing only the task's allowed paths/);
+  await runDispatch(plan, silent);
+
+  const coder = await bootDispatchedPi(root, `${id}:${requestId}:implement`);
+  assert.ok(coder.active().includes("edit") && coder.active().includes("write"));
+  assert.ok(!coder.active().includes("bash"), "no shell even when coding");
+  assert.equal(await coder.toolCall("edit", { path: "source.txt" }), undefined, "allowed task path");
+  assert.equal((await coder.toolCall("write", { path: "elsewhere.txt" }))?.block, true, "outside task paths");
+  assert.equal((await coder.toolCall("bash", { command: "echo" }))?.block, true);
+  // Without the opt-in, the same implementation request is refused outright.
+  assert.deepEqual((await bootDispatchedPi(root, `${id}:${requestId}`)).active(), []);
+});
+
+test("--implement on a read-only handoff is refused", (t) => {
+  const { root, id } = fixture(t);
+  assert.throws(() => prepareDispatch(root, id, { via: "pi", implement: true }), /only to an implementation handoff/);
 });
 
 test("Windows command shims receive metacharacter-heavy arguments intact", { skip: process.platform !== "win32" }, async (t) => {
@@ -218,27 +239,34 @@ test("/waicc-dispatch runs in the background, reports the result and is coordina
   assert.match(notices.at(-1)!, /claude submitted a reply/);
 });
 
+/** Boots the extension the way dispatch starts a headless Pi: with a pin in the environment. */
+async function bootDispatchedPi(root: string, pin: string) {
+  const hooks = new Map<string, any>(), tools = new Map<string, any>(), entries: any[] = [];
+  let active = ["read", "edit", "write", "bash", "grep", "waicc_status", "waicc_reply"];
+  waicc({
+    registerCommand() {}, registerTool: (tool: any) => tools.set(tool.name, tool), on: (n: string, h: any) => hooks.set(n, h),
+    appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }),
+    getAllTools: () => active.map((name) => ({ name })), getActiveTools: () => active, setActiveTools: (names: string[]) => { active = names; },
+    sendMessage() {}, sendUserMessage() {},
+  } as unknown as ExtensionAPI);
+  const ctx = {
+    cwd: root, mode: "print", hasUI: false, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => `dispatched-${pin}`, getBranch: () => entries },
+    ui: { notify() {} },
+  } as unknown as ExtensionCommandContext;
+  process.env.WAICC_DISPATCH_PIN = pin;
+  try { await hooks.get("session_start")({}, ctx); } finally { delete process.env.WAICC_DISPATCH_PIN; }
+  const context = await hooks.get("before_agent_start")({ prompt: "go", messageType: "user" }, ctx);
+  return {
+    active: () => active, context,
+    reply: (params: object) => tools.get("waicc_reply").execute("x", params, undefined, undefined, ctx),
+    toolCall: (toolName: string, input: object) => hooks.get("tool_call")({ toolName, input }, ctx),
+  };
+}
+
 test("a dispatched headless Pi pins its request read-only at startup and refuses any other request", async (t) => {
   const { root, id, requestId } = fixture(t);
-  const boot = async (pin: string) => {
-    const hooks = new Map<string, any>(), tools = new Map<string, any>(), entries: any[] = [];
-    let active = ["read", "edit", "write", "bash", "grep", "waicc_status", "waicc_reply"];
-    waicc({
-      registerCommand() {}, registerTool: (tool: any) => tools.set(tool.name, tool), on: (n: string, h: any) => hooks.set(n, h),
-      appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }),
-      getAllTools: () => active.map((name) => ({ name })), getActiveTools: () => active, setActiveTools: (names: string[]) => { active = names; },
-      sendMessage() {}, sendUserMessage() {},
-    } as unknown as ExtensionAPI);
-    const ctx = {
-      cwd: root, mode: "print", hasUI: false, isIdle: () => true, isProjectTrusted: () => true,
-      sessionManager: { getSessionId: () => `dispatched-${pin}`, getBranch: () => entries },
-      ui: { notify() {} },
-    } as unknown as ExtensionCommandContext;
-    process.env.WAICC_DISPATCH_PIN = pin;
-    try { await hooks.get("session_start")({}, ctx); } finally { delete process.env.WAICC_DISPATCH_PIN; }
-    const context = await hooks.get("before_agent_start")({ prompt: "go", messageType: "user" }, ctx);
-    return { active: () => active, context, reply: (params: object) => tools.get("waicc_reply").execute("x", params, undefined, undefined, ctx) };
-  };
+  const boot = (pin: string) => bootDispatchedPi(root, pin);
   const refused = await boot(`${id}:another-request`);
   assert.deepEqual(refused.active(), []);
   assert.match(refused.context.message.content, /STOP: .*not the dispatched one/);
@@ -251,4 +279,20 @@ test("a dispatched headless Pi pins its request read-only at startup and refuses
   assert.equal(dry.valid, true);
   assert.equal(existsSync(join(root, ".pi", "pi-waicc", "sessions", id, "rounds", requestId, "reply.json")), false);
   assert.equal(JSON.parse((await pinned.reply({ reply: body() })).content[0].text).submitted, true);
+});
+
+test("a malformed proposedContract names its location and shows a valid example that really validates", (t) => {
+  const { root, id } = fixture(t);
+  const assignment = receiveHandoff(root, id);
+  const example = assignment.proposedContractExample!;
+  assert.ok(example, "planning assignments carry the example");
+  // The example passes the real validator once its requirements are the contract's own.
+  const proposed = { ...structuredClone(example), requirements: contract().requirements };
+  proposed.tasks[0].allowedPaths = ["source.txt"];
+  assert.equal(validateRecipientReply(root, assignment.pin, { ...body(), outcome: "planned", proposedContract: proposed }).valid, true);
+  const guessed = { ...proposed, tasks: [{ id: "T1", title: "x", dependencies: [], acceptanceCriteria: ["works"] }] };
+  assert.throws(
+    () => validateRecipientReply(root, assignment.pin, { ...body(), outcome: "planned", proposedContract: guessed }),
+    (error: Error) => /^proposedContract: .*unsupported fields/.test(error.message) && error.message.includes('"acceptance":[{"id":"AC-001"'),
+  );
 });
