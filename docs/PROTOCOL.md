@@ -534,6 +534,61 @@ using its configured provider/model. External handoffs are manual in v0.1.0.
 The advisor slash command issues a handoff directly without inference; its reply
 is assessed through the existing Pi agent on /waicc-continue.
 
+## Default-on automatic planning (Pi)
+
+Human `/waicc-auto-planning [on|off]` reads/sets a `waicc-auto-planning` custom
+entry scoped to the current Pi chat/project branch. Default is on when no preference
+exists, including new chats and existing branches; no global or project preference
+file is changed. Explicit off remains off. Old complex commands/settings normalize
+to on with the broader step-tracking policy; unknown saved modes fail closed as off.
+Resume/reload reads the branch preference,
+while live input tokens are deliberately not restored. Recipients cannot change
+the preference or use the startup tool, even with the default on.
+
+The input hook captures only a fresh idle interactive/RPC input, not queued/steered,
+slash, extension-generated or custom input. `[no-plan]` as the leading token skips
+startup mechanically. Before-agent-start must match the captured text exactly;
+another extension's transformed prompt is not silently treated as the original
+request when it changes after capture. Pi exposes the input-hook text, not an
+earlier pre-transform original; transformations by earlier handlers are outside
+this extension's visibility. Raw attached image bytes are not copied into contract
+requirements; the owner must preserve important visual context/references and
+access limits before handoff. A run-local UUID is exposed to the main model.
+New input, human commands, turn end, reload
+or branch navigation invalidates it. In-run context compaction can recover the
+active token without starting another turn or forwarding an archive.
+
+`waicc_start_planning {requestId,reason}` requires trust, coordinator role, enabled
+mode and that live token. It takes no requirements/approval/authorization argument.
+Plan usefulness/work-request classification and natural-language skip requests are the
+existing main model's judgment, not a second model call or a runtime classifier
+guarantee. Tracked steps, dependencies, separate completion checks or coordinated
+changes justify a proportional plan even for small/non-complex work. Trivial one-step
+edits and conversational questions need no new contract. Continue an already selected
+objective without restarting planning. The hooks themselves never create a contract. The tool captures the
+exact input (maximum 64,000 characters), with objective planning and no plan
+approval/development grant. `session.autoPlanning` records chatId, requestId and
+requirementsDigest; a deterministic origin-derived session ID and the project
+writer lock make creation/retry idempotent. Conflicting origin requirements,
+partial/corrupt state, closed/deleted origin sessions fail closed. There is no
+separate non-atomic origin ledger. This low-level creation helper is not an
+authentication API; the Pi entry point enforces the effective preference and role/input checks.
+
+A selected open contract is returned unchanged, never replaced or auto-amended.
+Its current scope/phase/pending work controls the next step. Unrelated/ambiguous
+requests need an explicit human choice. With no binding, any existing open contract
+requires explicit selection or a manual new `/waicc-planning`; closed/deleted/missing
+selections stop rather than retarget. Concurrent startup cannot duplicate work.
+Manual starts remain intentional separate-session creation.
+
+After successful startup the coordinator saves important prior chat context and
+uses waicc_prepare mode planning to freeze a brief; tasks may be []. The planner
+investigates source and proposes the detailed contract. Handoff/clipboard, reply
+validation, independent owner adoption and human /waicc-develop are unchanged.
+Automatic startup launches no agent/process and grants no implementation, tests,
+scope changes, memory confirmation, approval or closure. Disabling it changes no
+existing canonical contract or pending assignment.
+
 ## Review verdict and explicit closure
 
 ### Optional work delegation and shared context

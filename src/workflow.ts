@@ -294,36 +294,62 @@ function nextRound(
     },
   };
 }
+function newSession(root: string, requirements: string, implementationOwner?: "main" | "delegate", objective?: Objective,
+  automatic?: { id: string; origin: NonNullable<Session["autoPlanning"]> }): Session {
+  const timestamp = now();
+  const s: Session = {
+    schemaVersion: 1,
+    id: automatic?.id ?? randomUUID(),
+    projectRoot: root,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    sequence: 0,
+    requirements: [requirements],
+    contractVersion: 0,
+    status: "DRAFT",
+    rounds: [],
+    artifacts: {},
+    maxRounds: objective ? 20 : 12,
+    ...(objective ? { objective, roundLimits: { ...defaultRoundLimits } } : {}),
+    ...(automatic ? { autoPlanning: automatic.origin } : {}),
+    contractReview: "NOT_REVIEWED",
+    planApproval: null,
+    ...(implementationOwner ? { implementationOwner } : {}),
+    deliveryVerified: false,
+    verified: false,
+  };
+  return commit(root, s, "session.created", {
+    "requirements.md": `${requirements}\n`,
+  });
+}
 export function createSession(cwd: string, requirements: string, implementationOwner?: "main" | "delegate", objective?: Objective): Session {
   const root = projectRoot(cwd);
   text(requirements, "Original requirements", 64_000);
   ensure(implementationOwner === undefined || ["main", "delegate"].includes(implementationOwner), "Invalid implementation owner");
   ensure(objective === undefined || ["planning", "development", "review"].includes(objective), "Invalid objective");
+  return withLock(root, () => newSession(root, requirements, implementationOwner, objective));
+}
+/** One atomic planning-only start per captured Pi input, including retry after an interrupted bind. */
+export function createAutoPlanningSession(cwd: string, requirements: string, chatId: string, requestId: string): Session {
+  const root = projectRoot(cwd);
+  text(requirements, "Original requirements", 64_000);
+  text(chatId, "Pi chat ID", 1024);
+  identifier(requestId, "Automatic planning request ID");
+  const hash = digest(json([root, chatId, requestId]));
+  const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+  const origin = { chatId, requestId, requirementsDigest: digest(requirements) };
   return withLock(root, () => {
-    const timestamp = now();
-    const s: Session = {
-      schemaVersion: 1,
-      id: randomUUID(),
-      projectRoot: root,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      sequence: 0,
-      requirements: [requirements],
-      contractVersion: 0,
-      status: "DRAFT",
-      rounds: [],
-      artifacts: {},
-      maxRounds: objective ? 20 : 12,
-      ...(objective ? { objective, roundLimits: { ...defaultRoundLimits } } : {}),
-      contractReview: "NOT_REVIEWED",
-      planApproval: null,
-      ...(implementationOwner ? { implementationOwner } : {}),
-      deliveryVerified: false,
-      verified: false,
-    };
-    return commit(root, s, "session.created", {
-      "requirements.md": `${requirements}\n`,
-    });
+    ensure(!existsSync(safePath(root, `${runtimePath}/deleted-sessions/${id}`)), "This automatic request belongs to a deleted contract. Restore/select it explicitly; do not recreate it.");
+    if (existsSync(safePath(root, sessionRelative(id)))) {
+      const s = loadSession(root, id);
+      ensure(s.autoPlanning?.chatId === chatId && s.autoPlanning.requestId === requestId &&
+        s.autoPlanning.requirementsDigest === origin.requirementsDigest && s.requirements[0] === requirements,
+        "Automatic planning origin conflicts with stored requirements; inspect the existing contract");
+      ensure(s.status !== "CLOSED", "This automatic request's contract is closed. Reopen/select it explicitly; do not recreate it.");
+      return s;
+    }
+    ensure(!listSessions(root).some((s) => s.status !== "CLOSED"), "Open WAICC contracts already exist. Select one with /waicc-use <session-id>, or explicitly start separate work with /waicc-planning <requirements>; automatic planning will not guess.");
+    return newSession(root, requirements, undefined, "planning", { id, origin });
   });
 }
 /** Saved owner context is supplementary evidence; only amendments change scope. */
@@ -1129,6 +1155,7 @@ export function status(
     sessionId: s.id,
     projectRoot: root,
     objective: s.objective ?? "legacy_unspecified",
+    autoPlanning: s.autoPlanning ?? null,
     phase: sessionPhase(s),
     planApproval: s.planApproval ?? null,
     planAccepted,

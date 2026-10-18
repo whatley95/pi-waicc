@@ -48,6 +48,11 @@ tools. Pi tool guards are not OS isolation. The human may explicitly leave recip
 mode with `/waicc-use <session-id>`; do not invoke it yourself. The coordinator
 instructions below do not grant a recipient authority to act as coordinator.
 
+For default-on automatic planning, read [automatic startup](references/auto-planning.md).
+Use `waicc_start_planning` with a live startup token when tracked steps would help
+keep work on track, even for small/non-complex tasks. Keep the plan proportional;
+never create a contract for every question or replace an existing selection.
+
 In a coordinating Pi chat, use `waicc_status` to recover the selected session. Inspect relevant project
 source, then use `waicc_prepare` to save the contract and generate a planning
 handoff. The main agent implements authorized work after accepting the plan;

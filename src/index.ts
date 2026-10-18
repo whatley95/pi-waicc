@@ -36,6 +36,7 @@ import {
   cancel,
   closeSession,
   createSession,
+  createAutoPlanningSession,
   delegateWork,
   exportHandoff,
   forceCloseSession,
@@ -53,6 +54,7 @@ import { advisorInput, ensure } from "./validation.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { RecipientPin, Session } from "./types.ts";
 import { authorizationState } from "./state.ts";
+import { AutoPlanningRequests, autoPlanningInstructions, autoPlanningMode } from "./auto-planning.ts";
 import type { RoundPhase } from "./types.ts";
 import {
   sourceFirst,
@@ -126,6 +128,7 @@ export default function waicc(
   const bindings = new Map<string, ChatBinding>();
   const copied = new Map<string, string>();
   const compactedRuns = new Set<string>();
+  const automaticRequests = new AutoPlanningRequests();
   const key = (ctx: ExtensionContext): string =>
     `${projectRoot(ctx.cwd)}:${ctx.sessionManager.getSessionId()}`;
   function selected(ctx: ExtensionContext, explicit?: string): string {
@@ -298,6 +301,7 @@ export default function waicc(
       handler: async (args, ctx) => {
         try {
           trusted(ctx);
+          automaticRequests.clear(ctx); // Human commands supersede any pending startup decision.
           if (
             ![
               "waicc-receive",
@@ -424,6 +428,15 @@ export default function waicc(
       );
     },
   );
+  command("waicc-auto-planning", "Automatic planning when tracked steps help; default on: [on|off] (complex is a legacy alias for on)", async (args, ctx) => {
+    ensure(["", "on", "complex", "off"].includes(args), "Usage: /waicc-auto-planning [on|off] (complex is a legacy alias for on)");
+    if (args) {
+      automaticRequests.clear(ctx);
+      pi.appendEntry("waicc-auto-planning", { projectRoot: projectRoot(ctx.cwd), mode: args === "complex" ? "on" : args });
+    }
+    show(ctx, { autoPlanning: autoPlanningMode(ctx), scope: "This Pi chat/project branch only; new chats default on; explicit off preferences are preserved",
+      nextAction: "Describe work normally. When tracked steps, dependencies or completion checks would help keep it on track—even for small work—the main model prepares one proportional planning brief/handoff. Trivial one-step edits and questions need no new contract. [no-plan] skips startup for one input. Existing contracts require explicit selection; /waicc-planning always remains available. No worker is launched or coding authorized." });
+  });
   command(
     "waicc-planning",
     "Create a durable requirements session and prepare a planning contract/handoff",
@@ -824,6 +837,30 @@ export default function waicc(
     },
   });
   pi.registerTool({
+    name: "waicc_start_planning",
+    label: "Start automatic WAICC planning",
+    description: "Coordinator only; auto-planning defaults on: capture the current human work request exactly in a planning-only session when tracked steps, dependencies or completion checks would keep work on track, even for small tasks. Not for trivial one-step edits, questions or skip-planning requests. Requires a live requestId from auto-planning guidance. Never launches agents, changes scope, accepts plans or authorizes coding. Existing selected sessions are returned unchanged, never replaced.",
+    parameters: Type.Object({ requestId: Type.String(), reason: Type.String({ description: "Concrete reason tracked steps/source-backed planning would help keep this work on track; complexity is not required" }) }),
+    async execute(_id, params, signal, _update, ctx) {
+      trusted(ctx); coordinator(ctx); signal?.throwIfAborted();
+      ensure(autoPlanningMode(ctx) === "on", "Automatic planning is off. The human can /waicc-auto-planning on, or use /waicc-planning.");
+      const request = automaticRequests.current(ctx);
+      ensure(request && request.id === params.requestId, "No matching live human request for automatic planning. Use a fresh ordinary idle prompt; never reuse tokens from history, extensions or another chat.");
+      ensure(params.reason.trim().length > 0 && params.reason.length <= 2000, "Give a concise nonempty planning reason (maximum 2000 characters)");
+      const binding = bindings.get(key(ctx));
+      const s = binding ? loadSession(projectRoot(ctx.cwd), binding.sessionId)
+        : createAutoPlanningSession(ctx.cwd, request.text, ctx.sessionManager.getSessionId(), request.id);
+      ensure(s.status !== "CLOSED", "The selected contract is closed. Explicitly reopen/select it or start separate work with /waicc-planning; automatic planning will not replace it.");
+      if (!binding) bind(ctx, s.id);
+      return result({ action: binding ? "existing_session" : "planning_started", reason: params.reason,
+        sessionId: s.id, status: s.status, contractVersion: s.contractVersion, objective: s.objective ?? "legacy",
+        requirementsPath: join(projectRoot(ctx.cwd), ".pi/pi-waicc/sessions", s.id, "requirements.md"),
+        nextAction: binding
+          ? "Existing session UNCHANGED. Recover waicc_status, compare exact scope and follow its current next action. Do not amend scope, duplicate a pending handoff or replay the initial brief sequence. Unrelated/ambiguous work needs an explicit human selection/new planning command."
+          : `Planning-only startup. Save important prior chat constraints/decisions/source references with waicc_context, then waicc_prepare expectedVersion 0 mode planning with a faithful requirements brief; tasks may be []. The independent planner forms the detailed source-backed plan. ${guidance}` });
+    },
+  });
+  pi.registerTool({
     name: "waicc_prepare",
     label: "Prepare WAICC handoff",
     description:
@@ -1002,7 +1039,13 @@ export default function waicc(
       return result(propose(ctx.cwd, params.claim, params.source, params.kind));
     },
   });
+  pi.on("input", async (event, ctx) => {
+    automaticRequests.capture(event, ctx, bindings.get(key(ctx))?.role === "recipient");
+  });
+  pi.on("agent_end", async (_event, ctx) => { automaticRequests.clear(ctx); });
+  pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
+    automaticRequests.clear(ctx);
     const entry = ctx.sessionManager
       .getBranch()
       .findLast(
@@ -1063,11 +1106,17 @@ export default function waicc(
     }
   });
   pi.on("session_compact", async (_event, ctx) => {
-    if (bindings.has(key(ctx)) && ctx.isProjectTrusted()) compactedRuns.add(key(ctx));
+    if ((bindings.has(key(ctx)) || automaticRequests.current(ctx)) && ctx.isProjectTrusted()) compactedRuns.add(key(ctx));
   });
   pi.on("context", async (event, ctx) => {
     const binding = bindings.get(key(ctx));
-    if (!binding || !ctx.isProjectTrusted() || !compactedRuns.has(key(ctx))) return;
+    if (!ctx.isProjectTrusted() || !compactedRuns.has(key(ctx))) return;
+    const request = automaticRequests.current(ctx);
+    const automatic = request && binding?.role !== "recipient" ? autoPlanningInstructions(request.id, Boolean(binding)) : "";
+    if (!binding) return automatic ? { messages: [...event.messages.filter((message) =>
+      !(message.role === "custom" && message.customType === "waicc-auto-planning")), {
+      role: "custom" as const, customType: "waicc-auto-planning", content: automatic, display: false, timestamp: Date.now(),
+    }] } : undefined;
     let recovery: string;
     try {
       const root = projectRoot(ctx.cwd), s = loadSession(root, binding.sessionId);
@@ -1082,14 +1131,18 @@ export default function waicc(
     // model turn. Covers threshold/overflow retries within an ongoing run.
     return { messages: [...event.messages.filter((message) =>
       !(message.role === "custom" && message.customType === "waicc-compact-recovery")), {
-      role: "custom" as const, customType: "waicc-compact-recovery", content: recovery,
+      role: "custom" as const, customType: "waicc-compact-recovery", content: recovery.startsWith("STOP") ? recovery : [automatic, recovery].filter(Boolean).join("\n\n"),
       display: false, timestamp: Date.now(),
     }] };
   });
-  pi.on("before_agent_start", async (_event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     const binding = bindings.get(key(ctx));
-    if (!binding || !ctx.isProjectTrusted()) return;
+    automaticRequests.begin(event, ctx, binding?.role === "recipient");
+    if (!ctx.isProjectTrusted()) return;
+    const request = automaticRequests.current(ctx);
+    const automatic = request ? autoPlanningInstructions(request.id, Boolean(binding)) : "";
     compactedRuns.delete(key(ctx)); // This hook persists the normal per-run recovery message.
+    if (!binding) return automatic ? { message: { customType: "waicc-auto-planning", content: automatic, display: false } } : undefined;
     if (binding.role === "recipient") {
       recipientTools(binding);
       let state =
@@ -1137,7 +1190,7 @@ export default function waicc(
     return {
       message: {
         customType: "waicc-context",
-        content: `${contractOwner}\n\n${sourceFirst}\n\nWAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}. If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
+        content: `${automatic}\n\n${contractOwner}\n\n${sourceFirst}\n\nWAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}. If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
         display: false,
       },
     };
