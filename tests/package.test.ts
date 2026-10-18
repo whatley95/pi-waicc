@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 // Node refuses to strip types under node_modules, so an installed bin must be compiled JavaScript.
 test("installed CLI bin runs from node_modules as compiled JavaScript", (t) => {
-  const base = mkdtempSync(join(tmpdir(), "waicc-test-"));
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => {
     assert.ok(basename(base).startsWith("waicc-test-"));
     rmSync(base, { recursive: true, force: true });
