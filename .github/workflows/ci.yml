@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      # The source-fingerprint tests drive a real Subversion working copy.
+      - name: Install Subversion (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y subversion
+      - name: Install Subversion (macOS)
+        if: runner.os == 'macOS'
+        run: brew install subversion
+      - name: Install Subversion (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install sliksvn -y --no-progress
+          "C:\Program Files\SlikSvn\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run build
