@@ -126,6 +126,19 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
   };
 }
 
+/** Bounded assignment view: large or checkpointed assignments become an input-file index. */
+export function assignmentText(assignment: ReturnType<typeof recipientAssignment>): string {
+  const full = json(assignment);
+  if (!assignment.checkpointPath && full.length <= 32_000) return full;
+  return json({
+    role: assignment.role, pin: assignment.pin, projectRoot: assignment.projectRoot,
+    inputs: assignment.inputs, replyPath: assignment.replyPath,
+    reviewKind: assignment.reviewKind, wholeWork: assignment.wholeWork,
+    skills: assignment.skills,
+    nextAction: "Checkpoint-first assignment: read the checkpoint/index, exact request, contract/requirements, relevant skills, memory and reply template at inputs paths BEFORE working. Expand indexed original evidence and saved conversation as needed; full review still covers all requirements/tasks/criteria/prior actionable findings. This is an index, not proof; no evidence was removed.",
+  });
+}
+
 export function receiveHandoff(
   cwd: string,
   id: string,
@@ -163,6 +176,52 @@ export function receiveHandoff(
   return recipientAssignment(root, pin);
 }
 
+/** Every submit-time check, without writing; a draft can be corrected before the one write. */
+function checkedReply(root: string, pin: RecipientPin, value: unknown) {
+  const { s, r, replyPath } = pinned(root, pin);
+  assertRecipientCurrent(root, pin);
+  if (pin.mode !== "implementation")
+    ensure(
+      snapshot(root).fingerprint === pin.sourceFingerprint,
+      "Source changed during this assignment. Do not submit stale advice; return to the coordinator.",
+    );
+  const body = record(value, "Reply");
+  const identity = { schemaVersion: 1, ...pin };
+  for (const [key, expected] of Object.entries(identity))
+    ensure(
+      body[key] === undefined || body[key] === expected,
+      `Reply ${key} does not match the pinned request`,
+    );
+  const submitted = { ...body, ...identity };
+  const normalized = normalizeReply(submitted);
+  const reply = validateRoundReply(root, s, r, normalized.reply);
+  // Keep the submitted fields intact; coordinator intake freezes raw + normalized views.
+  const content = json(submitted);
+  ensure(
+    Buffer.byteLength(content, "utf8") <= 256_000 &&
+      Buffer.byteLength(json(reply), "utf8") <= 256_000,
+    "Reply exceeds 256 KB",
+  );
+  return { replyPath, content, normalization: normalized.changes };
+}
+
+export function validateRecipientReply(
+  cwd: string,
+  pin: RecipientPin,
+  value: unknown,
+) {
+  const checked = checkedReply(projectRoot(cwd), pin, value);
+  return {
+    valid: true,
+    submitted: false,
+    sessionId: pin.sessionId,
+    requestId: pin.requestId,
+    normalization: checked.normalization,
+    nextAction:
+      "Draft passes submit-time validation. Nothing was written; submit this exact reply once to deliver it.",
+  };
+}
+
 export function submitRecipientReply(
   cwd: string,
   pin: RecipientPin,
@@ -170,37 +229,14 @@ export function submitRecipientReply(
 ) {
   const root = projectRoot(cwd);
   return withLock(root, () => {
-    const { s, r, replyPath } = pinned(root, pin);
-    assertRecipientCurrent(root, pin);
-    if (pin.mode !== "implementation")
-      ensure(
-        snapshot(root).fingerprint === pin.sourceFingerprint,
-        "Source changed during this assignment. Do not submit stale advice; return to the coordinator.",
-      );
-    const body = record(value, "Reply");
-    const identity = { schemaVersion: 1, ...pin };
-    for (const [key, expected] of Object.entries(identity))
-      ensure(
-        body[key] === undefined || body[key] === expected,
-        `Reply ${key} does not match the pinned request`,
-      );
-    const submitted = { ...body, ...identity };
-    const normalized = normalizeReply(submitted);
-    const reply = validateRoundReply(root, s, r, normalized.reply);
-    // Keep the submitted fields intact; coordinator intake freezes raw + normalized views.
-    const content = json(submitted);
-    ensure(
-      Buffer.byteLength(content, "utf8") <= 256_000 &&
-        Buffer.byteLength(json(reply), "utf8") <= 256_000,
-      "Reply exceeds 256 KB",
-    );
+    const { replyPath, content, normalization } = checkedReply(root, pin, value);
     exclusiveWrite(replyPath, content);
     return {
       submitted: true,
       sessionId: pin.sessionId,
       requestId: pin.requestId,
       replyPath,
-      normalization: normalized.changes,
+      normalization,
       nextAction:
         "Stop. Return to the coordinating Pi session and /waicc-continue. This submission does not assess the reply or change contract readiness.",
     };

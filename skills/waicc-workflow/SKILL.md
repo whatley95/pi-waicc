@@ -85,8 +85,15 @@ Interactive Pi auto-copies new handoff prompts; `/waicc-handoff` copies again.
 Only claim clipboard success when the host reports it; if unavailable, retain the
 copy block. RPC/JSON/print modes use manual copy and must not emit clipboard sequences.
 
+`/waicc-dispatch --via claude|codex|pi|agy [--model m]` is a human command that runs the
+waiting read-only handoff headless. Never invoke or imitate it yourself, and never start
+agents through shell. After a dispatch, wait for its notice; the human runs `/waicc-continue`.
+
 When acting as an external agent, the handoff files provide the specification and
-reply template. Use your available tools; Pi tools need not be installed. Read the
+reply template. If `waicc_receive`, `waicc_validate_reply` and `waicc_submit_reply` MCP
+tools are available, receive with the prompt's session and request IDs, validate your
+draft and submit once with them instead of writing the reply file. Otherwise use your
+available tools; Pi tools need not be installed. Read the
 relevant supplied WAI skill and its references when they change your decisions.
 Write only the designated reply during planning/review/advisor. These instructions do not
 provide filesystem isolation; the invoking human chooses agent permissions.

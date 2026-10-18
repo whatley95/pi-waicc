@@ -42,6 +42,7 @@ export function starterPrompt(s: Session, r: Round, portable = false): string {
       scope,
       "Investigate source/docs/tests and accessible reference projects before asking the human. Resolve technical facts yourself; record low-risk assumptions, genuine access limits and task-specific human/external decision gates. Planning coverage is not delivery verification: tests not run alone do not make every planning item unverified.",
       recipientResponsibilities(r.mode, r.review?.kind ?? "contract"),
+      ...(portable ? [] : [`If WAICC MCP tools are available (waicc_receive, waicc_validate_reply, waicc_submit_reply), prefer them: call waicc_receive with sessionId ${JSON.stringify(s.id)} and requestId ${JSON.stringify(r.id)}, check your draft with waicc_validate_reply, and deliver it once with waicc_submit_reply instead of writing the reply file yourself. Otherwise write the file as described next.`]),
       `Use ${JSON.stringify(templatePath)} to write one complete UTF-8 JSON reply to ${JSON.stringify(replyPath)}. Preserve all pinned identity fields; report findings, unresolved questions and actual/not-run checks honestly. Do not wrap the reply file in Markdown fences.`,
       replyFormat,
       findingFormat,
