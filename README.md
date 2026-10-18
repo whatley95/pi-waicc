@@ -451,8 +451,8 @@ foreground: `waicc dispatch <session-id> --via codex`.
 
 | `--via`  | Runs                                 | Read-only enforcement                                   | Model flag              |
 | -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
-| `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP | `--model opus`          |
-| `codex`  | `codex exec`                         | `--sandbox read-only` (OS sandbox); only WAICC tools approved | `-m <model>`     |
+| `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP. Coding: edits in an isolated worktree, no shell | `--model opus` |
+| `codex`  | `codex exec`                         | `--sandbox read-only` (OS sandbox); only WAICC tools approved. Coding: `workspace-write` in an isolated worktree | `-m <model>` |
 | `pi`     | `pi -p` with this extension          | WAICC's own recipient mode: read/search tools; with `--implement`, edit/write only inside task paths | `--model provider/id` |
 | `agy`    | `agy -p` (Antigravity CLI)           | Its headless mode soft-denies unapproved tools          | `--model <slug>`        |
 
@@ -460,18 +460,29 @@ What it does and does not do:
 
 - **One recipient per request.** Dispatch refuses while a reply exists or another
   dispatched agent is still working on the same request.
-- **Read-only roles, plus coding through Pi.** Planning, review and advisor handoffs
-  can go to any agent. A delegated implementation handoff can be dispatched only with
-  `--via pi --implement`: WAICC's recipient mode then allows edit/write inside the
-  task's allowed paths and blocks every other path and all shell commands as they
-  happen. Claude, Codex and Antigravity cannot be confined that way, so they are
-  refused for implementation. The coding agent cannot run tests: it reports them
-  `not_run`, and `/waicc-continue` inspects the diff, scope and checks as usual.
-  Testing handoffs stay manual, because each check needs interactive confirmation.
+- **Coding needs `--implement`.** Planning, review and advisor handoffs go to any agent
+  read-only. A delegated implementation handoff is dispatched only with `--implement`:
+
+  - **Pi codes in place.** WAICC's recipient mode allows edit/write inside the task's
+    allowed paths and blocks every other path and all shell commands as they happen.
+  - **Claude and Codex code in an isolated Git worktree.** Dispatch snapshots exactly the
+    files the handoff fingerprinted (uncommitted and untracked work included) through a
+    temporary index, so your checkout and staging area are untouched, and the agent
+    edits only that copy. When it finishes, WAICC applies its changes **all or nothing**:
+    only if a reply was submitted, every changed file is inside the task's allowed paths
+    and your checkout has not changed meanwhile. Otherwise nothing is applied and the
+    copy is kept for you to inspect. Codex runs in `--sandbox workspace-write` and can run
+    commands without network; ignored dependencies such as `node_modules` are not copied.
+    Claude has no shell. Isolation needs a Git checkout; Antigravity is refused.
+
+  A coding agent that could not run tests reports them `not_run`; `/waicc-continue`
+  then inspects the diff, scope and checks as usual. Testing handoffs stay manual,
+  because each check needs interactive confirmation.
 
   ```text
   /waicc-develop --delegate
-  /waicc-dispatch --via pi --implement --model deepseek/deepseek-flash
+  /waicc-dispatch --via codex --implement                 # isolated worktree
+  /waicc-dispatch --via pi --implement --model deepseek/deepseek-flash   # or in place
   /waicc-continue
   ```
 - **The agent is pinned.** Claude and Codex get a per-run WAICC MCP server that refuses
@@ -502,6 +513,9 @@ validation, submitted once and left source untouched. Slower models can take wel
 ten minutes; the default timeout is 30 minutes. `/waicc-dispatch --via pi --implement`
 was also verified from a real Pi coordinator: DeepSeek Flash implemented the accepted
 task inside its allowed path in under a minute, and the coordinator accepted the reply.
+Isolated coding was verified live too: Codex and Claude (Sonnet) each implemented an
+accepted task in their worktree, WAICC applied the single in-scope file and removed the
+copy, and the coordinator accepted both replies, including in a Git repo with no commits.
 **Antigravity (`agy`) support is experimental and untested:** it reads MCP
 servers from its own configuration, so add WAICC once in `~/.gemini/config/mcp_config.json`:
 
@@ -532,6 +546,7 @@ does not need this setup; it starts its own pinned server.
 | ---------------------- | ----------------------------------------------------------------------- |
 | `waicc_receive`        | Pin the session's single waiting request (session and request IDs required) |
 | `waicc_assignment`     | Re-read the pinned contract, requirements, context, history and inputs  |
+| `waicc_read_input`     | Read one listed input file in chunks, for agents working outside the project |
 | `waicc_validate_reply` | Dry run of every submit-time check; writes nothing                      |
 | `waicc_submit_reply`   | Validate and write the one reply; does not assess or advance the contract |
 
@@ -539,7 +554,8 @@ The server never retargets to another request and refuses implementation assignm
 It adds tools to an agent but cannot remove the agent's own edit or shell tools: run
 reviewers read-only (for example Claude's `--permission-mode plan` or Codex's
 `--sandbox read-only`). `waicc mcp --session <id> --request <id>` pins the server to one
-request, which is how dispatch starts it.
+request, which is how dispatch starts it. Dispatch adds `--implement` only for an agent
+coding in an isolated worktree, whose changes WAICC checks before applying them.
 
 ## Contracts for complicated work
 
@@ -632,7 +648,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-handoff [session-id]`                    | Show a copy-only manual recipient prompt, access requirements and separate human return steps         |
 | `/waicc-receive <session-id> [--implement] [--run-checks]` | Receive a pinned role; edits opt in separately from individually confirmed local checks |
 | `/waicc-dispatch --via claude\|codex\|pi\|agy [--model m] [--timeout min]` | Run the waiting read-only handoff in a headless agent; you are notified when it finishes |
-| `/waicc-dispatch --via pi --implement [--model m]` | Run a delegated implementation handoff in headless Pi; edits confined to task paths |
+| `/waicc-dispatch --via pi\|claude\|codex --implement [--model m]` | Run a delegated implementation: Pi in place within task paths; Claude/Codex in an isolated worktree, applied all or nothing |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
 | `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |
