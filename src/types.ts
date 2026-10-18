@@ -213,6 +213,7 @@ export interface Session {
   artifacts: Record<string, string>;
   maxRounds: number;
   objective?: Objective;
+  autoPlanning?: { chatId: string; requestId: string; requirementsDigest: string };
   roundLimits?: Partial<Record<RoundPhase, number>>;
   contractReview: ContractReview;
   implementationOwner?: "main" | "delegate";
