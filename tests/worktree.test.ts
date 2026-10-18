@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
@@ -31,11 +31,12 @@ const git = (root: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: root, encoding: "utf8", windowsHide: true });
 
 /** A Git project whose delegated implementation handoff is waiting, with uncommitted and untracked work. */
-function project(t: TestContext) {
+function project(t: TestContext, setup: (root: string) => void = () => {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
   writeFileSync(join(root, "committed.txt"), "committed\n");
+  setup(root);
   git(root, "init", "--quiet");
-  git(root, "add", "committed.txt");
+  git(root, "add", "-A");
   git(root, "commit", "--quiet", "-m", "base");
   writeFileSync(join(root, "committed.txt"), "edited but not committed\n");
   writeFileSync(join(root, "source.txt"), "untracked source\n");
@@ -137,15 +138,57 @@ test("isolated work is applied all or nothing and the copy is kept for inspectio
   }
 });
 
-test("an isolated MCP server receives implementation and reads only the assignment's inputs", (t) => {
+test("an isolated MCP server receives implementation and reads only the assignment's inputs", async (t) => {
   const { root, id, requestId } = project(t);
-  const call = (handle: ReturnType<typeof mcpServer>, name: string, args: object) =>
-    (handle({ id: 1, method: "tools/call", params: { name, arguments: args } }) as any).result;
-  assert.equal(call(mcpServer(root, { sessionId: id, requestId }), "waicc_receive", { sessionId: id, requestId }).isError, true);
+  const call = async (handle: ReturnType<typeof mcpServer>, name: string, args: object) =>
+    ((await handle({ id: 1, method: "tools/call", params: { name, arguments: args } })) as any).result;
+  assert.equal((await call(mcpServer(root, { sessionId: id, requestId }), "waicc_receive", { sessionId: id, requestId })).isError, true);
   const isolated = mcpServer(root, { sessionId: id, requestId, implement: true });
-  const assignment = JSON.parse(call(isolated, "waicc_receive", { sessionId: id, requestId }).content[0].text);
-  assert.match(call(isolated, "waicc_read_input", { path: assignment.inputs.handoff }).content[0].text, /implementation/i);
-  const outside = call(isolated, "waicc_read_input", { path: join(root, "committed.txt") });
+  const assignment = JSON.parse((await call(isolated, "waicc_receive", { sessionId: id, requestId })).content[0].text);
+  assert.match((await call(isolated, "waicc_read_input", { path: assignment.inputs.handoff })).content[0].text, /implementation/i);
+  const outside = await call(isolated, "waicc_read_input", { path: join(root, "committed.txt") });
   assert.equal(outside.isError, true);
   assert.match(outside.content[0].text, /Only paths listed/);
+});
+
+test("ignored dependency folders are linked into the copy, never applied, and survive its removal", async (t) => {
+  const { root, id, track } = project(t, (dir) => {
+    writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
+    mkdirSync(join(dir, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(dir, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
+  });
+  const plan = track(prepareDispatch(root, id, { via: "codex", implement: true }));
+  assert.deepEqual(plan.isolation!.linked, ["node_modules"]);
+  assert.equal(readFileSync(join(plan.cwd, "node_modules", "dep", "index.js"), "utf8"), "module.exports = 1;\n");
+  assert.match(plan.prompt, /linked from the project/);
+  const outcome = await runDispatch(plan, agent(root, id, (cwd) => {
+    writeFileSync(join(cwd, "source.txt"), "implemented\n");
+    // Writes through the link land in the project's own folder; they are not the agent's work.
+    writeFileSync(join(cwd, "node_modules", "dep", "cache.txt"), "test cache\n");
+  }));
+  assert.equal(outcome.isolation?.applied, true, outcome.isolation?.reason ?? "");
+  assert.deepEqual(outcome.isolation?.changes, [{ status: "M", path: "source.txt" }]);
+  assert.equal(existsSync(plan.isolation!.worktree), false);
+  // Removing the copy removed only the link: the project's dependencies are intact.
+  assert.equal(readFileSync(join(root, "node_modules", "dep", "index.js"), "utf8"), "module.exports = 1;\n");
+  assert.ok(lstatSync(join(root, "node_modules")).isDirectory());
+});
+
+test("an unignored folder is not linked, and approved checks run inside the isolated copy", async (t) => {
+  const { root, id, requestId, track } = project(t, (dir) => {
+    mkdirSync(join(dir, "venv"));
+    writeFileSync(join(dir, "venv", "marker.txt"), "tracked\n");
+  });
+  const whereAmI = { program: process.execPath, args: ["-e", "console.log(process.cwd())"], timeoutMs: 60_000 };
+  const plan = track(prepareDispatch(root, id, { via: "codex", implement: true, checks: [whereAmI] }));
+  assert.deepEqual(plan.isolation!.linked, [], "venv is not ignored, so it is not linked");
+  const server = JSON.parse(plan.args.find((arg) => arg.startsWith("mcp_servers.waicc.args="))!.slice("mcp_servers.waicc.args=".length));
+  assert.equal(server[server.indexOf("--check-cwd") + 1], plan.cwd);
+  const handle = mcpServer(root, { sessionId: id, requestId, implement: true, checks: [whereAmI], checkCwd: plan.cwd });
+  const call = async (name: string, args: object) => ((await handle({ id: 1, method: "tools/call", params: { name, arguments: args } })) as any).result;
+  await call("waicc_receive", { sessionId: id, requestId });
+  const ran = JSON.parse((await call("waicc_run_check", { check: 0 })).content[0].text);
+  assert.equal(ran.outcome, "passed");
+  assert.equal(ran.ranIn, "isolated worktree");
+  assert.equal(realpathSync(ran.stdout.trim()), realpathSync(plan.cwd));
 });

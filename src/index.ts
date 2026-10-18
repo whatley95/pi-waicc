@@ -21,8 +21,8 @@ import {
   type ClipboardResult,
 } from "./clipboard.ts";
 import { configureSvnIgnore } from "./ignore.ts";
-import { checkCommand, runRecipientCheck, type CheckRunner } from "./checks.ts";
-import { dispatchOptions, dispatchPinVariable, prepareDispatch, runDispatch, type AgentRunner } from "./dispatch.ts";
+import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
+import { dispatchChecksVariable, dispatchOptions, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner } from "./dispatch.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { curate, propose, recall } from "./memory.ts";
@@ -76,6 +76,8 @@ type ChatBinding =
       pin: RecipientPin;
       previousTools: string[];
       runChecks?: boolean;
+      /** Exact commands the human pre-approved when dispatching this headless run. */
+      approvedChecks?: CheckCommand[];
     };
 const recipientReads = [
   "read",
@@ -184,7 +186,7 @@ export default function waicc(
     const names = [
       ...recipientReads,
       ...(binding.pin.mode === "implementation" ? ["edit", "write"] : []),
-      ...(binding.runChecks ? ["waicc_check"] : []),
+      ...(binding.runChecks || binding.approvedChecks?.length ? ["waicc_check"] : []),
     ];
     const available = new Set(pi.getAllTools().map((tool) => tool.name));
     pi.setActiveTools(names.filter((name) => available.has(name)));
@@ -650,7 +652,7 @@ export default function waicc(
   );
   command(
     "waicc-dispatch",
-    "Run the waiting handoff in a headless agent: --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement, Pi only] | --stop",
+    "Run the waiting handoff in a headless agent: --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --stop",
     async (args, ctx) => {
       const id = selected(ctx);
       if (args === "--stop") {
@@ -995,7 +997,19 @@ export default function waicc(
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx); signal?.throwIfAborted();
       const binding = bindings.get(key(ctx));
-      ensure(binding?.role === "recipient" && binding.runChecks, "Check execution requires the human's /waicc-receive <session-id> [--implement] --run-checks opt-in");
+      ensure(binding?.role === "recipient", "Check execution requires a recipient assignment");
+      const run = services.runCheck ?? ((program: string, args: string[], options: Parameters<CheckRunner>[2]) => pi.exec(program, args, options));
+      // The human approved these exact commands when dispatching, so no dialog is needed.
+      const preApproved = binding.approvedChecks?.find((check) =>
+        check.program === params.program && check.args.length === params.args.length && check.args.every((arg, i) => arg === params.args[i]));
+      if (preApproved) {
+        assertRecipientCurrent(ctx.cwd, binding.pin);
+        // WAICC's runner, which also starts Windows .cmd shims such as npm.
+        return result(await runRecipientCheck(ctx.cwd, binding.pin, preApproved, snapshot(projectRoot(ctx.cwd)).fingerprint, services.runCheck ?? runAgent, signal, { maxTimeoutMs: maxCheckMs }));
+      }
+      ensure(binding.runChecks, binding.approvedChecks?.length
+        ? `Only the pre-approved checks can run: ${binding.approvedChecks.map((check) => JSON.stringify({ program: check.program, args: check.args })).join(", ")}. Report any other check not_run.`
+        : "Check execution requires the human's /waicc-receive <session-id> [--implement] --run-checks opt-in");
       ensure(ctx.hasUI, "No confirmation UI; report this check not_run");
       assertRecipientCurrent(ctx.cwd, binding.pin);
       const command = checkCommand(params), source = snapshot(projectRoot(ctx.cwd)).fingerprint;
@@ -1003,7 +1017,7 @@ export default function waicc(
       ensure(approved, "Check not run: human declined command approval");
       trusted(ctx);
       ensure(bindings.get(key(ctx)) === binding && binding.runChecks, "Recipient assignment/permissions changed during confirmation");
-      return result(await runRecipientCheck(ctx.cwd, binding.pin, command, source, services.runCheck ?? ((program, args, options) => pi.exec(program, args, options)), signal));
+      return result(await runRecipientCheck(ctx.cwd, binding.pin, command, source, run, signal));
     },
   });
   pi.registerTool({
@@ -1126,8 +1140,11 @@ export default function waicc(
         const assignment = receiveHandoff(ctx.cwd, sessionId, grant === "implement");
         ensure(assignment.pin.requestId === requestId, "The waiting request is not the dispatched one; do not retarget.");
         ensure(grant !== "implement" || assignment.pin.mode === "implementation", "Implementation opt-in does not match this request.");
+        const approved = process.env[dispatchChecksVariable];
+        const approvedChecks = approved ? (JSON.parse(approved) as unknown[]).map((check) => checkCommand(check, maxCheckMs)) : undefined;
+        ensure(!approvedChecks || ["implementation", "testing"].includes(assignment.pin.mode), "Pre-approved checks apply only to testing and implementation");
         const binding: Extract<ChatBinding, { role: "recipient" }> = {
-          sessionId, role: "recipient", pin: assignment.pin, previousTools: pi.getActiveTools(),
+          sessionId, role: "recipient", pin: assignment.pin, previousTools: pi.getActiveTools(), approvedChecks,
         };
         bindings.set(key(ctx), binding);
         recipientTools(binding);
@@ -1265,7 +1282,7 @@ export default function waicc(
         [
           ...recipientReads,
           ...(binding.pin.mode === "implementation" ? ["edit", "write"] : []),
-          ...(binding.runChecks ? ["waicc_check"] : []),
+          ...(binding.runChecks || binding.approvedChecks?.length ? ["waicc_check"] : []),
         ].includes(event.toolName),
         "Recipient mode blocks coordinator, shell, MCP and custom execution tools. Inspect source and use waicc_reply; return to the coordinator for other actions.",
       );
