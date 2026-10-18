@@ -650,7 +650,7 @@ export default function waicc(
   );
   command(
     "waicc-dispatch",
-    "Run the waiting read-only handoff in a headless agent: --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] | --stop",
+    "Run the waiting handoff in a headless agent: --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement, Pi only] | --stop",
     async (args, ctx) => {
       const id = selected(ctx);
       if (args === "--stop") {
@@ -675,7 +675,7 @@ export default function waicc(
       show(ctx, {
         dispatching: true, via: plan.via, model: plan.model ?? "agent default", sessionId: plan.sessionId,
         requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
-        nextAction: "The recipient is working headless and read-only. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.",
+        nextAction: `The recipient is working headless${plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
       });
     },
   );
@@ -1121,9 +1121,11 @@ export default function waicc(
       // narrow tools; a refusal leaves no tools and the run is told to stop.
       try {
         trusted(ctx);
-        const [sessionId, requestId] = pinned.split(":");
-        const assignment = receiveHandoff(ctx.cwd, sessionId, false);
+        const [sessionId, requestId, grant] = pinned.split(":");
+        // ":implement" is the dispatching human's --implement opt-in; edits stay inside task paths.
+        const assignment = receiveHandoff(ctx.cwd, sessionId, grant === "implement");
         ensure(assignment.pin.requestId === requestId, "The waiting request is not the dispatched one; do not retarget.");
+        ensure(grant !== "implement" || assignment.pin.mode === "implementation", "Implementation opt-in does not match this request.");
         const binding: Extract<ChatBinding, { role: "recipient" }> = {
           sessionId, role: "recipient", pin: assignment.pin, previousTools: pi.getActiveTools(),
         };

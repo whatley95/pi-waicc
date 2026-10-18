@@ -119,6 +119,25 @@ export function contractMarkdown(v: ContractVersion): string {
   return `${body}\n## Decisions and execution gates\n\n${v.contract.decisions.map((d) => `### ${d.id}: ${d.question}\n\nOwner: ${d.owner}; status: ${d.status}. Affected tasks: ${d.affectedTaskIds.join(", ")}.\n\nInvestigation evidence:\n${bullets(d.evidence)}\n\nRecommendation: ${d.recommendation}\n\n${d.status === "resolved" ? `Recorded answer: ${d.answer}` : "Unresolved: affected tasks and their dependents remain gated."}\n`).join("\n")}\nDecision-blocked tasks: ${gates.decisionBlockedTaskIds.join(", ") || "none"}.\n\nDecision-unblocked tasks: ${gates.decisionUnblockedTaskIds.join(", ") || "none"}. ${gates.note}\n`;
 }
 
+/** A minimal valid proposedContract. Agents otherwise guess field names (dependencies, acceptanceCriteria, …). */
+export const proposedContractExample = {
+  title: "Customer search",
+  requirements: [{ id: "REQ-001", text: "Keep each requirement id, text and sourceQuote from the current contract", sourceQuote: "exact quote from the original requirements" }],
+  exclusions: ["Out-of-scope item"],
+  assumptions: ["Low-risk assumption you made"],
+  questions: [],
+  risks: ["Concrete risk"],
+  skills: ["wai-node"],
+  tasks: [{
+    id: "T1", title: "What this task delivers", requirementIds: ["REQ-001"], dependsOn: [], allowedPaths: ["src/search.js"],
+    acceptance: [{ id: "AC-001", text: "Observable outcome", requirementIds: ["REQ-001"], verification: "How it will be checked" }],
+  }],
+  decisions: [{
+    id: "D1", question: "Choice only a human or external owner can make", owner: "human", status: "open",
+    affectedTaskIds: ["T1"], evidence: ["path/or/source that shows why"], recommendation: "Recommended answer and why",
+  }],
+};
+
 export function replyTemplate(s: Session, r: Round, v: ContractVersion): Reply {
   return {
     schemaVersion: 1,
