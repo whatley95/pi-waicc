@@ -20,7 +20,7 @@ Node ≥ 22.19 runs the `.ts` sources directly (type stripping), so there is no 
 
 ```sh
 npm install --ignore-scripts
-npm run check          # tsc --noEmit + 29 node:test tests, ~30 s
+npm run check          # tsc --noEmit + full node:test suite (~200 tests), ~1 min
 ```
 
 ## Run (agent path)

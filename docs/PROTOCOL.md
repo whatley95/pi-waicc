@@ -425,6 +425,45 @@ model tool. Old role-less Pi binding entries remain coordinator-compatible.
 Receiving is not a lease: multiple chats can investigate the same request, but only
 the first reply file can be submitted. Choose one worker per request manually.
 
+`waicc_reply` with `validateOnly: true` applies every submit-time check, including
+identity, source freshness, coverage and the 256 KB limit, and writes nothing.
+
+## MCP recipient transport and headless dispatch
+
+`waicc mcp` serves newline-delimited JSON-RPC over stdio (MCP protocol versions
+2024-11-05 through 2025-11-25) with no dependencies. It exposes `waicc_receive`
+`{sessionId, requestId}`, `waicc_assignment`, `waicc_validate_reply {reply}` and
+`waicc_submit_reply {reply}`. Receive applies the Pi receive rules (exactly one WAITING
+round, no reply, matching source) and additionally requires the supplied request ID to be
+that waiting round. It never accepts implementation assignments, because an external
+agent's own edit tools cannot be confined to task paths. One server process holds at
+most one pin and never retargets. Validation and submission use the same engine as
+`waicc_reply`; tool failures return `isError` results so the agent can correct and retry.
+`--session <id> --request <id>` restricts a server to one request. Planning and review
+assignments include `proposedContractExample`, a minimal contract that passes validation;
+an invalid `proposedContract` error is prefixed `proposedContract:` and repeats that example.
+
+`/waicc-dispatch` and `waicc dispatch` are explicit human actions. They accept only a
+single WAITING planning, review or advisor round, or an implementation round with
+`--implement` and `--via pi`, with no reply, unchanged source and no unfinished dispatch
+for that round. Testing rounds are refused: their checks need interactive confirmation. A `dispatch/<id>/start.json` artifact is committed
+before launch: agent, model, program, arguments, start time and timeout. An unfinished
+start blocks another dispatch until its result is recorded or its timeout plus two
+minutes passes. The agent runs at project root with stdin closed and is killed with its
+process tree at the timeout or on `--stop`. `result.json` records exit code, kill flag,
+whether a reply now exists and bounded stdout/stderr tails; it is not appended to a
+CLOSED session. Dispatch never ingests, assesses, adopts, retries or closes.
+
+Adapters: Claude Code (`claude -p`, a per-run pinned MCP config with
+`--strict-mcp-config`, WAICC MCP plus Read/Grep/Glob allowed, Edit/Write/NotebookEdit/Bash
+disallowed); Codex (`codex exec --sandbox read-only`, a pinned MCP server through `-c`
+overrides, only the four recipient tools enabled and approved); Pi (`pi -p` loading this
+extension with `WAICC_DISPATCH_PIN=<session>:<request>[:implement]`, which pins recipient
+mode at session start, read-only or, with `:implement`, edit/write confined to the task's
+allowedPaths with shell still blocked; a refused pin removes all tools and instructs the
+run to stop); Antigravity (`agy -p --sandbox`, using the user's own MCP configuration;
+experimental). Pin variables only ever narrow permissions.
+
 ## Focused advisor replies
 
 An advisor request pins `advisor: {question, requirementIds}` on the round, request

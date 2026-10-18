@@ -29,6 +29,8 @@ import {
   useMainWork,
 } from "./workflow.ts";
 import { advisorInput, ensure } from "./validation.ts";
+import { dispatch, dispatchOptions } from "./dispatch.ts";
+import { serveMcp } from "./mcp.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
 import type { ReviewRequest } from "./review.ts";
@@ -56,9 +58,26 @@ function reviewInput(input: string[]): { review: ReviewRequest; focus: string } 
         focus: input.slice(2).join(" "),
       };
 }
+function flag(input: string[], name: string): string | undefined {
+  const index = input.indexOf(name);
+  if (index < 0) return undefined;
+  ensure(input[index + 1], `${name} requires a value`);
+  return input[index + 1];
+}
 try {
   let output: unknown;
   switch (command) {
+    case "mcp": {
+      // stdout belongs to the protocol: nothing else may be written to it.
+      const options = args.slice(1);
+      ensure(options.every((word, i) => i % 2 === 1 || ["--session", "--request"].includes(word)), "Usage: waicc mcp [--session <id> --request <id>]");
+      await serveMcp(cwd, { sessionId: flag(options, "--session"), requestId: flag(options, "--request") });
+      process.exit(0);
+    }
+    case "dispatch":
+      ensure(id, "Usage: waicc dispatch <session> --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>]");
+      output = await dispatch(cwd, id, dispatchOptions(rest.join(" ")));
+      break;
     case "start": {
       const delegated = id === "--delegate";
       output = createSession(cwd, args.slice(delegated ? 2 : 1).join(" "), delegated ? "delegate" : undefined, "planning");
@@ -211,7 +230,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));
