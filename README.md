@@ -559,6 +559,89 @@ servers from its own configuration, so add WAICC once in `~/.gemini/config/mcp_c
 and allow its `waicc_*` tools in `~/.gemini/antigravity-cli/settings.json`, otherwise
 headless runs soft-deny them. Check `agy models` for exact model slugs.
 
+### Agent profiles: choose an agent per role once
+
+Instead of typing `--via` and `--model` on every dispatch, name your agents once and give
+each role a default. A plain `/waicc-dispatch` then picks the agent from the waiting
+handoff's role:
+
+```text
+/waicc-dispatch                    # planning handoff → your planning profile
+/waicc-dispatch                    # review handoff   → your review profile
+/waicc-dispatch --implement        # coding still needs --implement every time
+/waicc-dispatch deepseek           # use another profile once
+/waicc-dispatch --model sonnet     # or override one setting once
+/waicc-dispatch --profiles         # show what each role resolves to
+```
+
+#### Which agent for which role
+
+These are suggestions from WAICC's own live runs on a small project; your results will
+vary with project size, models and pricing.
+
+| Role             | Suggested agent | Why |
+| ---------------- | --------------- | --- |
+| `planning`       | Claude (Opus for large work, Sonnet otherwise) | Fast and produced a valid plan after one correction (Sonnet: 82 s, about $0.27); a strong model pays off where the plan is decided |
+| `review`         | A **different model family** from whoever coded: Codex if Claude or Pi coded, Claude if Codex coded | An independent reviewer catches different mistakes than the author |
+| `implementation` | Codex | Codes in an isolated worktree with an OS sandbox, can run its own commands and pre-approved checks (about 2 minutes per small task) |
+|                  | Pi with a fast model (for example DeepSeek Flash) | Cheap and quick for small in-place changes (53 s), edits confined to task paths, no shell |
+|                  | Claude | Good for small changes in a worktree; it has no shell, so give it `--check` commands |
+| `testing`        | Claude (Sonnet or Haiku) with `checks` | The tester mainly runs approved checks and reads their output (Sonnet: 52 s, about $0.19) |
+| `advisor`        | A cheaper model through Pi (for example DeepSeek) | Focused questions rarely need the strongest model |
+
+Model names change; list yours with `claude --help` (aliases such as `opus`, `sonnet`,
+`haiku`), Codex's `-m` names, `pi --list-models` or `agy models`.
+
+#### Set it up
+
+Create either file, or both:
+
+| File | Scope |
+| ---- | ----- |
+| `~/.pi/agent/waicc-agents.json` (or `$PI_CODING_AGENT_DIR/waicc-agents.json`) | Just you, every project |
+| `<project>/.pi/waicc-agents.json` | Everyone using the repository; wins over the user file for any profile or role both name |
+
+```json
+{
+  "profiles": {
+    "claude":   { "via": "claude", "model": "opus" },
+    "sonnet":   { "via": "claude", "model": "sonnet" },
+    "codex":    { "via": "codex",  "model": "gpt-5.5", "timeoutMinutes": 45 },
+    "deepseek": { "via": "pi",     "model": "deepseek/deepseek-v4-pro" }
+  },
+  "roles": {
+    "planning":       "claude",
+    "review":         "codex",
+    "implementation": "codex",
+    "advisor":        "deepseek",
+    "testing":        { "profile": "sonnet", "checks": ["npm test", "npm run lint"], "checkTimeoutMinutes": 10 }
+  }
+}
+```
+
+- A **profile** has `via` (`claude`, `codex`, `pi` or `agy`), optional `model` and optional
+  `timeoutMinutes` (1–120). A **role** is `planning`, `review`, `advisor`,
+  `implementation` or `testing`, set to a profile name or to `{ profile, checks,
+  checkTimeoutMinutes }`.
+- Typed options win: a profile name you type replaces the role's profile, and `--via`,
+  `--model`, `--timeout` or `--check` replace that setting. A role's `checks` apply whichever
+  profile runs it, unless you type `--check`.
+- Unknown fields, agents, roles or undefined profiles are reported with the file and field.
+  `/waicc-dispatch --profiles` (CLI: `waicc profiles`) shows both files, every profile and
+  what each role resolves to.
+
+Safety rules:
+
+- **A config can never authorize coding.** There is no `implement` field; type
+  `--implement` on each coding dispatch.
+- **Checks from the project file are confirmed before they run.** Anyone who can change
+  the repository can edit that file, so Pi lists the exact commands and asks first, and
+  refuses without interactive UI. The CLI needs `--confirm-checks`. Checks in your user
+  file, or typed with `--check`, need no extra confirmation.
+- **The project file is project source,** so create or commit it before a handoff is
+  issued. Changing it while a handoff waits changes the source fingerprint, and dispatch
+  then asks for a fresh handoff.
+
 ### MCP server for any agent
 
 `waicc mcp` is a dependency-free MCP stdio server for recipients. Any MCP client
@@ -705,6 +788,8 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch --via claude\|codex\|pi\|agy [--model m] [--timeout min]` | Run the waiting read-only handoff in a headless agent; you are notified when it finishes |
 | `/waicc-dispatch --via pi\|claude\|codex --implement [--model m]` | Run a delegated implementation: Pi in place within task paths; Claude/Codex in an isolated worktree, applied all or nothing |
 | `/waicc-dispatch --via <agent> --check "<command>"...` | Dispatch a testing (or coding) handoff that may run only these exact pre-approved commands |
+| `/waicc-dispatch [profile]`                      | Dispatch with the agent profile for the waiting handoff's role, or a named profile |
+| `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
 | `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |
