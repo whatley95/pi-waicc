@@ -69,9 +69,12 @@ try {
   switch (command) {
     case "mcp": {
       // stdout belongs to the protocol: nothing else may be written to it.
-      const options = args.slice(1);
-      ensure(options.every((word, i) => i % 2 === 1 || ["--session", "--request"].includes(word)), "Usage: waicc mcp [--session <id> --request <id>]");
-      await serveMcp(cwd, { sessionId: flag(options, "--session"), requestId: flag(options, "--request") });
+      const implement = args.includes("--implement");
+      const options = args.slice(1).filter((word) => word !== "--implement");
+      ensure(options.every((word, i) => i % 2 === 1 || ["--session", "--request"].includes(word)), "Usage: waicc mcp [--session <id> --request <id> [--implement]]");
+      // --implement is for dispatch's isolated worktrees, where WAICC checks scope before applying.
+      ensure(!implement || (flag(options, "--session") && flag(options, "--request")), "--implement requires --session and --request");
+      await serveMcp(cwd, { sessionId: flag(options, "--session"), requestId: flag(options, "--request"), implement });
       process.exit(0);
     }
     case "dispatch":
