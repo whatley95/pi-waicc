@@ -38,6 +38,15 @@ For local development, use an absolute path to your clone:
 pi install /absolute/path/to/pi-waicc
 ```
 
+To update an existing Git install to the latest version, then `/reload` (or restart) Pi:
+
+```sh
+pi update git:github.com/whatley95/pi-waicc
+```
+
+Pi keeps its own copy of the package (see `pi list`); new commands such as
+`/waicc-dispatch` appear only after that copy is updated.
+
 WAICC is independent of pi-yoowai. If both packages are enabled, select one copy
 of each shared WAI skill in Pi's resource configuration to avoid duplicate names.
 
@@ -557,14 +566,33 @@ headless runs soft-deny them. Check `agy models` for exact model slugs.
 submit a validated reply instead of hand-writing `reply.json`. Every local STARTER
 prompt mentions these tools, so the same copy/paste handoff works with or without them.
 
+**Nothing to install.** The server has no dependencies and runs on the Node.js that WAICC
+already requires. `/waicc-dispatch` needs no setup at all: it starts its own pinned server
+for each run. Register the server only to use these tools when you paste a STARTER prompt
+into an agent yourself; once per agent, for all projects:
+
 ```sh
-claude mcp add waicc -- waicc mcp     # Claude Code, once
-codex mcp add waicc -- waicc mcp      # Codex, once
+claude mcp add --scope user waicc -- waicc mcp     # Claude Code
+codex mcp add waicc -- waicc mcp                   # Codex
 ```
 
-If `waicc` is not on your PATH (for example after `pi install git:…`), use
-`node /absolute/path/to/pi-waicc/src/cli.ts mcp` as the command. `/waicc-dispatch`
-does not need this setup; it starts its own pinned server.
+`waicc` is on your PATH only for an npm install. After `pi install git:…`, point at Pi's
+copy of the package instead (`pi list` shows where it is), for example:
+
+```sh
+# Windows
+claude mcp add --scope user waicc -- node C:\Users\<you>\.pi\agent\git\github.com\whatley95\pi-waicc\src\cli.ts mcp
+codex mcp add waicc -- node C:\Users\<you>\.pi\agent\git\github.com\whatley95\pi-waicc\src\cli.ts mcp
+# macOS / Linux
+claude mcp add --scope user waicc -- node ~/.pi/agent/git/github.com/whatley95/pi-waicc/src/cli.ts mcp
+codex mcp add waicc -- node ~/.pi/agent/git/github.com/whatley95/pi-waicc/src/cli.ts mcp
+```
+
+A registered server finds the WAICC project from the directory it is started in, so start
+the agent from inside your project (verified with Claude Code and Codex on Windows). If `waicc_receive` reports `Unknown WAICC session`,
+the server started elsewhere: start the agent in the project, or add `--root
+<project>` before `mcp` when registering it for a single project. After `pi update`, the
+registered path picks up the new version automatically.
 
 | Tool                   | Purpose                                                                 |
 | ---------------------- | ----------------------------------------------------------------------- |
