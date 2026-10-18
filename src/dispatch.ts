@@ -6,6 +6,7 @@ import { delimiter, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { artifact, json, loadSession, now, safePath, sessionRelative, withLock } from "./files.ts";
 import { commitWithCheckpoint as commit } from "./checkpoint.ts";
+import { checkCommand, type CheckCommand } from "./checks.ts";
 import { roundDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure } from "./validation.ts";
@@ -15,8 +16,10 @@ import type { Mode, RecipientPin } from "./types.ts";
 export const agents = ["claude", "codex", "pi", "agy"] as const;
 export type Agent = (typeof agents)[number];
 /** Roles whose recipient never edits source. Implementation needs --implement: Pi edits in place
- * within task paths; Claude and Codex edit an isolated worktree whose changes are checked first. */
+ * within task paths; Claude and Codex edit an isolated worktree whose changes are checked first.
+ * Testing needs at least one --check the human pre-approves. */
 const dispatchModes: Mode[] = ["planning", "review", "advisor"];
+const checkModes: Mode[] = ["implementation", "testing"];
 
 export interface DispatchOptions {
   via: Agent;
@@ -24,6 +27,8 @@ export interface DispatchOptions {
   timeoutMinutes?: number;
   /** Explicit opt-in for an implementation handoff. */
   implement?: boolean;
+  /** Exact commands the human pre-approves; the agent can run only these, through WAICC. */
+  checks?: CheckCommand[];
 }
 export interface AgentResult {
   stdout: string; stderr: string; code: number; killed: boolean;
@@ -33,10 +38,22 @@ export type AgentRunner = (program: string, args: string[], options: {
 }) => Promise<AgentResult>;
 /** Set by dispatch only: the Pi extension pins this request read-only at startup. */
 export const dispatchPinVariable = "WAICC_DISPATCH_PIN";
+/** Set by dispatch only: JSON list of the checks the human pre-approved for this run. */
+export const dispatchChecksVariable = "WAICC_DISPATCH_CHECKS";
 
-export function dispatchOptions(input: string): DispatchOptions {
-  const words = input.split(/\s+/).filter(Boolean);
+/** Splits options, keeping "double-quoted values" whole. */
+const optionWords = (input: string): string[] => [...input.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+/** Splits one command into program and arguments, keeping 'single-quoted arguments' whole. */
+const commandWords = (input: string): string[] => [...input.matchAll(/'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2]);
+export const commandText = (command: CheckCommand): string =>
+  [command.program, ...command.args].map((word) => (/\s/.test(word) ? `'${word}'` : word)).join(" ");
+
+export function dispatchOptions(input: string | string[]): DispatchOptions {
+  // The CLI passes its arguments as they are; Pi passes one line.
+  const words = typeof input === "string" ? optionWords(input) : input;
   const options: Partial<DispatchOptions> = {};
+  const commands: string[][] = [];
+  let checkMinutes = 10;
   for (let i = 0; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
     if (flag === "--implement") {
@@ -55,11 +72,23 @@ export function dispatchOptions(input: string): DispatchOptions {
       const minutes = Number(value);
       ensure(Number.isInteger(minutes) && minutes >= 1 && minutes <= 120, "--timeout must be 1–120 minutes");
       options.timeoutMinutes = minutes;
+    } else if (flag === "--check") {
+      const words = commandWords(value);
+      ensure(words.length > 0, "--check needs a command, for example --check \"npm test\"");
+      commands.push(words);
+    } else if (flag === "--check-timeout") {
+      checkMinutes = Number(value);
+      ensure(Number.isInteger(checkMinutes) && checkMinutes >= 1 && checkMinutes <= 30, "--check-timeout must be 1–30 minutes");
     } else ensure(false, `Unknown dispatch option ${flag}`);
   }
-  ensure(options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--timeout <minutes>] [--implement]`);
+  ensure(options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`);
+  ensure(commands.length <= 10, "At most 10 --check commands");
+  if (commands.length)
+    options.checks = commands.map(([program, ...args]) => checkCommand({ program, args, timeoutMs: checkMinutes * 60_000 }, maxCheckMs));
   return options as DispatchOptions;
 }
+/** Pre-approved checks may run longer than interactive ones, which stop at one minute. */
+export const maxCheckMs = 30 * 60_000;
 
 const here = fileURLToPath(import.meta.url);
 /** Same build as this module, except installed TypeScript: Node cannot strip types under node_modules. */
@@ -70,7 +99,7 @@ function waiccCli(): string {
     : join(dirname(here), `cli${extname(here)}`);
 }
 const extensionEntry = (): string => join(dirname(here), `index${extname(here)}`);
-const recipientTools = ["waicc_receive", "waicc_assignment", "waicc_read_input", "waicc_validate_reply", "waicc_submit_reply"];
+const recipientTools = ["waicc_receive", "waicc_assignment", "waicc_read_input", "waicc_run_check", "waicc_validate_reply", "waicc_submit_reply"];
 
 export interface DispatchPlan {
   dispatchId: string;
@@ -85,6 +114,7 @@ export interface DispatchPlan {
   /** Where the agent runs: the project, or its isolated worktree. */
   cwd: string;
   isolation: Isolation | null;
+  checks: CheckCommand[];
   program: string;
   args: string[];
   env: Record<string, string>;
@@ -98,11 +128,20 @@ export interface DispatchPlan {
 function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env">): Pick<DispatchPlan, "program" | "args" | "scratch" | "env"> {
   const model = plan.model;
   const isolated = plan.isolation !== null;
+  // Approved checks travel in a file, not on a command line that would need quoting.
+  const checksFile = plan.checks.length && plan.via !== "pi" ? join(tmpdir(), `waicc-checks-${plan.dispatchId}.json`) : null;
+  if (checksFile) writeFileSync(checksFile, json(plan.checks));
   // A pinned server refuses to receive any other request; --implement only for an isolated copy.
   const server = {
     command: process.execPath,
-    args: [waiccCli(), "--root", plan.root, "mcp", "--session", plan.sessionId, "--request", plan.requestId, ...(isolated ? ["--implement"] : [])],
+    args: [
+      waiccCli(), "--root", plan.root, "mcp", "--session", plan.sessionId, "--request", plan.requestId,
+      ...(isolated ? ["--implement"] : []),
+      ...(checksFile ? ["--checks", checksFile] : []),
+      ...(checksFile && isolated ? ["--check-cwd", plan.cwd] : []),
+    ],
   };
+  const scratch = checksFile ? [checksFile] : [];
   switch (plan.via) {
     case "claude": {
       const config = join(tmpdir(), `waicc-dispatch-${plan.dispatchId}.json`);
@@ -118,7 +157,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
             : ["--allowedTools", "mcp__waicc,Read,Grep,Glob", "--disallowedTools", "Edit,Write,NotebookEdit,Bash"]),
           ...(model ? ["--model", model] : []),
         ],
-        scratch: [config], env: {},
+        scratch: [config, ...scratch], env: {},
       };
     }
     case "codex":
@@ -135,7 +174,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
           ...(model ? ["-m", model] : []),
           plan.prompt,
         ],
-        scratch: [], env: {},
+        scratch, env: {},
       };
     case "agy":
       // agy reads MCP servers from its own config; see README for the one-time setup.
@@ -152,9 +191,12 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
       // Pi loads WAICC itself and pins the request at startup; recipient mode limits its tools.
       // Print mode does not run extension slash commands, so no /waicc-receive here.
       const implement = plan.mode === "implementation";
+      const checks = plan.checks.length
+        ? ` You have no shell, but you may run exactly these pre-approved checks with waicc_check (program and args exactly as listed): ${plan.checks.map((check) => JSON.stringify({ program: check.program, args: check.args })).join(", ")}. Report each result with its log; mark any other check not_run with its limit.`
+        : " You cannot run shell commands: report every check you could not run as not_run with that limit.";
       const work = implement
-        ? "implement the whole assignment in dependency order, editing only the task's allowed paths. You cannot run shell commands: report every check you could not run as not_run with that limit, and include whole-work completion evidence."
-        : "do only that assignment with read-only tools.";
+        ? `implement the whole assignment in dependency order, editing only the task's allowed paths.${checks} Include whole-work completion evidence.`
+        : `do only that assignment with read-only tools.${plan.mode === "testing" ? checks : ""}`;
       return {
         program: "pi",
         args: [
@@ -162,7 +204,11 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
           ...(model ? ["--model", model] : []),
           `You are a dispatched WAICC ${plan.mode} recipient, not the coordinator. Your request is already pinned: call waicc_status to read the assignment, then ${work} Check your draft with waicc_reply and validateOnly true, fix every reported problem, submit exactly once with waicc_reply, then stop. If WAICC refuses, stop and explain why.`,
         ],
-        scratch: [], env: { [dispatchPinVariable]: `${plan.sessionId}:${plan.requestId}${implement ? ":implement" : ""}` },
+        scratch: [],
+        env: {
+          [dispatchPinVariable]: `${plan.sessionId}:${plan.requestId}${implement ? ":implement" : ""}`,
+          ...(plan.checks.length ? { [dispatchChecksVariable]: json(plan.checks) } : {}),
+        },
       };
     }
   }
@@ -194,10 +240,15 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
     } else {
       ensure(!options.implement, "--implement applies only to an implementation handoff");
       ensure(
-        dispatchModes.includes(r.mode),
-        `Dispatch supports read-only ${dispatchModes.join("/")} handoffs and --implement. Hand ${r.mode} work off manually; checks need interactive confirmation.`,
+        dispatchModes.includes(r.mode) || (r.mode === "testing" && options.checks?.length),
+        r.mode === "testing"
+          ? "A testing handoff needs at least one pre-approved check: add --check \"<exact command>\" for each command the tester may run."
+          : `Dispatch supports read-only ${dispatchModes.join("/")} handoffs, testing with --check, and --implement.`,
       );
     }
+    const checks = options.checks ?? [];
+    ensure(!checks.length || checkModes.includes(r.mode), "--check applies only to testing and implementation handoffs");
+    ensure(!checks.length || options.via !== "agy", "Antigravity uses its own MCP configuration and cannot receive pre-approved checks.");
     const dir = roundDirectory(r);
     const replyPath = safePath(root, `${sessionRelative(s.id)}/${dir}/reply.json`);
     ensure(!existsSync(replyPath), "A reply already exists. Run /waicc-continue instead.");
@@ -211,19 +262,22 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
     const isolation = r.mode === "implementation" && options.via !== "pi" ? createIsolation(root, dispatchId) : null;
     const ids = `sessionId ${JSON.stringify(s.id)} and requestId ${JSON.stringify(r.id)}`;
     const finish = "Check your draft with waicc_validate_reply and fix every reported problem, submit exactly once with waicc_submit_reply, then stop. If the waicc tools are unavailable or refuse, stop and explain why; never write reply.json yourself.";
-    const checks = options.via === "codex"
-      ? "Shell commands run in a sandbox without network, and uncommitted dependencies (for example node_modules) are not in the copy."
-      : "You have no shell, so you cannot run tests.";
+    const approved = checks.length
+      ? `Run the pre-approved checks with waicc_run_check by number (${checks.map((check, i) => `${i}: ${commandText(check)}`).join("; ")}); WAICC runs them${isolation ? " in this copy" : ""} and logs each result. Cite those results; mark any other check not_run with its limit.`
+      : "";
+    const shell = options.via === "codex"
+      ? "Shell commands run in a sandbox without network; ignored dependency folders such as node_modules are linked from the project when present."
+      : "You have no shell.";
     const base = {
       dispatchId, root, sessionId: s.id, requestId: r.id, mode: r.mode, via: options.via,
       model: options.model ?? null, timeoutMs: (options.timeoutMinutes ?? 30) * 60_000, replyPath,
       pin: { sessionId: s.id, requestId: r.id, contractVersion: r.contractVersion, requirementsDigest: r.requirementsDigest, sourceFingerprint: r.source.fingerprint, mode: r.mode },
-      cwd: isolation?.worktree ?? root, isolation,
+      cwd: isolation?.worktree ?? root, isolation, checks,
       logPrefix: `${dir}/dispatch/${dispatchId}`,
       // One line: it travels as a command-line argument on every platform.
       prompt: isolation
-        ? `You are a dispatched WAICC implementation recipient, not the coordinator. You are working in an isolated copy of the project at ${JSON.stringify(isolation.worktree)}; the real checkout is not yours to edit. First call the waicc_receive MCP tool with ${ids}, then read its handoff and other inputs with waicc_read_input. Implement the whole assignment in dependency order in this copy, changing only files inside the task's allowedPaths: when you finish, WAICC applies your changes to the real checkout only if every changed file is in scope, and applies nothing otherwise. ${checks} Report whole-work completion evidence and every check honestly, marking any check you could not run not_run with its limit. ${finish}`
-        : `You are a dispatched WAICC ${r.mode} recipient, not the coordinator, for the project at ${JSON.stringify(root)}. First call the waicc_receive MCP tool with ${ids}. Then read ${JSON.stringify(starter)} and the assignment inputs, and do only that assignment. Source is read-only: do not edit, create or delete files. ${finish}`,
+        ? `You are a dispatched WAICC implementation recipient, not the coordinator. You are working in an isolated copy of the project at ${JSON.stringify(isolation.worktree)}; the real checkout is not yours to edit. First call the waicc_receive MCP tool with ${ids}, then read its handoff and other inputs with waicc_read_input. Implement the whole assignment in dependency order in this copy, changing only files inside the task's allowedPaths: when you finish, WAICC applies your changes to the real checkout only if every changed file is in scope, and applies nothing otherwise. ${shell} ${approved} Report whole-work completion evidence and every check honestly, marking any check you could not run not_run with its limit. ${finish}`
+        : `You are a dispatched WAICC ${r.mode} recipient, not the coordinator, for the project at ${JSON.stringify(root)}. First call the waicc_receive MCP tool with ${ids}. Then read ${JSON.stringify(starter)} and the assignment inputs, and do only that assignment. Source is read-only: do not edit, create or delete files. ${approved} ${finish}`,
     };
     try {
       const plan: DispatchPlan = { ...base, ...invocation(base) };
@@ -231,7 +285,7 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
         [`${plan.logPrefix}/start.json`]: json({
           schemaVersion: 1, dispatchId, sessionId: s.id, requestId: r.id, mode: r.mode,
           via: plan.via, model: plan.model, program: plan.program, args: plan.args, env: plan.env,
-          isolation, startedAt: now(), timeoutMs: plan.timeoutMs,
+          isolation, checks, startedAt: now(), timeoutMs: plan.timeoutMs,
         }),
       });
       return plan;
@@ -315,7 +369,11 @@ function cmdArgument(arg: string): string {
 export function windowsCommand(program: string, args: string[], env = process.env): { file: string; args: string[]; verbatim: boolean } {
   const exts = (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
   const dirs = (env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean);
-  const found = dirs.flatMap((dir) => exts.map((ext) => join(dir, program + ext.toLowerCase()))).find((path) => existsSync(path));
+  // A path is used as given (with an implied extension); a bare name is looked up on PATH.
+  const candidates = /[\\/]/.test(program)
+    ? [program, ...exts.map((ext) => program + ext.toLowerCase())]
+    : dirs.flatMap((dir) => exts.map((ext) => join(dir, program + ext.toLowerCase())));
+  const found = candidates.find((path) => existsSync(path) && extname(path) !== "");
   ensure(found, `${program} was not found on PATH. Install it and sign in, then dispatch again.`);
   if (!/\.(cmd|bat)$/i.test(found)) return { file: found, args, verbatim: false };
   const line = [found.replace(meta, "^$1"), ...args.map(cmdArgument)].join(" ");

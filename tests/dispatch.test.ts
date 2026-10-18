@@ -83,7 +83,7 @@ test("MCP server speaks JSON-RPC over stdio, pins one request and validates befo
   assert.equal(init.result.serverInfo.name, "waicc");
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
   assert.deepEqual((await rpc("tools/list")).result.tools.map((tool: { name: string }) => tool.name),
-    ["waicc_receive", "waicc_assignment", "waicc_read_input", "waicc_validate_reply", "waicc_submit_reply"]);
+    ["waicc_receive", "waicc_assignment", "waicc_read_input", "waicc_run_check", "waicc_validate_reply", "waicc_submit_reply"]);
   assert.equal((await rpc("bogus")).error.code, -32601);
 
   assert.match((await call("waicc_submit_reply", { reply: body() })).content[0].text, /waicc_receive/);
@@ -106,14 +106,14 @@ test("MCP server speaks JSON-RPC over stdio, pins one request and validates befo
   assert.equal(ingest(root, id).status, "AWAITING_ASSESSMENT");
 });
 
-test("MCP receive refuses implementation work that only Pi can confine to task paths", (t) => {
+test("MCP receive refuses implementation work that only Pi can confine to task paths", async (t) => {
   const { root, id, requestId } = implementationWaiting(t);
   const handle = mcpServer(root);
-  const response = handle({ id: 1, method: "tools/call", params: { name: "waicc_receive", arguments: { sessionId: id, requestId } } }) as any;
+  const response = await handle({ id: 1, method: "tools/call", params: { name: "waicc_receive", arguments: { sessionId: id, requestId } } }) as any;
   assert.equal(response.result.isError, true);
   assert.match(response.result.content[0].text, /implementation assignment/);
-  assert.equal(handle({ method: "notifications/initialized" }), undefined, "notifications get no response");
-  assert.equal((handle({ id: 2, method: "tools/call", params: { name: "nope" } }) as any).error.code, -32602);
+  assert.equal(await handle({ method: "notifications/initialized" }), undefined, "notifications get no response");
+  assert.equal((await handle({ id: 2, method: "tools/call", params: { name: "nope" } }) as any).error.code, -32602);
 });
 
 test("dispatch builds read-only, request-pinned invocations for every supported agent", async (t) => {
