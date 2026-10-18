@@ -19,7 +19,8 @@ export type CheckRunner = (program: string, args: string[], options: {
   cwd: string; timeout: number; signal?: AbortSignal;
 }) => Promise<CheckResult>;
 
-export function checkCommand(value: unknown): CheckCommand {
+/** Interactive checks run up to a minute; checks a human pre-approves at dispatch may run longer. */
+export function checkCommand(value: unknown, maxTimeoutMs = 60_000): CheckCommand {
   const command = record(value, "Check command");
   ensure(Object.keys(command).every((key) => ["program", "args", "timeoutMs"].includes(key)), "Unsupported check command field");
   const program = text(command.program, "Check executable", 2000);
@@ -29,17 +30,20 @@ export function checkCommand(value: unknown): CheckCommand {
     return arg;
   });
   const timeoutMs = command.timeoutMs ?? 60_000;
-  ensure(Number.isInteger(timeoutMs) && Number(timeoutMs) >= 1000 && Number(timeoutMs) <= 60_000, "Check timeout must be 1000–60000 ms");
+  ensure(Number.isInteger(timeoutMs) && Number(timeoutMs) >= 1000 && Number(timeoutMs) <= maxTimeoutMs, `Check timeout must be 1000–${maxTimeoutMs} ms`);
   return { program, args, timeoutMs: Number(timeoutMs) };
 }
 
-/** Called only after explicit recipient opt-in AND confirmation of this exact command. */
+/** Called only after explicit recipient opt-in AND confirmation of this exact command, or
+ * when the human pre-approved this exact command when dispatching. `workdir` runs it in an
+ * isolated worktree instead of the project. */
 export async function runRecipientCheck(
   cwd: string, pin: RecipientPin, command: CheckCommand,
   approvedSource: string, run: CheckRunner, signal?: AbortSignal,
+  options: { maxTimeoutMs?: number; workdir?: string } = {},
 ) {
   const root = projectRoot(cwd);
-  command = checkCommand(command);
+  command = checkCommand(command, options.maxTimeoutMs);
   ensure(["implementation", "testing"].includes(pin.mode), "Only implementation/testing recipients may run checks");
   signal?.throwIfAborted();
   const id = randomUUID(), startedAt = now();
@@ -56,7 +60,7 @@ export async function runRecipientCheck(
   });
   let result: CheckResult;
   try {
-    result = await run(command.program, command.args, { cwd: root, timeout: command.timeoutMs, signal });
+    result = await run(command.program, command.args, { cwd: options.workdir ?? root, timeout: command.timeoutMs, signal });
   } catch (error) {
     result = { stdout: "", stderr: error instanceof Error ? error.message : String(error), code: 1, killed: Boolean(signal?.aborted) };
   }
@@ -64,6 +68,7 @@ export async function runRecipientCheck(
   const sourceChanged = sourceAfter !== approvedSource;
   const report = {
     schemaVersion: 1, ...pin, command, startedAt, finishedAt: now(),
+    ...(options.workdir ? { ranIn: "isolated worktree" } : {}),
     sourceBefore: approvedSource, sourceAfter, sourceChanged,
     outcome: result.code === 0 && !result.killed && !(pin.mode === "testing" && sourceChanged) ? "passed" : "failed",
     code: result.code, killed: result.killed,
