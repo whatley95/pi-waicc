@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { artifact, json, loadSession, sessionRelative } from "../src/files.ts";
@@ -24,7 +24,7 @@ function report(): WorkCompletion {
   return { summary: "Entire implementation and all fixes complete", tasks: [{ taskId: "SEARCH", evidence: "source.txt implements AC1" }], checks: [check], findings: [] };
 }
 function fixture(t: TestContext, delegated = false) {
-  const root = mkdtempSync(join(tmpdir(), "waicc-delegation-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-delegation-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-delegation-"));
     rmSync(root, { recursive: true, force: true });

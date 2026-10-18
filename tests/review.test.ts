@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { artifact, json, loadSession, sessionRelative } from "../src/files.ts";
@@ -21,7 +21,7 @@ const scope: Contract = {
   })),
 };
 function fixture(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), "waicc-code-review-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-code-review-")));
   t.after(() => {
     assert.equal(basename(root).startsWith("waicc-code-review-"), true);
     rmSync(root, { recursive: true, force: true });

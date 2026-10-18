@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   artifact,
   digest,
@@ -255,9 +255,23 @@ export function assertRecipientEdit(
     pin.mode === "implementation",
     "Planning, review and advisor recipients cannot edit source; use waicc_reply only.",
   );
+  assertTaskPath(cwd, pin, value);
+}
+
+/** Scope only: whether a path lies inside the pinned request's task allowedPaths. */
+export function assertTaskPath(
+  cwd: string,
+  pin: RecipientPin,
+  value: unknown,
+): void {
   ensure(typeof value === "string", "An implementation edit needs a path");
   const { root, s, r } = pinned(cwd, pin);
-  const path = relative(root, resolve(cwd, value)).replaceAll("\\", "/");
+  // The root is physical, so map a symlinked cwd prefix (macOS /var) onto its physical path.
+  // Only that prefix: links inside the project stay visible to safePath's symlink check.
+  const logical = resolve(cwd), physical = realpathSync(cwd);
+  let target = resolve(cwd, value);
+  if (target === logical || target.startsWith(logical + sep)) target = physical + target.slice(logical.length);
+  const path = relative(root, target).replaceAll("\\", "/");
   ensure(!isAbsolute(path), "Implementation path escapes the project");
   relativePath(path);
   safePath(root, path);

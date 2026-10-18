@@ -11,6 +11,7 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
+  realpathSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -36,9 +37,9 @@ import {
 import { snapshot } from "../src/source.ts";
 
 function fixture(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), "waicc-lifecycle-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-lifecycle-")));
   t.after(() => {
-    assert.equal(dirname(root), resolve(tmpdir()));
+    assert.equal(dirname(root), realpathSync(tmpdir()));
     assert.ok(basename(root).startsWith("waicc-lifecycle-"));
     rmSync(root, { recursive: true, force: true });
   });
