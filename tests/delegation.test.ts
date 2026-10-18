@@ -24,7 +24,7 @@ function report(): WorkCompletion {
   return { summary: "Entire implementation and all fixes complete", tasks: [{ taskId: "SEARCH", evidence: "source.txt implements AC1" }], checks: [check], findings: [] };
 }
 function fixture(t: TestContext, delegated = false) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-delegation-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-delegation-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-delegation-"));
     rmSync(root, { recursive: true, force: true });

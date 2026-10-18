@@ -12,9 +12,9 @@ import { createAutoPlanningSession, createSession, forceCloseSession, prepare } 
 import { deleteSession } from "../src/lifecycle.ts";
 
 function fixture(t: TestContext): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-auto-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-auto-")));
   t.after(() => {
-    assert.equal(dirname(root), realpathSync(tmpdir()));
+    assert.equal(dirname(root), realpathSync.native(tmpdir()));
     assert.ok(basename(root).startsWith("waicc-auto-"));
     rmSync(root, { recursive: true, force: true });
   });

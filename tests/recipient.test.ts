@@ -76,9 +76,9 @@ function contract(): Contract {
   };
 }
 function fixture(t: TestContext, mode: "planning" | "review" = "planning") {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-recipient-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-recipient-")));
   t.after(() => {
-    assert.equal(dirname(root), realpathSync(tmpdir()));
+    assert.equal(dirname(root), realpathSync.native(tmpdir()));
     assert.ok(basename(root).startsWith("waicc-recipient-"));
     rmSync(root, { recursive: true, force: true });
   });
@@ -1264,7 +1264,7 @@ test("Pi implementation receiver exposes scoped edits only after human opt-in; s
 test("edit scope maps a symlinked working directory onto the physical project root (macOS /var)", (t) => {
   const { root, id } = fixture(t);
   // The project reached through a link, as /var reaches /private/var on macOS.
-  const link = join(realpathSync(tmpdir()), `waicc-recipient-link-${basename(root)}`);
+  const link = join(realpathSync.native(tmpdir()), `waicc-recipient-link-${basename(root)}`);
   symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
   // Remove only the link itself; a recursive delete could follow it into the project.
   t.after(() => (process.platform === "win32" ? rmdirSync(link) : unlinkSync(link)));

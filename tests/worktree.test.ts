@@ -32,7 +32,7 @@ const git = (root: string, ...args: string[]) =>
 
 /** A Git project whose delegated implementation handoff is waiting, with uncommitted and untracked work. */
 function project(t: TestContext, setup: (root: string) => void = () => {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   writeFileSync(join(root, "committed.txt"), "committed\n");
   setup(root);
   git(root, "init", "--quiet");
@@ -190,5 +190,5 @@ test("an unignored folder is not linked, and approved checks run inside the isol
   const ran = JSON.parse((await call("waicc_run_check", { check: 0 })).content[0].text);
   assert.equal(ran.outcome, "passed");
   assert.equal(ran.ranIn, "isolated worktree");
-  assert.equal(realpathSync(ran.stdout.trim()), realpathSync(plan.cwd));
+  assert.equal(realpathSync.native(ran.stdout.trim()), realpathSync.native(plan.cwd));
 });

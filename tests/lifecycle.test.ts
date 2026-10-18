@@ -37,9 +37,9 @@ import {
 import { snapshot } from "../src/source.ts";
 
 function fixture(t: TestContext) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-lifecycle-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-lifecycle-")));
   t.after(() => {
-    assert.equal(dirname(root), realpathSync(tmpdir()));
+    assert.equal(dirname(root), realpathSync.native(tmpdir()));
     assert.ok(basename(root).startsWith("waicc-lifecycle-"));
     rmSync(root, { recursive: true, force: true });
   });
