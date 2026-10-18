@@ -20,6 +20,8 @@ export interface DispatchOptions {
   via: Agent;
   model?: string;
   timeoutMinutes?: number;
+  /** Explicit opt-in for an implementation handoff; Pi only. */
+  implement?: boolean;
 }
 export interface AgentResult {
   stdout: string; stderr: string; code: number; killed: boolean;
@@ -35,6 +37,11 @@ export function dispatchOptions(input: string): DispatchOptions {
   const options: Partial<DispatchOptions> = {};
   for (let i = 0; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
+    if (flag === "--implement") {
+      options.implement = true;
+      i -= 1; // A switch takes no value.
+      continue;
+    }
     ensure(value !== undefined, `${flag} requires a value`);
     if (flag === "--via") {
       ensure((agents as readonly string[]).includes(value), `--via must be one of ${agents.join(", ")}`);
@@ -48,7 +55,7 @@ export function dispatchOptions(input: string): DispatchOptions {
       options.timeoutMinutes = minutes;
     } else ensure(false, `Unknown dispatch option ${flag}`);
   }
-  ensure(options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--timeout <minutes>]`);
+  ensure(options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--timeout <minutes>] [--implement]`);
   return options as DispatchOptions;
 }
 
@@ -128,18 +135,23 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
         ],
         scratch: [], env: {},
       };
-    case "pi":
-      // Pi loads WAICC itself and pins the request at startup with read-only recipient tools.
+    case "pi": {
+      // Pi loads WAICC itself and pins the request at startup; recipient mode limits its tools.
       // Print mode does not run extension slash commands, so no /waicc-receive here.
+      const implement = plan.mode === "implementation";
+      const work = implement
+        ? "implement the whole assignment in dependency order, editing only the task's allowed paths. You cannot run shell commands: report every check you could not run as not_run with that limit, and include whole-work completion evidence."
+        : "do only that assignment with read-only tools.";
       return {
         program: "pi",
         args: [
           "-p", "--no-session", "-ne", "-e", extensionEntry(), "-a",
           ...(model ? ["--model", model] : []),
-          `You are a dispatched WAICC ${plan.mode} recipient, not the coordinator. Your request is already pinned: call waicc_status to read the assignment, then do only that assignment with read-only tools. Check your draft with waicc_reply and validateOnly true, fix every reported problem, submit exactly once with waicc_reply, then stop. If WAICC refuses, stop and explain why.`,
+          `You are a dispatched WAICC ${plan.mode} recipient, not the coordinator. Your request is already pinned: call waicc_status to read the assignment, then ${work} Check your draft with waicc_reply and validateOnly true, fix every reported problem, submit exactly once with waicc_reply, then stop. If WAICC refuses, stop and explain why.`,
         ],
-        scratch: [], env: { [dispatchPinVariable]: `${plan.sessionId}:${plan.requestId}` },
+        scratch: [], env: { [dispatchPinVariable]: `${plan.sessionId}:${plan.requestId}${implement ? ":implement" : ""}` },
       };
+    }
   }
 }
 
@@ -163,10 +175,17 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
     const waiting = s.rounds.filter((r) => r.status === "WAITING");
     ensure(waiting.length === 1, "Dispatch needs exactly one waiting handoff. Use /waicc-status.");
     const r = waiting[0];
-    ensure(
-      dispatchModes.includes(r.mode),
-      `Dispatch supports read-only ${dispatchModes.join("/")} handoffs. Hand ${r.mode} work off manually.`,
-    );
+    if (r.mode === "implementation") {
+      ensure(options.implement, "This is an implementation handoff. Add --implement only if you authorize its assigned code edits.");
+      // Only Pi's WAICC recipient mode blocks edits outside task paths as they happen.
+      ensure(options.via === "pi", "Only --via pi can confine implementation edits to the task's allowed paths. Use Pi, or hand it off manually.");
+    } else {
+      ensure(!options.implement, "--implement applies only to an implementation handoff");
+      ensure(
+        dispatchModes.includes(r.mode),
+        `Dispatch supports read-only ${dispatchModes.join("/")} handoffs and Pi implementation. Hand ${r.mode} work off manually; checks need interactive confirmation.`,
+      );
+    }
     const dir = roundDirectory(r);
     const replyPath = safePath(root, `${sessionRelative(s.id)}/${dir}/reply.json`);
     ensure(!existsSync(replyPath), "A reply already exists. Run /waicc-continue instead.");

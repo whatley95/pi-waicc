@@ -12,7 +12,7 @@ import {
 } from "./files.ts";
 import { recall } from "./memory.ts";
 import { normalizeReply } from "./reply.ts";
-import { roundDirectory, versionDirectory } from "./render.ts";
+import { proposedContractExample, roundDirectory, versionDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure, identifier, record, relativePath } from "./validation.ts";
 import { requirementsText, validateRoundReply } from "./workflow.ts";
@@ -112,6 +112,8 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
     },
     handoff: artifact(root, s, `${dir}/HANDOFF.md`),
     replyTemplate: JSON.parse(artifact(root, s, `${dir}/reply.example.json`)),
+    // Only planning and review replies may propose a revised contract.
+    proposedContractExample: ["planning", "review"].includes(r.mode) ? proposedContractExample : undefined,
     conversation: JSON.parse(artifact(root, s, `${dir}/conversation.json`)),
     memory: r.contextVersion || r.mode === "advisor"
       ? JSON.parse(artifact(root, s, `${dir}/memory.json`)) as ReturnType<typeof recall>

@@ -443,7 +443,7 @@ you still make every decision. A typical mixed-model session:
 /waicc-continue
 ```
 
-`/waicc-dispatch --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>]`
+`/waicc-dispatch --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement]`
 runs the selected session's single waiting handoff in the background. This chat stays
 usable; you are notified when the agent finishes, then run `/waicc-continue`.
 `/waicc-dispatch --stop` ends a running agent. The CLI equivalent runs in the
@@ -453,21 +453,34 @@ foreground: `waicc dispatch <session-id> --via codex`.
 | -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
 | `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP | `--model opus`          |
 | `codex`  | `codex exec`                         | `--sandbox read-only` (OS sandbox); only WAICC tools approved | `-m <model>`     |
-| `pi`     | `pi -p` with this extension          | WAICC's own recipient mode: read/search tools only      | `--model provider/id`   |
+| `pi`     | `pi -p` with this extension          | WAICC's own recipient mode: read/search tools; with `--implement`, edit/write only inside task paths | `--model provider/id` |
 | `agy`    | `agy -p` (Antigravity CLI)           | Its headless mode soft-denies unapproved tools          | `--model <slug>`        |
 
 What it does and does not do:
 
 - **One recipient per request.** Dispatch refuses while a reply exists or another
   dispatched agent is still working on the same request.
-- **Read-only roles only:** planning, review and advisor. Implementation and testing
-  stay manual (`/waicc-receive --implement` in Pi confines edits to task paths;
-  other agents cannot be confined that way).
+- **Read-only roles, plus coding through Pi.** Planning, review and advisor handoffs
+  can go to any agent. A delegated implementation handoff can be dispatched only with
+  `--via pi --implement`: WAICC's recipient mode then allows edit/write inside the
+  task's allowed paths and blocks every other path and all shell commands as they
+  happen. Claude, Codex and Antigravity cannot be confined that way, so they are
+  refused for implementation. The coding agent cannot run tests: it reports them
+  `not_run`, and `/waicc-continue` inspects the diff, scope and checks as usual.
+  Testing handoffs stay manual, because each check needs interactive confirmation.
+
+  ```text
+  /waicc-develop --delegate
+  /waicc-dispatch --via pi --implement --model deepseek/deepseek-flash
+  /waicc-continue
+  ```
 - **The agent is pinned.** Claude and Codex get a per-run WAICC MCP server that refuses
   every request except the dispatched one; Pi pins it at startup.
 - **Replies are validated before they are written.** Agents check drafts with
   `waicc_validate_reply` (Pi: `waicc_reply` with `validateOnly`) and fix every reported
   problem before the single submission, so `/waicc-continue` receives a valid reply.
+  Planning and review assignments include a valid `proposedContractExample`, and an
+  invalid proposal's error names the failing part and shows that example.
 - **Audit log.** Each run records the agent, model, exact arguments, exit code and
   output tail under the round's `dispatch/<id>/` folder.
 - **Never assesses, accepts, closes or retries.** A failed run leaves the handoff
@@ -486,8 +499,10 @@ facts with `waicc_context` (or `/waicc-compact <note>`) before dispatching.
 Verified live on Windows 11 with Claude Code 2.1 (Sonnet), Codex CLI 0.163 and Pi 1.2.0
 (DeepSeek V4 Pro): each pinned the request, corrected rejected drafts through dry-run
 validation, submitted once and left source untouched. Slower models can take well over
-ten minutes; the default timeout is 30 minutes. `/waicc-dispatch` inside Pi was verified
-with a simulated agent. **Antigravity (`agy`) support is experimental and untested:** it reads MCP
+ten minutes; the default timeout is 30 minutes. `/waicc-dispatch --via pi --implement`
+was also verified from a real Pi coordinator: DeepSeek Flash implemented the accepted
+task inside its allowed path in under a minute, and the coordinator accepted the reply.
+**Antigravity (`agy`) support is experimental and untested:** it reads MCP
 servers from its own configuration, so add WAICC once in `~/.gemini/config/mcp_config.json`:
 
 ```json
@@ -617,6 +632,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-handoff [session-id]`                    | Show a copy-only manual recipient prompt, access requirements and separate human return steps         |
 | `/waicc-receive <session-id> [--implement] [--run-checks]` | Receive a pinned role; edits opt in separately from individually confirmed local checks |
 | `/waicc-dispatch --via claude\|codex\|pi\|agy [--model m] [--timeout min]` | Run the waiting read-only handoff in a headless agent; you are notified when it finishes |
+| `/waicc-dispatch --via pi --implement [--model m]` | Run a delegated implementation handoff in headless Pi; edits confined to task paths |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
 | `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |

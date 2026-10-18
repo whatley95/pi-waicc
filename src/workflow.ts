@@ -25,6 +25,7 @@ import {
   replyTemplate,
   roundDirectory,
   starterPrompt,
+  proposedContractExample,
   versionDirectory,
 } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
@@ -657,8 +658,13 @@ export function validateRoundReply(
       "Advisor question does not match this request",
     );
   if (reply.proposedContract) {
-    validateContract(reply.proposedContract, requirementsText(s));
-    stableIds(v.contract, reply.proposedContract);
+    try {
+      validateContract(reply.proposedContract, requirementsText(s));
+      stableIds(v.contract, reply.proposedContract);
+    } catch (error) {
+      // Name the failing part and show a valid shape, so a recipient fixes it in one pass.
+      throw new Error(`proposedContract: ${error instanceof Error ? error.message : String(error)}. Every field is required except decisions; a valid example: ${JSON.stringify(proposedContractExample)}`);
+    }
   }
   if (reply.completion) {
     const data = reviewContext(s, v.contract, r.source, r.source,
