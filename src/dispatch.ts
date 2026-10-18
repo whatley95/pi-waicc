@@ -48,13 +48,29 @@ const commandWords = (input: string): string[] => [...input.matchAll(/'([^']*)'|
 export const commandText = (command: CheckCommand): string =>
   [command.program, ...command.args].map((word) => (/\s/.test(word) ? `'${word}'` : word)).join(" ");
 
-export function dispatchOptions(input: string | string[]): DispatchOptions {
+/** Dispatch arguments as typed. Every setting is optional so an agent profile can supply the rest. */
+export interface DispatchArgs {
+  /** A leading bare word names an agent profile. */
+  profile?: string;
+  options: Partial<DispatchOptions>;
+  /** --check-timeout as typed; it also applies to checks a profile's role supplies. */
+  checkMinutes?: number;
+}
+
+export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   // The CLI passes its arguments as they are; Pi passes one line.
   const words = typeof input === "string" ? optionWords(input) : input;
   const options: Partial<DispatchOptions> = {};
-  const commands: string[][] = [];
-  let checkMinutes = 10;
-  for (let i = 0; i < words.length; i += 2) {
+  const commands: string[] = [];
+  let checkMinutes: number | undefined;
+  let profile: string | undefined;
+  let first = 0;
+  if (words[0] !== undefined && !words[0].startsWith("-")) {
+    profile = words[0];
+    ensure(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(profile), "Agent profile names use letters, digits, - and _");
+    first = 1;
+  }
+  for (let i = first; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
     if (flag === "--implement") {
       options.implement = true;
@@ -66,26 +82,45 @@ export function dispatchOptions(input: string | string[]): DispatchOptions {
       ensure((agents as readonly string[]).includes(value), `--via must be one of ${agents.join(", ")}`);
       options.via = value as Agent;
     } else if (flag === "--model" || flag === "-m") {
-      ensure(/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(value), "Invalid model name");
-      options.model = value;
+      options.model = modelName(value);
     } else if (flag === "--timeout") {
-      const minutes = Number(value);
-      ensure(Number.isInteger(minutes) && minutes >= 1 && minutes <= 120, "--timeout must be 1–120 minutes");
-      options.timeoutMinutes = minutes;
+      options.timeoutMinutes = minutes(value, 120, "--timeout");
     } else if (flag === "--check") {
-      const words = commandWords(value);
-      ensure(words.length > 0, "--check needs a command, for example --check \"npm test\"");
-      commands.push(words);
+      commands.push(value);
     } else if (flag === "--check-timeout") {
-      checkMinutes = Number(value);
-      ensure(Number.isInteger(checkMinutes) && checkMinutes >= 1 && checkMinutes <= 30, "--check-timeout must be 1–30 minutes");
+      checkMinutes = minutes(value, 30, "--check-timeout");
     } else ensure(false, `Unknown dispatch option ${flag}`);
   }
-  ensure(options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`);
-  ensure(commands.length <= 10, "At most 10 --check commands");
-  if (commands.length)
-    options.checks = commands.map(([program, ...args]) => checkCommand({ program, args, timeoutMs: checkMinutes * 60_000 }, maxCheckMs));
+  if (commands.length) options.checks = checkCommands(commands, checkMinutes);
+  return { profile, options, checkMinutes };
+}
+
+/** Explicit settings only: --via is required and no agent profile is consulted. */
+export function dispatchOptions(input: string | string[]): DispatchOptions {
+  const { profile, options } = parseDispatchArgs(input);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`);
   return options as DispatchOptions;
+}
+
+export function modelName(value: unknown): string {
+  ensure(typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(value), "Invalid model name");
+  return value;
+}
+
+export function minutes(value: unknown, max: number, label: string): number {
+  const count = Number(value);
+  ensure(Number.isInteger(count) && count >= 1 && count <= max, `${label} must be 1–${max} minutes`);
+  return count;
+}
+
+/** Each text is one exact command; single quotes group an argument with spaces. */
+export function checkCommands(texts: string[], minutesEach = 10): CheckCommand[] {
+  ensure(texts.length <= 10, "At most 10 --check commands");
+  return texts.map((text) => {
+    const [program, ...args] = commandWords(text);
+    ensure(program, '--check needs a command, for example --check "npm test"');
+    return checkCommand({ program, args, timeoutMs: minutesEach * 60_000 }, maxCheckMs);
+  });
 }
 /** Pre-approved checks may run longer than interactive ones, which stop at one minute. */
 export const maxCheckMs = 30 * 60_000;
