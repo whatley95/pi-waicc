@@ -5,9 +5,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmdirSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
+  realpathSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -22,6 +25,7 @@ import { deleteSession, restoreSession } from "../src/lifecycle.ts";
 import {
   assertRecipientCurrent,
   assertRecipientEdit,
+  assertTaskPath,
   receiveHandoff,
   recipientAssignment,
   submitRecipientReply,
@@ -72,9 +76,9 @@ function contract(): Contract {
   };
 }
 function fixture(t: TestContext, mode: "planning" | "review" = "planning") {
-  const root = mkdtempSync(join(tmpdir(), "waicc-recipient-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-recipient-")));
   t.after(() => {
-    assert.equal(dirname(root), resolve(tmpdir()));
+    assert.equal(dirname(root), realpathSync(tmpdir()));
     assert.ok(basename(root).startsWith("waicc-recipient-"));
     rmSync(root, { recursive: true, force: true });
   });
@@ -1255,4 +1259,18 @@ test("Pi implementation receiver exposes scoped edits only after human opt-in; s
     true,
   );
   assert.equal((await h.guard("bash", { command: "npm test" })).block, true);
+});
+
+test("edit scope maps a symlinked working directory onto the physical project root (macOS /var)", (t) => {
+  const { root, id } = fixture(t);
+  // The project reached through a link, as /var reaches /private/var on macOS.
+  const link = join(realpathSync(tmpdir()), `waicc-recipient-link-${basename(root)}`);
+  symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
+  // Remove only the link itself; a recursive delete could follow it into the project.
+  t.after(() => (process.platform === "win32" ? rmdirSync(link) : unlinkSync(link)));
+  const pin = receiveHandoff(root, id).pin;
+  assert.doesNotThrow(() => assertTaskPath(link, pin, join(link, "source.txt")));
+  assert.doesNotThrow(() => assertTaskPath(link, pin, join("src", "new.ts")));
+  assert.throws(() => assertTaskPath(link, pin, join(link, "outside.txt")), /outside this request's allowed paths/);
+  assert.throws(() => assertTaskPath(link, pin, join(link, "..", "escape.txt")), /escapes|Unsafe/);
 });

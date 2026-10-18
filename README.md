@@ -58,6 +58,8 @@ instead of relaying a questionnaire.
 1. **Send the planning handoff.** Give the generated `STARTER.txt` prompt to your
    chosen agent with access to the project. It reads `HANDOFF.md`, the contract,
    relevant skills and prior conversation, then writes the designated `reply.json`.
+   Or let Pi run it headless: `/waicc-dispatch --via claude --model opus` (see
+   [Dispatch to a headless agent](#dispatch-to-a-headless-agent)).
 2. **Continue in Pi.** Run `/waicc-continue`. WAICC validates the request identity,
    contract version, requirements digest and source state. Pi then assesses the
    reply against the original requirements and actual evidence.
@@ -420,9 +422,124 @@ freshness is checked at receive and submission; implementation may change source
 within its assigned scope, checked again at coordinator intake/assessment.
 `waicc_status` in recipient mode recovers the pinned assignment. To deliberately
 leave that role, the human runs `/waicc-use <session-id>`; this restores the chat's
-previous active tool selection. Switching provider/model remains a normal Pi action;
-WAICC does not choose a model, launch agent processes or run a background scheduler.
-Only an explicitly opted-in, individually confirmed local check launches a check program.
+previous active tool selection. Switching provider/model remains a normal Pi action.
+WAICC launches no agent on its own and runs no background scheduler; only your explicit
+`/waicc-dispatch` starts a recipient process, and only an explicitly opted-in,
+individually confirmed local check launches a check program.
+
+## Dispatch to a headless agent
+
+Instead of copying the handoff into another agent, you can have the coordinator run
+it headless with the agent and model you choose. Pi still does every assessment and
+you still make every decision. A typical mixed-model session:
+
+```text
+/waicc-planning Add customer search with account isolation.
+/waicc-dispatch --via claude --model opus            # Claude plans
+/waicc-continue                                      # Pi assesses; you accept → PLAN_READY
+/waicc-develop                                       # main agent codes
+/waicc-review Check authorization and regressions
+/waicc-dispatch --via codex -m gpt-5.5               # Codex reviews (a different model family)
+/waicc-continue
+```
+
+`/waicc-dispatch --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement]`
+runs the selected session's single waiting handoff in the background. This chat stays
+usable; you are notified when the agent finishes, then run `/waicc-continue`.
+`/waicc-dispatch --stop` ends a running agent. The CLI equivalent runs in the
+foreground: `waicc dispatch <session-id> --via codex`.
+
+| `--via`  | Runs                                 | Read-only enforcement                                   | Model flag              |
+| -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
+| `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP | `--model opus`          |
+| `codex`  | `codex exec`                         | `--sandbox read-only` (OS sandbox); only WAICC tools approved | `-m <model>`     |
+| `pi`     | `pi -p` with this extension          | WAICC's own recipient mode: read/search tools; with `--implement`, edit/write only inside task paths | `--model provider/id` |
+| `agy`    | `agy -p` (Antigravity CLI)           | Its headless mode soft-denies unapproved tools          | `--model <slug>`        |
+
+What it does and does not do:
+
+- **One recipient per request.** Dispatch refuses while a reply exists or another
+  dispatched agent is still working on the same request.
+- **Read-only roles, plus coding through Pi.** Planning, review and advisor handoffs
+  can go to any agent. A delegated implementation handoff can be dispatched only with
+  `--via pi --implement`: WAICC's recipient mode then allows edit/write inside the
+  task's allowed paths and blocks every other path and all shell commands as they
+  happen. Claude, Codex and Antigravity cannot be confined that way, so they are
+  refused for implementation. The coding agent cannot run tests: it reports them
+  `not_run`, and `/waicc-continue` inspects the diff, scope and checks as usual.
+  Testing handoffs stay manual, because each check needs interactive confirmation.
+
+  ```text
+  /waicc-develop --delegate
+  /waicc-dispatch --via pi --implement --model deepseek/deepseek-flash
+  /waicc-continue
+  ```
+- **The agent is pinned.** Claude and Codex get a per-run WAICC MCP server that refuses
+  every request except the dispatched one; Pi pins it at startup.
+- **Replies are validated before they are written.** Agents check drafts with
+  `waicc_validate_reply` (Pi: `waicc_reply` with `validateOnly`) and fix every reported
+  problem before the single submission, so `/waicc-continue` receives a valid reply.
+  Planning and review assignments include a valid `proposedContractExample`, and an
+  invalid proposal's error names the failing part and shows that example.
+- **Audit log.** Each run records the agent, model, exact arguments, exit code and
+  output tail under the round's `dispatch/<id>/` folder.
+- **Never assesses, accepts, closes or retries.** A failed run leaves the handoff
+  waiting: read the log, dispatch again, try another agent, or hand it off manually.
+- **Sign in first.** Each CLI must already be installed and signed in; headless runs
+  cannot log in. On Windows, npm/Volta `.cmd` shims are supported.
+- **Source must match the handoff.** If source changed since the handoff was issued,
+  dispatch refuses and asks for a fresh handoff. A reviewer that edits code anyway
+  cannot submit: its reply fails the source-fingerprint check.
+
+Context travels through the saved session files, not chat: every dispatched agent
+reads the same requirements, contract, saved context, complete round history, prior
+findings, skills and confirmed memory as a manual recipient. Save important chat-only
+facts with `waicc_context` (or `/waicc-compact <note>`) before dispatching.
+
+Verified live on Windows 11 with Claude Code 2.1 (Sonnet), Codex CLI 0.163 and Pi 1.2.0
+(DeepSeek V4 Pro): each pinned the request, corrected rejected drafts through dry-run
+validation, submitted once and left source untouched. Slower models can take well over
+ten minutes; the default timeout is 30 minutes. `/waicc-dispatch --via pi --implement`
+was also verified from a real Pi coordinator: DeepSeek Flash implemented the accepted
+task inside its allowed path in under a minute, and the coordinator accepted the reply.
+**Antigravity (`agy`) support is experimental and untested:** it reads MCP
+servers from its own configuration, so add WAICC once in `~/.gemini/config/mcp_config.json`:
+
+```json
+{ "mcpServers": { "waicc": { "command": "waicc", "args": ["mcp"] } } }
+```
+
+and allow its `waicc_*` tools in `~/.gemini/antigravity-cli/settings.json`, otherwise
+headless runs soft-deny them. Check `agy models` for exact model slugs.
+
+### MCP server for any agent
+
+`waicc mcp` is a dependency-free MCP stdio server for recipients. Any MCP client
+(Claude Code, Codex, Cursor, Gemini CLI, VS Code, …) can then receive a handoff and
+submit a validated reply instead of hand-writing `reply.json`. Every local STARTER
+prompt mentions these tools, so the same copy/paste handoff works with or without them.
+
+```sh
+claude mcp add waicc -- waicc mcp     # Claude Code, once
+codex mcp add waicc -- waicc mcp      # Codex, once
+```
+
+If `waicc` is not on your PATH (for example after `pi install git:…`), use
+`node /absolute/path/to/pi-waicc/src/cli.ts mcp` as the command. `/waicc-dispatch`
+does not need this setup; it starts its own pinned server.
+
+| Tool                   | Purpose                                                                 |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `waicc_receive`        | Pin the session's single waiting request (session and request IDs required) |
+| `waicc_assignment`     | Re-read the pinned contract, requirements, context, history and inputs  |
+| `waicc_validate_reply` | Dry run of every submit-time check; writes nothing                      |
+| `waicc_submit_reply`   | Validate and write the one reply; does not assess or advance the contract |
+
+The server never retargets to another request and refuses implementation assignments.
+It adds tools to an agent but cannot remove the agent's own edit or shell tools: run
+reviewers read-only (for example Claude's `--permission-mode plan` or Codex's
+`--sandbox read-only`). `waicc mcp --session <id> --request <id>` pins the server to one
+request, which is how dispatch starts it.
 
 ## Contracts for complicated work
 
@@ -473,15 +590,18 @@ schedule parallel implementations or certify that dependent tasks are complete.
 - Produces starter prompts, detailed handoffs and matching reply templates.
 - Supports focused contract-advisor questions without implying planning readiness.
 - Receives a pinned handoff in a manually opened Pi chat, using its current model.
+- Dispatches read-only handoffs to headless Claude Code, Codex or Pi with a chosen model.
+- Serves recipient tools to any MCP client with `waicc mcp`, validating replies before writing.
 - Validates and freezes replies before Pi assesses them.
 - Preserves original requirements, amendments, contract history and decisions.
 - Detects stale source, incomplete coverage and changes outside implementation scope.
 - Bundles WAI skills and supports source-linked, human-confirmed project memory.
 - Exports portable handoffs and recovers committed state after interrupted writes.
 
-External agents run when you submit their prompts. Preparation and assessment use
-your existing Pi agent and configured model. This release does not launch native
-Claude/Codex processes, automatically implement code, commit, push or deploy.
+External agents run when you submit their prompts, or when you explicitly dispatch a
+read-only handoff with `/waicc-dispatch` (Claude Code, Codex, Pi, experimental
+Antigravity). Preparation and assessment use your existing Pi agent and configured
+model. This release does not automatically implement code, commit, push or deploy.
 Explicitly opted-in Pi implementation recipients can edit only their assigned paths.
 
 Planning, review and advisor handoffs instruct agents to inspect source and write only their
@@ -511,6 +631,9 @@ model assessment is not proof of tested delivery.
 | `/waicc-compact [additional notes]`              | Validate recovery evidence and ask Pi to compact chat; optional owner notes require no pending handoff |
 | `/waicc-handoff [session-id]`                    | Show a copy-only manual recipient prompt, access requirements and separate human return steps         |
 | `/waicc-receive <session-id> [--implement] [--run-checks]` | Receive a pinned role; edits opt in separately from individually confirmed local checks |
+| `/waicc-dispatch --via claude\|codex\|pi\|agy [--model m] [--timeout min]` | Run the waiting read-only handoff in a headless agent; you are notified when it finishes |
+| `/waicc-dispatch --via pi --implement [--model m]` | Run a delegated implementation handoff in headless Pi; edits confined to task paths |
+| `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
 | `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |
 | `/waicc-delete <session-id>`                    | Move one CLOSED session to project-local recovery storage; no source or shared-memory deletion           |
@@ -827,6 +950,10 @@ npm install --ignore-scripts
 npm run check
 node src/cli.ts --help
 ```
+
+A clone runs the TypeScript sources directly. Packed or installed copies run the
+compiled `waicc` bin from `dist/` (`npm run build`, also run by `prepack`), because
+Node does not strip types from files under `node_modules`.
 
 The automated suite covers contract and dependency validation, reply identity and
 freshness, crash recovery, writer locks, path boundaries, Git/SVN evidence, memory,
