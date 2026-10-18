@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   artifact,
@@ -13,7 +13,7 @@ import {
 import { recall } from "./memory.ts";
 import { normalizeReply } from "./reply.ts";
 import { proposedContractExample, roundDirectory, versionDirectory } from "./render.ts";
-import { projectRoot, snapshot } from "./source.ts";
+import { canonicalPath, projectRoot, snapshot } from "./source.ts";
 import { ensure, identifier, record, relativePath } from "./validation.ts";
 import { requirementsText, validateRoundReply } from "./workflow.ts";
 import type { ContractVersion, RecipientPin, Round, Session } from "./types.ts";
@@ -268,7 +268,7 @@ export function assertTaskPath(
   const { root, s, r } = pinned(cwd, pin);
   // The root is physical, so map a symlinked cwd prefix (macOS /var) onto its physical path.
   // Only that prefix: links inside the project stay visible to safePath's symlink check.
-  const logical = resolve(cwd), physical = realpathSync(cwd);
+  const logical = resolve(cwd), physical = canonicalPath(cwd);
   let target = resolve(cwd, value);
   if (target === logical || target.startsWith(logical + sep)) target = physical + target.slice(logical.length);
   const path = relative(root, target).replaceAll("\\", "/");

@@ -62,7 +62,7 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
     assert.ok(result.extensions[0].tools.has(name));
   assert.ok(!result.extensions[0].tools.has("waicc_close"));
   assert.ok(!result.extensions[0].tools.has("waicc_reopen"));
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-loader-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-loader-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-loader-"));
     rmSync(root, { recursive: true, force: true });
@@ -148,7 +148,7 @@ test("Pi 1.2.0's actual extension loader accepts commands and can execute handof
 });
 
 test("advisor slash command issues a handoff without model inference and continue assesses it as advice", async (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-advisor-command-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-advisor-command-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-advisor-command-"));
     rmSync(root, { recursive: true, force: true });
@@ -304,7 +304,7 @@ test("advisor slash command issues a handoff without model inference and continu
   assert.equal(prompts.length, 1);
 });
 test("planning saves the user's request before prompting; chats keep separate session bindings", async (t) => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-extension-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-extension-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-extension-"));
     rmSync(root, { recursive: true, force: true });
