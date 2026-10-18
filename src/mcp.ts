@@ -7,6 +7,9 @@ import {
   submitRecipientReply,
   validateRecipientReply,
 } from "./recipient.ts";
+import { runRecipientCheck, type CheckCommand } from "./checks.ts";
+import { commandText, maxCheckMs, runAgent } from "./dispatch.ts";
+import { projectRoot, snapshot } from "./source.ts";
 import { ensure, identifier } from "./validation.ts";
 import type { RecipientPin } from "./types.ts";
 
@@ -20,6 +23,10 @@ export interface McpOptions {
   requestId?: string;
   /** Isolated-worktree dispatch only: the agent edits a copy, and WAICC checks scope before applying. */
   implement?: boolean;
+  /** Exact commands the human pre-approved when dispatching; nothing else can be run. */
+  checks?: CheckCommand[];
+  /** Where checks run: the isolated worktree of an isolated implementation. */
+  checkCwd?: string;
 }
 
 const replySchema = {
@@ -67,6 +74,16 @@ const tools = [
     },
   },
   {
+    name: "waicc_run_check",
+    description:
+      "Run one check the human pre-approved for this dispatch, by its number in the list waicc_receive returned. WAICC runs the exact command, logs its output and source state, and returns the result to cite in your reply. No other command can be run.",
+    inputSchema: {
+      type: "object",
+      properties: { check: { type: "integer", description: "Number of the pre-approved check" } },
+      required: ["check"],
+    },
+  },
+  {
     name: "waicc_validate_reply",
     description:
       "Dry run: apply every submit-time check to a draft reply without writing it. Fix any reported problem, then submit once.",
@@ -88,7 +105,11 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
     ensure(pin, "Call waicc_receive with the handoff's sessionId and requestId first");
     return pin;
   };
-  const call = (name: string, args: Record<string, unknown>): string => {
+  const approved = (): string =>
+    options.checks?.length
+      ? `\n\nPre-approved checks, run with waicc_run_check by number:\n${options.checks.map((check, i) => `${i}: ${commandText(check)}`).join("\n")}`
+      : "";
+  const call = async (name: string, args: Record<string, unknown>): Promise<string> => {
     switch (name) {
       case "waicc_receive": {
         const sessionId = identifier(args.sessionId, "Session ID");
@@ -110,10 +131,19 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
           "The session's waiting request is not the one in your handoff. Stop and return to the coordinator.",
         );
         pin = assignment.pin;
-        return assignmentText(assignment);
+        return assignmentText(assignment) + approved();
       }
       case "waicc_assignment":
-        return assignmentText(recipientAssignment(cwd, pinned()));
+        return assignmentText(recipientAssignment(cwd, pinned())) + approved();
+      case "waicc_run_check": {
+        const checks = options.checks ?? [];
+        ensure(checks.length, "No checks were pre-approved for this dispatch; report checks not_run with that limit.");
+        const index = Number(args.check);
+        ensure(Number.isInteger(index) && index >= 0 && index < checks.length, `check must be a number from 0 to ${checks.length - 1}`);
+        const source = snapshot(projectRoot(cwd)).fingerprint;
+        const result = await runRecipientCheck(cwd, pinned(), checks[index], source, runAgent, undefined, { maxTimeoutMs: maxCheckMs, workdir: options.checkCwd });
+        return JSON.stringify(result, null, 2);
+      }
       case "waicc_read_input": {
         const assignment = recipientAssignment(cwd, pinned());
         const allowed = [...Object.values(assignment.inputs), ...assignment.skills].filter((path): path is string => typeof path === "string");
@@ -135,7 +165,7 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
     }
   };
   /** One JSON-RPC message in, at most one response out (notifications get none). */
-  return (message: Message): object | undefined => {
+  return async (message: Message): Promise<object | undefined> => {
     const respond = (result: object) => ({ jsonrpc: "2.0", id: message.id, result });
     const fail = (code: number, text: string) => ({ jsonrpc: "2.0", id: message.id ?? null, error: { code, message: text } });
     if (message.id === undefined) return undefined;
@@ -160,7 +190,7 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
         if (!tools.some((tool) => tool.name === name)) return fail(-32602, `Unknown tool ${name}`);
         // Tool failures are results the model can read and correct, not protocol errors.
         try {
-          return respond({ content: [{ type: "text", text: call(name, args) }] });
+          return respond({ content: [{ type: "text", text: await call(name, args) }] });
         } catch (error) {
           return respond({
             content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
@@ -178,7 +208,8 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
 export function serveMcp(cwd: string, options: McpOptions = {}): Promise<void> {
   const handle = mcpServer(cwd, options);
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-  lines.on("line", (line) => {
+  // Calls may finish out of order (a check runs long); JSON-RPC matches responses by id.
+  lines.on("line", async (line) => {
     if (!line.trim()) return;
     let message: Message;
     try {
@@ -187,7 +218,7 @@ export function serveMcp(cwd: string, options: McpOptions = {}): Promise<void> {
       process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } })}\n`);
       return;
     }
-    const response = handle(message);
+    const response = await handle(message);
     if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
   });
   return new Promise((resolve) => lines.on("close", resolve));

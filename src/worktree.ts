@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { safePath } from "./files.ts";
@@ -15,7 +15,11 @@ export interface Isolation {
   base: string;
   /** Checkout fingerprint at creation; changes are applied only if it still matches. */
   source: string;
+  /** Ignored dependency folders linked from the checkout, so checks can run in the copy. */
+  linked: string[];
 }
+/** Top-level dependency folders worth linking when Git ignores them; never copied or applied. */
+const dependencyFolders = ["node_modules", ".venv", "venv"];
 export interface Change {
   status: "A" | "M" | "D";
   path: string;
@@ -53,7 +57,16 @@ export function createIsolation(root: string, id: string): Isolation {
       copyFileSync(join(root, path), join(worktree, path));
     }
     git(worktree, ["reset", "--quiet"]);
-    return { worktree, base, source: source.fingerprint };
+    const linked: string[] = [];
+    for (const name of dependencyFolders) {
+      const target = join(root, name);
+      if (!existsSync(target) || !lstatSync(target).isDirectory()) continue;
+      // Only ignored folders: anything tracked or unignored is already in the snapshot.
+      if (spawnSync("git", ["check-ignore", "-q", name], { cwd: root, windowsHide: true }).status !== 0) continue;
+      symlinkSync(target, join(worktree, name), process.platform === "win32" ? "junction" : "dir");
+      linked.push(name);
+    }
+    return { worktree, base, source: source.fingerprint, linked };
   } finally {
     rmSync(index, { force: true });
   }
@@ -64,7 +77,10 @@ export function isolatedChanges(isolation: Isolation): Change[] {
   git(isolation.worktree, ["add", "-A"]);
   const fields = git(isolation.worktree, ["diff", "--cached", "--name-status", "--no-renames", "-z", isolation.base]).split("\0").filter(Boolean);
   const changes: Change[] = [];
+  const linkedPath = (path: string) => isolation.linked.some((name) => path === name || path.startsWith(`${name}/`));
   for (let i = 0; i < fields.length; i += 2) {
+    // A linked dependency folder is the checkout's own; it is never part of the agent's work.
+    if (linkedPath(fields[i + 1])) continue;
     const status = fields[i][0];
     ensure(status === "A" || status === "M" || status === "D", `Unsupported change ${fields[i]} for ${fields[i + 1]}`);
     changes.push({ status, path: fields[i + 1] });
@@ -96,6 +112,21 @@ export function applyIsolatedChanges(root: string, pin: RecipientPin, isolation:
 }
 
 export function removeIsolation(root: string, isolation: Isolation): void {
+  // Unlink dependency folders first, removing only the link, so removal can never reach the checkout's copy.
+  for (const name of isolation.linked ?? []) {
+    const link = join(isolation.worktree, name);
+    if (!existsSync(link) && !isLink(link)) continue;
+    if (process.platform === "win32") rmdirSync(link);
+    else unlinkSync(link);
+  }
   if (existsSync(isolation.worktree)) git(root, ["worktree", "remove", "--force", isolation.worktree]);
   git(root, ["worktree", "prune"]);
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
