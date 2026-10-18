@@ -26,7 +26,7 @@ import { dispatchChecksVariable, dispatchOptions, dispatchPinVariable, maxCheckM
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { curate, propose, recall } from "./memory.ts";
-import { projectRoot, snapshot } from "./source.ts";
+import { projectRoot, samePath, snapshot } from "./source.ts";
 import { manualHandoffMessage } from "./render.ts";
 import type { manualHandoff } from "./render.ts";
 import {
@@ -1099,10 +1099,10 @@ export default function waicc(
         pin?: RecipientPin;
         previousTools?: string[];
       };
-      if (data?.projectRoot === projectRoot(ctx.cwd) && data.sessionId === null) {
+      if (data?.projectRoot && samePath(data.projectRoot, projectRoot(ctx.cwd)) && data.sessionId === null) {
         bindings.delete(key(ctx));
         copied.delete(key(ctx));
-      } else if (data?.projectRoot === projectRoot(ctx.cwd) && data.sessionId) {
+      } else if (data?.projectRoot && samePath(data.projectRoot, projectRoot(ctx.cwd)) && data.sessionId) {
         if (data.role === "recipient" && data.pin) {
           ensure(
             data.pin.sessionId === data.sessionId,

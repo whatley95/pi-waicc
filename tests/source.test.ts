@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { digest } from "../src/files.ts";
-import { normalizeSvnXml } from "../src/source.ts";
+import { mkdtempSync, realpathSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { digest, loadSession } from "../src/files.ts";
+import { normalizeSvnXml, projectRoot } from "../src/source.ts";
+import { createSession } from "../src/workflow.ts";
 
 test("SVN metadata normalizes attribute permutations and start-tag layout before hashing", () => {
   const variants = [
@@ -52,4 +56,23 @@ test("SVN property values, whitespace, encoding and escaped data remain signific
     normalizeSvnXml(text),
     normalizeSvnXml(text.replace("  </property>", " </property>")),
   );
+});
+
+test("a session loads through any spelling of its project directory", (t) => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  // Another spelling of the same directory, as an agent's working directory can be:
+  // a link here; on Windows also a short 8.3 name or different letter case.
+  const link = join(realpathSync.native(tmpdir()), `${basename(root)}-link`);
+  symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
+  t.after(() => {
+    // Remove only the link itself; a recursive delete could follow it into the project.
+    if (process.platform === "win32") rmdirSync(link);
+    else unlinkSync(link);
+    rmSync(root, { recursive: true, force: true });
+  });
+  writeFileSync(join(root, "app.txt"), "source\n");
+  const s = createSession(root, "Add search");
+  assert.equal(projectRoot(link), root, "one canonical root");
+  assert.equal(loadSession(link, s.id).id, s.id);
+  if (process.platform === "win32") assert.equal(loadSession(root.toUpperCase(), s.id).id, s.id);
 });

@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path";
 
 // Node refuses to strip types under node_modules, so an installed bin must be compiled JavaScript.
 test("installed CLI bin runs from node_modules as compiled JavaScript", (t) => {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => {
     assert.ok(basename(base).startsWith("waicc-test-"));
     rmSync(base, { recursive: true, force: true });

@@ -22,7 +22,7 @@ const contract: Contract = {
     allowedPaths: [i ? "other.txt" : "app.txt"], acceptance: [{ id: `AC${id}`, text: "Account isolation", requirementIds: ["R1"], verification: "Run isolation checks" }] })),
 };
 function fixture(t: TestContext, spec = false, gated = false, modern = true) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-development-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-development-")));
   t.after(() => { assert.ok(basename(root).startsWith("waicc-development-")); rmSync(root, { recursive: true, force: true }); });
   writeFileSync(join(root, "app.txt"), "original"); writeFileSync(join(root, "other.txt"), "original");
   let s = createSession(root, "Add account search", undefined, modern ? "planning" : undefined);
