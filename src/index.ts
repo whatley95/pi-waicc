@@ -675,7 +675,7 @@ export default function waicc(
       show(ctx, {
         dispatching: true, via: plan.via, model: plan.model ?? "agent default", sessionId: plan.sessionId,
         requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
-        nextAction: `The recipient is working headless${plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
+        nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
       });
     },
   );

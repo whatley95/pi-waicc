@@ -83,7 +83,7 @@ test("MCP server speaks JSON-RPC over stdio, pins one request and validates befo
   assert.equal(init.result.serverInfo.name, "waicc");
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
   assert.deepEqual((await rpc("tools/list")).result.tools.map((tool: { name: string }) => tool.name),
-    ["waicc_receive", "waicc_assignment", "waicc_validate_reply", "waicc_submit_reply"]);
+    ["waicc_receive", "waicc_assignment", "waicc_read_input", "waicc_validate_reply", "waicc_submit_reply"]);
   assert.equal((await rpc("bogus")).error.code, -32601);
 
   assert.match((await call("waicc_submit_reply", { reply: body() })).content[0].text, /waicc_receive/);
@@ -167,11 +167,13 @@ test("dispatch records an audit log, never assesses, and refuses answered reques
   assert.equal(ingest(root, id).status, "AWAITING_ASSESSMENT");
 });
 
-test("implementation dispatch needs --implement and Pi, whose recipient mode confines edits to task paths", async (t) => {
+test("implementation dispatch needs --implement; through Pi, recipient mode confines edits to task paths", async (t) => {
   const { root, id, requestId } = implementationWaiting(t);
   assert.throws(() => prepareDispatch(root, id, { via: "pi" }), /Add --implement/);
-  for (const via of ["claude", "codex", "agy"] as const)
-    assert.throws(() => prepareDispatch(root, id, { via, implement: true }), /Only --via pi/);
+  // Claude and Codex code in an isolated Git worktree (tests/worktree.test.ts); this fixture is not Git.
+  for (const via of ["claude", "codex"] as const)
+    assert.throws(() => prepareDispatch(root, id, { via, implement: true }), /needs a Git checkout/);
+  assert.throws(() => prepareDispatch(root, id, { via: "agy", implement: true }), /Antigravity is not supported/);
   assert.deepEqual(dispatchOptions("--via pi --implement --model deepseek/x"), { via: "pi", implement: true, model: "deepseek/x" });
   const plan = prepareDispatch(root, id, { via: "pi", implement: true });
   assert.equal(plan.env.WAICC_DISPATCH_PIN, `${id}:${requestId}:implement`);
