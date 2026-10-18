@@ -86,8 +86,10 @@ Only claim clipboard success when the host reports it; if unavailable, retain th
 copy block. RPC/JSON/print modes use manual copy and must not emit clipboard sequences.
 
 `/waicc-dispatch --via claude|codex|pi|agy [--model m]` is a human command that runs the
-waiting read-only handoff headless; `--via pi --implement` also runs a delegated
-implementation handoff with edits confined to task paths. Never invoke or imitate it yourself, and never start
+waiting read-only handoff headless; `--implement` also runs a delegated implementation
+handoff (Pi in place within task paths; Claude/Codex in an isolated worktree whose
+changes are applied only if all are in scope). If you are a dispatched coding agent in
+an isolated copy, edit only that copy and only the task's allowedPaths. Never invoke or imitate it yourself, and never start
 agents through shell. After a dispatch, wait for its notice; the human runs `/waicc-continue`.
 
 When acting as an external agent, the handoff files provide the specification and
