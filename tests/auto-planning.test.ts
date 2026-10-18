@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -12,9 +12,9 @@ import { createAutoPlanningSession, createSession, forceCloseSession, prepare } 
 import { deleteSession } from "../src/lifecycle.ts";
 
 function fixture(t: TestContext): string {
-  const root = mkdtempSync(join(tmpdir(), "waicc-auto-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-auto-")));
   t.after(() => {
-    assert.equal(dirname(root), resolve(tmpdir()));
+    assert.equal(dirname(root), realpathSync(tmpdir()));
     assert.ok(basename(root).startsWith("waicc-auto-"));
     rmSync(root, { recursive: true, force: true });
   });

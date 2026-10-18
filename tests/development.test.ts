@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -22,7 +22,7 @@ const contract: Contract = {
     allowedPaths: [i ? "other.txt" : "app.txt"], acceptance: [{ id: `AC${id}`, text: "Account isolation", requirementIds: ["R1"], verification: "Run isolation checks" }] })),
 };
 function fixture(t: TestContext, spec = false, gated = false, modern = true) {
-  const root = mkdtempSync(join(tmpdir(), "waicc-development-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-development-")));
   t.after(() => { assert.ok(basename(root).startsWith("waicc-development-")); rmSync(root, { recursive: true, force: true }); });
   writeFileSync(join(root, "app.txt"), "original"); writeFileSync(join(root, "other.txt"), "original");
   let s = createSession(root, "Add account search", undefined, modern ? "planning" : undefined);

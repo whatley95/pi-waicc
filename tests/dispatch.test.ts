@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -32,7 +32,7 @@ const body = () => ({
   checks: [{ description: "Run search tests", outcome: "not_run", evidence: "Read-only recipient" }],
 });
 function fixture(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), "waicc-test-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-test-"));
     rmSync(root, { recursive: true, force: true });
@@ -194,7 +194,7 @@ test("--implement on a read-only handoff is refused", (t) => {
 });
 
 test("Windows command shims receive metacharacter-heavy arguments intact", { skip: process.platform !== "win32" }, async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "waicc-test-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, "echo.mjs"), "process.stdout.write(JSON.stringify(process.argv.slice(2)));");
   writeFileSync(join(dir, "echoargs.cmd"), `@"${process.execPath}" "%~dp0echo.mjs" %*\r\n`);
