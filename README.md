@@ -128,6 +128,55 @@ That review may retain future execution gates and its PASS is not code approval.
 `reviewApproval.kind` distinguishes `code` from `contract`; legacy unmarked reviews
 remain specification-only and are never silently upgraded.
 
+### Automatic planning — on by default
+
+Describe work normally—no setup command is required. For example: “Rename this
+setting, update its documentation, then check both agree.” The main model plans
+whenever tracked steps would help it keep the work on track, **not only for complex
+tasks**. Multiple meaningful steps, dependencies, separate completion checks or
+changes that must stay coordinated are enough. Keep the plan proportional to the job.
+
+WAICC captures your input using `waicc_start_planning`, saves important prior
+context and prepares one planning brief/handoff. The planner investigates the code
+and returns the detailed plan. This uses the current model's normal turn, not an
+extra classifier or worker process.
+
+To show the current setting, turn it off, or re-enable it:
+
+```text
+/waicc-auto-planning
+/waicc-auto-planning off
+/waicc-auto-planning on
+```
+
+Trivial one-step edits, explanations, status questions and exploratory discussion
+should not start new contracts. Whether tracked planning would help is model judgment,
+not a guaranteed classifier.
+Put `[no-plan]` at the beginning of a message to mechanically skip automatic startup
+for that input. It does **not** bypass an existing contract's scope or coding guards.
+Manual `/waicc-planning` is always available.
+
+Related follow-ups use the selected contract unchanged. Pending packets are not
+rewritten or duplicated; unrelated/new scope needs an explicit human choice. If
+no contract is selected but open sessions exist, WAICC asks for `/waicc-use <id>`
+or an explicit new `/waicc-planning` rather than choosing for you. Closed, deleted
+or missing selections are never silently replaced.
+
+The setting defaults **on**, including new chats and existing branches without a
+saved preference. Explicit `off` preferences remain off across reload/resume;
+use `on` to re-enable. Overrides apply only to this Pi chat/project branch. Old
+`complex` commands/settings remain compatible as an alias for `on`, using the new
+step-tracking policy. Startup requires a fresh idle human prompt
+(interactive or RPC). Slash commands, extension-generated/custom messages,
+transformed inputs and queued/steered messages do not trigger startup; send a fresh
+ordinary prompt when needed. Handoff recipients cannot enable or use it.
+
+The handoff still uses the existing clipboard/manual-copy flow. Send it to your
+chosen planner, then `/waicc-continue` in the coordinator. Auto-planning never
+launches another agent, adopts a reply, amends scope, confirms memory, closes a
+contract or authorizes implementation. After plan acceptance, you still explicitly
+run `/waicc-develop`.
+
 ### Specification approved, now develop
 
 `SPEC_APPROVED` means specification review PASS, not code completion or permission.
@@ -445,6 +494,7 @@ model assessment is not proof of tested delivery.
 | Command                                          | Purpose                                                                                               |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | `/waicc-planning <requirements>`                 | Start a new durable task/session and ask Pi to prepare its contract                                   |
+| `/waicc-auto-planning [on\|off]`                  | Plan when tracked steps help, even for small work; default on. Legacy complex aliases on |
 | `/waicc-develop [--main\|--delegate]`             | Explicitly accept/authorize the current plan in this session; no handoff or round consumed |
 | `/waicc-decisions [session-id]`                 | Show the consolidated gate brief, recommendations, evidence and affected tasks |
 | `/waicc-decide <decision-id> <answer>`           | Record an existing gate's human answer in a versioned audit; not a scope amendment |
