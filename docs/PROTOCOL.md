@@ -462,6 +462,17 @@ source fail. Pi receives them as `WAICC_DISPATCH_CHECKS`, and `waicc_check` runs
 match without a dialog; any other command still needs `--run-checks` and per-command
 confirmation, which a headless run cannot give. Antigravity cannot receive checks.
 
+Agent profiles are read from `$PI_CODING_AGENT_DIR/waicc-agents.json` (default
+`~/.pi/agent`) and then `<project>/.pi/waicc-agents.json`, which wins for any profile or role
+both define. The only keys are `profiles` (`name → {via, model?, timeoutMinutes?}`) and
+`roles` (`planning|review|advisor|implementation|testing → name | {profile, checks?,
+checkTimeoutMinutes?}`); anything else, an unknown agent or an undefined profile is
+rejected with its file. Dispatch arguments may start with a profile name; with no name
+and no `--via`, the waiting round's mode selects the role's profile. Typed settings
+override the profile, and typed `--check` replaces the role's checks. A config cannot
+grant `--implement`. Role checks from the project file must be confirmed: Pi shows them
+in a dialog and refuses without UI; the CLI requires `--confirm-checks`.
+
 Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
 ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
 dropped from the change list, and removal unlinks each folder (removing only the link)

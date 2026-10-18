@@ -91,7 +91,8 @@ handoff (Pi in place within task paths; Claude/Codex in an isolated worktree who
 changes are applied only if all are in scope); testing needs `--check "<command>"`, which
 pre-approves exact commands. A dispatched agent runs only those, with `waicc_run_check` by
 number (Pi: `waicc_check` with the exact command), cites each logged result and marks every
-other check not_run. If you are a dispatched coding agent in
+other check not_run. Agent profiles (`waicc-agents.json`) are the human's choice of agents;
+do not create or edit them unless asked. If you are a dispatched coding agent in
 an isolated copy, edit only that copy and only the task's allowedPaths. Never invoke or imitate it yourself, and never start
 agents through shell. After a dispatch, wait for its notice; the human runs `/waicc-continue`.
 
