@@ -30,7 +30,8 @@ import {
 } from "./workflow.ts";
 import { advisorInput, ensure } from "./validation.ts";
 import { checkCommand } from "./checks.ts";
-import { dispatch, dispatchOptions, maxCheckMs } from "./dispatch.ts";
+import { commandText, dispatch, maxCheckMs } from "./dispatch.ts";
+import { profilesView, resolveDispatch } from "./profiles.ts";
 import { serveMcp } from "./mcp.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
@@ -82,9 +83,19 @@ try {
       await serveMcp(cwd, { sessionId: flag(options, "--session"), requestId: flag(options, "--request"), implement, checks, checkCwd: flag(options, "--check-cwd") });
       process.exit(0);
     }
-    case "dispatch":
-      ensure(id, "Usage: waicc dispatch <session> --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>]");
-      output = await dispatch(cwd, id, dispatchOptions(rest));
+    case "dispatch": {
+      ensure(id, "Usage: waicc dispatch <session> [profile] [--via claude|codex|pi|agy] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--confirm-checks]");
+      const resolved = resolveDispatch(cwd, id, rest.filter((word) => word !== "--confirm-checks"));
+      // A terminal has no dialog: checks from the repository's own file need this explicit flag.
+      ensure(
+        !resolved.confirmChecks || rest.includes("--confirm-checks"),
+        `These checks come from the project's agent config: ${resolved.options.checks?.map(commandText).join("; ")}. Review them, then add --confirm-checks to run them.`,
+      );
+      output = await dispatch(cwd, id, resolved.options);
+      break;
+    }
+    case "profiles":
+      output = profilesView(cwd);
       break;
     case "start": {
       const delegated = id === "--delegate";
@@ -238,7 +249,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | profiles | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));

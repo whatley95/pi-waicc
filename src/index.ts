@@ -22,7 +22,8 @@ import {
 } from "./clipboard.ts";
 import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
-import { dispatchChecksVariable, dispatchOptions, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner } from "./dispatch.ts";
+import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner } from "./dispatch.ts";
+import { profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { curate, propose, recall } from "./memory.ts";
@@ -652,8 +653,12 @@ export default function waicc(
   );
   command(
     "waicc-dispatch",
-    "Run the waiting handoff in a headless agent: --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --stop",
+    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --profiles | --stop",
     async (args, ctx) => {
+      if (args === "--profiles") {
+        show(ctx, profilesView(ctx.cwd));
+        return;
+      }
       const id = selected(ctx);
       if (args === "--stop") {
         const running = dispatches.get(id);
@@ -663,7 +668,17 @@ export default function waicc(
         return;
       }
       ensure(!dispatches.has(id), "A dispatched recipient is already running for this session. Use /waicc-dispatch --stop first.");
-      const plan = prepareDispatch(ctx.cwd, id, dispatchOptions(args));
+      // No agent typed: the waiting handoff's role picks a profile from the agent config.
+      const resolved = resolveDispatch(ctx.cwd, id, args);
+      if (resolved.confirmChecks) {
+        ensure(ctx.hasUI, "These checks come from the project's agent config, and confirming them needs interactive Pi. Pass --check yourself, or move them to your user config.");
+        const approved = await ctx.ui.confirm(
+          "Run these checks from the project's agent config?",
+          `${resolved.options.checks!.map(commandText).join("\n")}\n\nThey come from ${projectConfigPath(projectRoot(ctx.cwd))}, which anyone who can change the repository can edit. They run with your account's permissions. Approve only local, reviewed commands.`,
+        );
+        ensure(approved, "Dispatch cancelled: the project's checks were not approved.");
+      }
+      const plan = prepareDispatch(ctx.cwd, id, resolved.options);
       const controller = new AbortController();
       // Runs in the background so this chat stays usable; the result arrives as a message.
       const done = runDispatch(plan, services.runAgent, controller.signal)
@@ -675,7 +690,7 @@ export default function waicc(
         .finally(() => dispatches.delete(id));
       dispatches.set(id, { controller, done });
       show(ctx, {
-        dispatching: true, via: plan.via, model: plan.model ?? "agent default", sessionId: plan.sessionId,
+        dispatching: true, profile: resolved.profile, via: plan.via, model: plan.model ?? "agent default", sessionId: plan.sessionId,
         requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
         nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
       });
