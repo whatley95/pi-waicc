@@ -36,4 +36,11 @@ test("installed CLI bin runs from node_modules as compiled JavaScript", (t) => {
   const session = invoke("start", "Add customer search.");
   assert.equal(session.status, "DRAFT");
   assert.equal(invoke("status", session.id).sessionId, session.id);
+  // Dispatch starts this compiled MCP server for installed packages.
+  const mcp = execFileSync(process.execPath, [join(installed, manifest.bin.waicc), "--root", project, "mcp"], {
+    input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n`,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(JSON.parse(mcp).result.serverInfo.name, "waicc");
 });
