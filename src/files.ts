@@ -26,6 +26,20 @@ export const now = (): string => new Date().toISOString();
 export const runtimePath = ".pi/pi-waicc";
 
 /** Every existing component is inspected. Junctions/symlinks are not write grants. */
+/** One spelling per directory: native resolution also expands Windows 8.3 short names
+ * (C:\Users\NAME~1) and fixes letter case, which a JavaScript realpath leaves alone. */
+export const canonicalPath = (path: string): string => realpathSync.native(path);
+
+/** Whether two paths name the same directory, however each is spelled. */
+export function samePath(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    return canonicalPath(a) === canonicalPath(b);
+  } catch {
+    return false;
+  }
+}
+
 export function safePath(root: string, child: string): string {
   ensure(
     !isAbsolute(child) && !/^[A-Za-z]:|[\x00-\x1f]/.test(child),
@@ -186,7 +200,8 @@ function loadStoredSession(root: string, id: string, deleted: boolean): Session 
     entry.schemaVersion === 1 &&
       s.schemaVersion === 1 &&
       s.id === id &&
-      s.projectRoot === realpathSync(root),
+      // Sessions saved under another spelling of the same directory (8.3 name, case) still load.
+      samePath(s.projectRoot, root),
     "Session identity, location or schema mismatch",
   );
   ensure(

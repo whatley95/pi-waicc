@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BeforeAgentStartEvent, ExtensionContext, InputEvent } from "@earendil-works/pi-coding-agent";
-import { projectRoot } from "./source.ts";
+import { projectRoot, samePath } from "./source.ts";
 
 export type AutoPlanningMode = "off" | "on";
 type Request = { id: string; text: string };
@@ -11,7 +11,7 @@ export function autoPlanningMode(ctx: ExtensionContext): AutoPlanningMode {
   const root = projectRoot(ctx.cwd);
   const entry = ctx.sessionManager.getBranch?.().findLast((entry) =>
     entry.type === "custom" && entry.customType === "waicc-auto-planning" &&
-    (entry.data as { projectRoot?: string } | undefined)?.projectRoot === root);
+    samePath((entry.data as { projectRoot?: string } | undefined)?.projectRoot ?? "", root));
   if (entry?.type !== "custom") return "on";
   const mode = (entry.data as { mode?: string })?.mode;
   // Preserve explicit off; previously enabled complex-only settings use the new policy.

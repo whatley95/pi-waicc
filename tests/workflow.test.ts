@@ -61,7 +61,7 @@ import { pathToFileURL } from "node:url";
 import { decisionGates } from "../src/decisions.ts";
 
 function fixture(t: TestContext, git = false): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-test-"));
     rmSync(root, { recursive: true, force: true });

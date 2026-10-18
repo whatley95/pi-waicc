@@ -34,7 +34,7 @@ const silent = async () => ({ stdout: "", stderr: "", code: 0, killed: false });
 
 /** An accepted plan with one handoff waiting: testing by default, or still planning. */
 function waiting(t: TestContext, mode: "testing" | "planning" = "testing") {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-test-"));
     rmSync(root, { recursive: true, force: true });
@@ -93,7 +93,7 @@ test("waicc_run_check runs only the pre-approved checks and logs each one", asyn
   assert.match((await call(tester, "waicc_run_check", { check: 1 })).content[0].text, /from 0 to 0/);
   const ran = JSON.parse((await call(tester, "waicc_run_check", { check: 0 })).content[0].text);
   assert.equal(ran.outcome, "passed");
-  assert.equal(realpathSync(ran.stdout.trim()), root, "runs at the project root");
+  assert.equal(realpathSync.native(ran.stdout.trim()), root, "runs at the project root");
   assert.ok(existsSync(join(root, ".pi", "pi-waicc", "sessions", id, ran.artifactPath)), "logged in the round");
 });
 

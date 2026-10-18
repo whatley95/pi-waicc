@@ -7,7 +7,8 @@ import {
   realpathSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { digest, safePath } from "./files.ts";
+import { canonicalPath, digest, safePath } from "./files.ts";
+export { canonicalPath, samePath } from "./files.ts";
 import { ensure } from "./validation.ts";
 import type { SourceSnapshot } from "./types.ts";
 
@@ -26,11 +27,11 @@ function command(binary: string, args: string[], cwd: string): string | null {
   }
 }
 export function projectRoot(cwd: string): string {
-  let path = realpathSync(cwd);
+  let path = canonicalPath(cwd);
   while (true) {
     if (existsSync(join(path, ".git")) || existsSync(join(path, ".svn")))
       return path;
-    if (dirname(path) === path) return realpathSync(cwd);
+    if (dirname(path) === path) return canonicalPath(cwd);
     path = dirname(path);
   }
 }
