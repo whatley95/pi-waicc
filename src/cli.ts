@@ -29,7 +29,8 @@ import {
   useMainWork,
 } from "./workflow.ts";
 import { advisorInput, ensure } from "./validation.ts";
-import { dispatch, dispatchOptions } from "./dispatch.ts";
+import { checkCommand } from "./checks.ts";
+import { dispatch, dispatchOptions, maxCheckMs } from "./dispatch.ts";
 import { serveMcp } from "./mcp.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
@@ -71,15 +72,19 @@ try {
       // stdout belongs to the protocol: nothing else may be written to it.
       const implement = args.includes("--implement");
       const options = args.slice(1).filter((word) => word !== "--implement");
-      ensure(options.every((word, i) => i % 2 === 1 || ["--session", "--request"].includes(word)), "Usage: waicc mcp [--session <id> --request <id> [--implement]]");
-      // --implement is for dispatch's isolated worktrees, where WAICC checks scope before applying.
-      ensure(!implement || (flag(options, "--session") && flag(options, "--request")), "--implement requires --session and --request");
-      await serveMcp(cwd, { sessionId: flag(options, "--session"), requestId: flag(options, "--request"), implement });
+      ensure(options.every((word, i) => i % 2 === 1 || ["--session", "--request", "--checks", "--check-cwd"].includes(word)), "Usage: waicc mcp [--session <id> --request <id> [--implement] [--checks <file> [--check-cwd <dir>]]]");
+      // --implement and --checks come from dispatch: an isolated worktree, and checks the human pre-approved.
+      const pinnedRequest = Boolean(flag(options, "--session") && flag(options, "--request"));
+      ensure(!implement || pinnedRequest, "--implement requires --session and --request");
+      const checksFile = flag(options, "--checks");
+      ensure(!checksFile || pinnedRequest, "--checks requires --session and --request");
+      const checks = checksFile ? (file(checksFile) as unknown[]).map((check) => checkCommand(check, maxCheckMs)) : undefined;
+      await serveMcp(cwd, { sessionId: flag(options, "--session"), requestId: flag(options, "--request"), implement, checks, checkCwd: flag(options, "--check-cwd") });
       process.exit(0);
     }
     case "dispatch":
       ensure(id, "Usage: waicc dispatch <session> --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>]");
-      output = await dispatch(cwd, id, dispatchOptions(rest.join(" ")));
+      output = await dispatch(cwd, id, dispatchOptions(rest));
       break;
     case "start": {
       const delegated = id === "--delegate";
@@ -233,7 +238,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));

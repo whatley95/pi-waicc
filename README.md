@@ -443,7 +443,7 @@ you still make every decision. A typical mixed-model session:
 /waicc-continue
 ```
 
-`/waicc-dispatch --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement]`
+`/waicc-dispatch --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`
 runs the selected session's single waiting handoff in the background. This chat stays
 usable; you are notified when the agent finishes, then run `/waicc-continue`.
 `/waicc-dispatch --stop` ends a running agent. The CLI equivalent runs in the
@@ -472,17 +472,37 @@ What it does and does not do:
     only if a reply was submitted, every changed file is inside the task's allowed paths
     and your checkout has not changed meanwhile. Otherwise nothing is applied and the
     copy is kept for you to inspect. Codex runs in `--sandbox workspace-write` and can run
-    commands without network; ignored dependencies such as `node_modules` are not copied.
-    Claude has no shell. Isolation needs a Git checkout; Antigravity is refused.
-
-  A coding agent that could not run tests reports them `not_run`; `/waicc-continue`
-  then inspects the diff, scope and checks as usual. Testing handoffs stay manual,
-  because each check needs interactive confirmation.
+    commands without network. Claude has no shell. Isolation needs a Git checkout;
+    Antigravity is refused.
+  - **Dependencies are linked, not copied.** Top-level `node_modules`, `.venv` and `venv`
+    folders that Git ignores are linked from your project into the copy, so tests can
+    run there. They are never part of the agent's changes, and removing the copy removes
+    only the link. Writes through the link (such as a test cache) land in your folder.
 
   ```text
   /waicc-develop --delegate
-  /waicc-dispatch --via codex --implement                 # isolated worktree
+  /waicc-dispatch --via codex --implement --check "npm test"   # isolated worktree
   /waicc-dispatch --via pi --implement --model deepseek/deepseek-flash   # or in place
+  /waicc-continue
+  ```
+- **Pre-approved checks: you choose the exact commands.** Each `--check "<command>"`
+  approves one exact command (program and arguments; use single quotes inside it for an
+  argument with spaces, for example `--check "node --test 'tests/a b.ts'"`). The agent
+  can run only those, by number, through WAICC's `waicc_run_check` tool (Pi: `waicc_check`
+  with the exact command), never through its own shell. WAICC runs each at the project
+  root (in the isolated copy for Claude/Codex coding), logs its exact output, exit code
+  and source state in the round, and the agent cites that result. `--check-timeout`
+  allows 1–30 minutes per check (default 10); at most 10 checks.
+  - **Testing handoffs can now be dispatched,** with at least one `--check`; the tester
+    stays read-only. A test run that changes source fails, as with interactive checks.
+  - **Coding agents can run them too,** to verify their own work before submitting.
+  - Checks run with your account's permissions and are not an OS sandbox: approve only
+    local, reviewed commands, never deployments, installs or anything using secrets.
+    Antigravity cannot receive pre-approved checks.
+
+  ```text
+  /waicc-test
+  /waicc-dispatch --via claude --check "npm test" --check "npm run lint"
   /waicc-continue
   ```
 - **The agent is pinned.** Claude and Codex get a per-run WAICC MCP server that refuses
@@ -516,6 +536,10 @@ task inside its allowed path in under a minute, and the coordinator accepted the
 Isolated coding was verified live too: Codex and Claude (Sonnet) each implemented an
 accepted task in their worktree, WAICC applied the single in-scope file and removed the
 copy, and the coordinator accepted both replies, including in a Git repo with no commits.
+Pre-approved checks were verified live: a Claude tester ran `--check "node --test
+index.test.js"` through `waicc_run_check` (logged as passed), and Codex implemented a
+function plus its test in a worktree, ran the same approved check inside the copy, and
+WAICC applied both in-scope files.
 **Antigravity (`agy`) support is experimental and untested:** it reads MCP
 servers from its own configuration, so add WAICC once in `~/.gemini/config/mcp_config.json`:
 
@@ -547,6 +571,7 @@ does not need this setup; it starts its own pinned server.
 | `waicc_receive`        | Pin the session's single waiting request (session and request IDs required) |
 | `waicc_assignment`     | Re-read the pinned contract, requirements, context, history and inputs  |
 | `waicc_read_input`     | Read one listed input file in chunks, for agents working outside the project |
+| `waicc_run_check`      | Run one check the human pre-approved at dispatch, by number; logged in the round |
 | `waicc_validate_reply` | Dry run of every submit-time check; writes nothing                      |
 | `waicc_submit_reply`   | Validate and write the one reply; does not assess or advance the contract |
 
@@ -606,7 +631,9 @@ schedule parallel implementations or certify that dependent tasks are complete.
 - Produces starter prompts, detailed handoffs and matching reply templates.
 - Supports focused contract-advisor questions without implying planning readiness.
 - Receives a pinned handoff in a manually opened Pi chat, using its current model.
-- Dispatches read-only handoffs to headless Claude Code, Codex or Pi with a chosen model.
+- Dispatches handoffs to headless Claude Code, Codex or Pi with a chosen model: read-only
+  roles, coding (Pi in place, Claude/Codex in an isolated worktree) and testing with
+  pre-approved check commands.
 - Serves recipient tools to any MCP client with `waicc mcp`, validating replies before writing.
 - Validates and freezes replies before Pi assesses them.
 - Preserves original requirements, amendments, contract history and decisions.
@@ -649,6 +676,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-receive <session-id> [--implement] [--run-checks]` | Receive a pinned role; edits opt in separately from individually confirmed local checks |
 | `/waicc-dispatch --via claude\|codex\|pi\|agy [--model m] [--timeout min]` | Run the waiting read-only handoff in a headless agent; you are notified when it finishes |
 | `/waicc-dispatch --via pi\|claude\|codex --implement [--model m]` | Run a delegated implementation: Pi in place within task paths; Claude/Codex in an isolated worktree, applied all or nothing |
+| `/waicc-dispatch --via <agent> --check "<command>"...` | Dispatch a testing (or coding) handoff that may run only these exact pre-approved commands |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
 | `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |

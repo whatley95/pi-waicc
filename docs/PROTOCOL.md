@@ -447,7 +447,25 @@ an invalid `proposedContract` error is prefixed `proposedContract:` and repeats 
 `/waicc-dispatch` and `waicc dispatch` are explicit human actions. They accept only a
 single WAITING planning, review or advisor round, or an implementation round with
 `--implement` (Pi, Claude or Codex), with no reply, unchanged source and no unfinished
-dispatch for that round. Testing rounds are refused: their checks need interactive confirmation.
+dispatch for that round. A testing round additionally needs at least one pre-approved check.
+
+`--check "<command>"` (repeatable, at most 10) pre-approves one exact program and argument
+list; single quotes group an argument with spaces. `--check-timeout` sets 1–30 minutes per
+check (default 10; interactive checks stay capped at one minute). Checks apply only to
+testing and implementation rounds and are recorded in `start.json`. Claude and Codex
+receive them through the pinned MCP server (`--checks <file>`, a per-run file removed after
+the run, plus `--check-cwd <worktree>` for isolated implementation); `waicc_run_check {check}`
+runs one by number through the ordinary recipient check engine, so each run writes
+`checks/<id>/start.json` and `result.json` with exit code, bounded output and source before
+and after (`ranIn: "isolated worktree"` when it ran in the copy); testing runs that change
+source fail. Pi receives them as `WAICC_DISPATCH_CHECKS`, and `waicc_check` runs an exact
+match without a dialog; any other command still needs `--run-checks` and per-command
+confirmation, which a headless run cannot give. Antigravity cannot receive checks.
+
+Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
+ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
+dropped from the change list, and removal unlinks each folder (removing only the link)
+before `git worktree remove`.
 
 Claude and Codex implementation runs in an isolated Git worktree. Dispatch stages exactly
 the fingerprinted files into a temporary index, writes a snapshot commit on no branch
