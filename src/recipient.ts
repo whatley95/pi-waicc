@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   artifact,
   digest,
@@ -12,7 +12,7 @@ import {
 } from "./files.ts";
 import { recall } from "./memory.ts";
 import { normalizeReply } from "./reply.ts";
-import { roundDirectory, versionDirectory } from "./render.ts";
+import { proposedContractExample, roundDirectory, versionDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure, identifier, record, relativePath } from "./validation.ts";
 import { requirementsText, validateRoundReply } from "./workflow.ts";
@@ -112,6 +112,8 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
     },
     handoff: artifact(root, s, `${dir}/HANDOFF.md`),
     replyTemplate: JSON.parse(artifact(root, s, `${dir}/reply.example.json`)),
+    // Only planning and review replies may propose a revised contract.
+    proposedContractExample: ["planning", "review"].includes(r.mode) ? proposedContractExample : undefined,
     conversation: JSON.parse(artifact(root, s, `${dir}/conversation.json`)),
     memory: r.contextVersion || r.mode === "advisor"
       ? JSON.parse(artifact(root, s, `${dir}/memory.json`)) as ReturnType<typeof recall>
@@ -124,6 +126,19 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
       ? "Stop. The coordinator must /waicc-continue; do not assess your own reply."
       : "Perform this pinned assignment, submit with waicc_reply, then stop. Do not create/assess contracts or select another request.",
   };
+}
+
+/** Bounded assignment view: large or checkpointed assignments become an input-file index. */
+export function assignmentText(assignment: ReturnType<typeof recipientAssignment>): string {
+  const full = json(assignment);
+  if (!assignment.checkpointPath && full.length <= 32_000) return full;
+  return json({
+    role: assignment.role, pin: assignment.pin, projectRoot: assignment.projectRoot,
+    inputs: assignment.inputs, replyPath: assignment.replyPath,
+    reviewKind: assignment.reviewKind, wholeWork: assignment.wholeWork,
+    skills: assignment.skills,
+    nextAction: "Checkpoint-first assignment: read the checkpoint/index, exact request, contract/requirements, relevant skills, memory and reply template at inputs paths BEFORE working. Expand indexed original evidence and saved conversation as needed; full review still covers all requirements/tasks/criteria/prior actionable findings. This is an index, not proof; no evidence was removed.",
+  });
 }
 
 export function receiveHandoff(
@@ -163,6 +178,52 @@ export function receiveHandoff(
   return recipientAssignment(root, pin);
 }
 
+/** Every submit-time check, without writing; a draft can be corrected before the one write. */
+function checkedReply(root: string, pin: RecipientPin, value: unknown) {
+  const { s, r, replyPath } = pinned(root, pin);
+  assertRecipientCurrent(root, pin);
+  if (pin.mode !== "implementation")
+    ensure(
+      snapshot(root).fingerprint === pin.sourceFingerprint,
+      "Source changed during this assignment. Do not submit stale advice; return to the coordinator.",
+    );
+  const body = record(value, "Reply");
+  const identity = { schemaVersion: 1, ...pin };
+  for (const [key, expected] of Object.entries(identity))
+    ensure(
+      body[key] === undefined || body[key] === expected,
+      `Reply ${key} does not match the pinned request`,
+    );
+  const submitted = { ...body, ...identity };
+  const normalized = normalizeReply(submitted);
+  const reply = validateRoundReply(root, s, r, normalized.reply);
+  // Keep the submitted fields intact; coordinator intake freezes raw + normalized views.
+  const content = json(submitted);
+  ensure(
+    Buffer.byteLength(content, "utf8") <= 256_000 &&
+      Buffer.byteLength(json(reply), "utf8") <= 256_000,
+    "Reply exceeds 256 KB",
+  );
+  return { replyPath, content, normalization: normalized.changes };
+}
+
+export function validateRecipientReply(
+  cwd: string,
+  pin: RecipientPin,
+  value: unknown,
+) {
+  const checked = checkedReply(projectRoot(cwd), pin, value);
+  return {
+    valid: true,
+    submitted: false,
+    sessionId: pin.sessionId,
+    requestId: pin.requestId,
+    normalization: checked.normalization,
+    nextAction:
+      "Draft passes submit-time validation. Nothing was written; submit this exact reply once to deliver it.",
+  };
+}
+
 export function submitRecipientReply(
   cwd: string,
   pin: RecipientPin,
@@ -170,37 +231,14 @@ export function submitRecipientReply(
 ) {
   const root = projectRoot(cwd);
   return withLock(root, () => {
-    const { s, r, replyPath } = pinned(root, pin);
-    assertRecipientCurrent(root, pin);
-    if (pin.mode !== "implementation")
-      ensure(
-        snapshot(root).fingerprint === pin.sourceFingerprint,
-        "Source changed during this assignment. Do not submit stale advice; return to the coordinator.",
-      );
-    const body = record(value, "Reply");
-    const identity = { schemaVersion: 1, ...pin };
-    for (const [key, expected] of Object.entries(identity))
-      ensure(
-        body[key] === undefined || body[key] === expected,
-        `Reply ${key} does not match the pinned request`,
-      );
-    const submitted = { ...body, ...identity };
-    const normalized = normalizeReply(submitted);
-    const reply = validateRoundReply(root, s, r, normalized.reply);
-    // Keep the submitted fields intact; coordinator intake freezes raw + normalized views.
-    const content = json(submitted);
-    ensure(
-      Buffer.byteLength(content, "utf8") <= 256_000 &&
-        Buffer.byteLength(json(reply), "utf8") <= 256_000,
-      "Reply exceeds 256 KB",
-    );
+    const { replyPath, content, normalization } = checkedReply(root, pin, value);
     exclusiveWrite(replyPath, content);
     return {
       submitted: true,
       sessionId: pin.sessionId,
       requestId: pin.requestId,
       replyPath,
-      normalization: normalized.changes,
+      normalization,
       nextAction:
         "Stop. Return to the coordinating Pi session and /waicc-continue. This submission does not assess the reply or change contract readiness.",
     };
@@ -217,9 +255,23 @@ export function assertRecipientEdit(
     pin.mode === "implementation",
     "Planning, review and advisor recipients cannot edit source; use waicc_reply only.",
   );
+  assertTaskPath(cwd, pin, value);
+}
+
+/** Scope only: whether a path lies inside the pinned request's task allowedPaths. */
+export function assertTaskPath(
+  cwd: string,
+  pin: RecipientPin,
+  value: unknown,
+): void {
   ensure(typeof value === "string", "An implementation edit needs a path");
   const { root, s, r } = pinned(cwd, pin);
-  const path = relative(root, resolve(cwd, value)).replaceAll("\\", "/");
+  // The root is physical, so map a symlinked cwd prefix (macOS /var) onto its physical path.
+  // Only that prefix: links inside the project stay visible to safePath's symlink check.
+  const logical = resolve(cwd), physical = realpathSync(cwd);
+  let target = resolve(cwd, value);
+  if (target === logical || target.startsWith(logical + sep)) target = physical + target.slice(logical.length);
+  const path = relative(root, target).replaceAll("\\", "/");
   ensure(!isAbsolute(path), "Implementation path escapes the project");
   relativePath(path);
   safePath(root, path);

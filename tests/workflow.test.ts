@@ -11,6 +11,7 @@ import {
   symlinkSync,
   utimesSync,
   writeFileSync,
+  realpathSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -60,7 +61,7 @@ import { pathToFileURL } from "node:url";
 import { decisionGates } from "../src/decisions.ts";
 
 function fixture(t: TestContext, git = false): string {
-  const root = mkdtempSync(join(tmpdir(), "waicc-test-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-test-"));
     rmSync(root, { recursive: true, force: true });

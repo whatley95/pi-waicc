@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
@@ -22,7 +22,7 @@ const contract: Contract = {
     acceptance: [{ id: "AC1", text: "Search is account scoped", requirementIds: ["R1"], verification: "Run isolation checks" }] }],
 };
 function fixture(t: TestContext, prepared = true) {
-  const root = mkdtempSync(join(tmpdir(), "waicc-checkpoint-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-checkpoint-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-checkpoint-"));
     rmSync(root, { recursive: true, force: true });
