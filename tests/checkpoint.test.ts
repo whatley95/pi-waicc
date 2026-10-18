@@ -22,7 +22,7 @@ const contract: Contract = {
     acceptance: [{ id: "AC1", text: "Search is account scoped", requirementIds: ["R1"], verification: "Run isolation checks" }] }],
 };
 function fixture(t: TestContext, prepared = true) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-checkpoint-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-checkpoint-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-checkpoint-"));
     rmSync(root, { recursive: true, force: true });

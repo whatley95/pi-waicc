@@ -21,7 +21,7 @@ const scope: Contract = {
   })),
 };
 function fixture(t: TestContext) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "waicc-code-review-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-code-review-")));
   t.after(() => {
     assert.equal(basename(root).startsWith("waicc-code-review-"), true);
     rmSync(root, { recursive: true, force: true });
