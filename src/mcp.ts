@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import {
   assignmentText,
@@ -17,6 +18,8 @@ export interface McpOptions {
   /** Dispatch pins one request; the server then refuses to receive anything else. */
   sessionId?: string;
   requestId?: string;
+  /** Isolated-worktree dispatch only: the agent edits a copy, and WAICC checks scope before applying. */
+  implement?: boolean;
 }
 
 const replySchema = {
@@ -49,6 +52,19 @@ const tools = [
     description:
       "Re-read the pinned assignment: exact contract, requirements, saved context, conversation, skills, reply template and input paths.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "waicc_read_input",
+    description:
+      "Read one of the pinned assignment's input files (any path listed in its inputs or skills), in chunks. Use this when those files are outside your workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Exact path from the assignment's inputs or skills" },
+        offset: { type: "integer", description: "Character offset for the next chunk; default 0" },
+      },
+      required: ["path"],
+    },
   },
   {
     name: "waicc_validate_reply",
@@ -86,8 +102,9 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
           !pin || (pin.sessionId === sessionId && pin.requestId === requestId),
           "This agent is already pinned to another request. Stop; do not retarget.",
         );
-        // Implementation edits cannot be confined to task paths outside Pi.
-        const assignment = receiveHandoff(cwd, sessionId, false);
+        // Edits by an external agent cannot be confined to task paths, except in an isolated
+        // copy whose changes WAICC checks before applying them.
+        const assignment = receiveHandoff(cwd, sessionId, options.implement === true);
         ensure(
           assignment.pin.requestId === requestId,
           "The session's waiting request is not the one in your handoff. Stop and return to the coordinator.",
@@ -97,6 +114,18 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
       }
       case "waicc_assignment":
         return assignmentText(recipientAssignment(cwd, pinned()));
+      case "waicc_read_input": {
+        const assignment = recipientAssignment(cwd, pinned());
+        const allowed = [...Object.values(assignment.inputs), ...assignment.skills].filter((path): path is string => typeof path === "string");
+        ensure(allowed.includes(String(args.path)), "Only paths listed in the assignment's inputs or skills can be read");
+        const offset = Number(args.offset ?? 0);
+        ensure(Number.isInteger(offset) && offset >= 0, "offset must be a non-negative integer");
+        const text = readFileSync(String(args.path), "utf8");
+        const chunk = text.slice(offset, offset + 60_000);
+        const next = offset + chunk.length;
+        return next < text.length ? `${chunk}
+[Truncated: call waicc_read_input again with offset ${next} of ${text.length}.]` : chunk;
+      }
       case "waicc_validate_reply":
         return JSON.stringify(validateRecipientReply(cwd, pinned(), args.reply), null, 2);
       case "waicc_submit_reply":

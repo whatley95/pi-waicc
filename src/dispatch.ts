@@ -9,18 +9,20 @@ import { commitWithCheckpoint as commit } from "./checkpoint.ts";
 import { roundDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure } from "./validation.ts";
-import type { Mode } from "./types.ts";
+import { applyIsolatedChanges, createIsolation, isolatedChanges, removeIsolation, type Isolation } from "./worktree.ts";
+import type { Mode, RecipientPin } from "./types.ts";
 
 export const agents = ["claude", "codex", "pi", "agy"] as const;
 export type Agent = (typeof agents)[number];
-/** Roles whose recipient never needs to edit source; implementation stays a manual Pi handoff. */
+/** Roles whose recipient never edits source. Implementation needs --implement: Pi edits in place
+ * within task paths; Claude and Codex edit an isolated worktree whose changes are checked first. */
 const dispatchModes: Mode[] = ["planning", "review", "advisor"];
 
 export interface DispatchOptions {
   via: Agent;
   model?: string;
   timeoutMinutes?: number;
-  /** Explicit opt-in for an implementation handoff; Pi only. */
+  /** Explicit opt-in for an implementation handoff. */
   implement?: boolean;
 }
 export interface AgentResult {
@@ -68,7 +70,7 @@ function waiccCli(): string {
     : join(dirname(here), `cli${extname(here)}`);
 }
 const extensionEntry = (): string => join(dirname(here), `index${extname(here)}`);
-const recipientTools = ["waicc_receive", "waicc_assignment", "waicc_validate_reply", "waicc_submit_reply"];
+const recipientTools = ["waicc_receive", "waicc_assignment", "waicc_read_input", "waicc_validate_reply", "waicc_submit_reply"];
 
 export interface DispatchPlan {
   dispatchId: string;
@@ -79,6 +81,10 @@ export interface DispatchPlan {
   via: Agent;
   model: string | null;
   timeoutMs: number;
+  pin: RecipientPin;
+  /** Where the agent runs: the project, or its isolated worktree. */
+  cwd: string;
+  isolation: Isolation | null;
   program: string;
   args: string[];
   env: Record<string, string>;
@@ -91,8 +97,12 @@ export interface DispatchPlan {
 
 function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env">): Pick<DispatchPlan, "program" | "args" | "scratch" | "env"> {
   const model = plan.model;
-  // A pinned server refuses to receive any other request.
-  const server = { command: process.execPath, args: [waiccCli(), "--root", plan.root, "mcp", "--session", plan.sessionId, "--request", plan.requestId] };
+  const isolated = plan.isolation !== null;
+  // A pinned server refuses to receive any other request; --implement only for an isolated copy.
+  const server = {
+    command: process.execPath,
+    args: [waiccCli(), "--root", plan.root, "mcp", "--session", plan.sessionId, "--request", plan.requestId, ...(isolated ? ["--implement"] : [])],
+  };
   switch (plan.via) {
     case "claude": {
       const config = join(tmpdir(), `waicc-dispatch-${plan.dispatchId}.json`);
@@ -102,8 +112,10 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
         args: [
           "-p", plan.prompt, "--output-format", "json",
           "--mcp-config", config, "--strict-mcp-config",
-          "--allowedTools", "mcp__waicc,Read,Grep,Glob",
-          "--disallowedTools", "Edit,Write,NotebookEdit,Bash",
+          // Coding: edits auto-accepted only inside the worktree it runs in; still no shell.
+          ...(isolated
+            ? ["--permission-mode", "acceptEdits", "--allowedTools", "mcp__waicc,Read,Grep,Glob,Edit,Write", "--disallowedTools", "Bash,NotebookEdit"]
+            : ["--allowedTools", "mcp__waicc,Read,Grep,Glob", "--disallowedTools", "Edit,Write,NotebookEdit,Bash"]),
           ...(model ? ["--model", model] : []),
         ],
         scratch: [config], env: {},
@@ -113,7 +125,8 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
       return {
         program: "codex",
         args: [
-          "exec", "--sandbox", "read-only", "--skip-git-repo-check", "-C", plan.root,
+          // The OS sandbox limits writes to the directory it runs in: the project read-only, or the worktree.
+          "exec", "--sandbox", isolated ? "workspace-write" : "read-only", "--skip-git-repo-check", "-C", plan.cwd,
           "-c", `mcp_servers.waicc.command=${JSON.stringify(server.command)}`,
           "-c", `mcp_servers.waicc.args=${JSON.stringify(server.args)}`,
           // Headless exec rejects unapproved MCP calls; approve only the four recipient tools.
@@ -177,13 +190,12 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
     const r = waiting[0];
     if (r.mode === "implementation") {
       ensure(options.implement, "This is an implementation handoff. Add --implement only if you authorize its assigned code edits.");
-      // Only Pi's WAICC recipient mode blocks edits outside task paths as they happen.
-      ensure(options.via === "pi", "Only --via pi can confine implementation edits to the task's allowed paths. Use Pi, or hand it off manually.");
+      ensure(options.via !== "agy", "Antigravity is not supported for implementation yet. Use --via pi, claude or codex.");
     } else {
       ensure(!options.implement, "--implement applies only to an implementation handoff");
       ensure(
         dispatchModes.includes(r.mode),
-        `Dispatch supports read-only ${dispatchModes.join("/")} handoffs and Pi implementation. Hand ${r.mode} work off manually; checks need interactive confirmation.`,
+        `Dispatch supports read-only ${dispatchModes.join("/")} handoffs and --implement. Hand ${r.mode} work off manually; checks need interactive confirmation.`,
       );
     }
     const dir = roundDirectory(r);
@@ -196,23 +208,53 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
     );
     const dispatchId = randomUUID();
     const starter = join(root, sessionRelative(s.id), dir, "STARTER.txt");
+    const isolation = r.mode === "implementation" && options.via !== "pi" ? createIsolation(root, dispatchId) : null;
+    const ids = `sessionId ${JSON.stringify(s.id)} and requestId ${JSON.stringify(r.id)}`;
+    const finish = "Check your draft with waicc_validate_reply and fix every reported problem, submit exactly once with waicc_submit_reply, then stop. If the waicc tools are unavailable or refuse, stop and explain why; never write reply.json yourself.";
+    const checks = options.via === "codex"
+      ? "Shell commands run in a sandbox without network, and uncommitted dependencies (for example node_modules) are not in the copy."
+      : "You have no shell, so you cannot run tests.";
     const base = {
       dispatchId, root, sessionId: s.id, requestId: r.id, mode: r.mode, via: options.via,
       model: options.model ?? null, timeoutMs: (options.timeoutMinutes ?? 30) * 60_000, replyPath,
+      pin: { sessionId: s.id, requestId: r.id, contractVersion: r.contractVersion, requirementsDigest: r.requirementsDigest, sourceFingerprint: r.source.fingerprint, mode: r.mode },
+      cwd: isolation?.worktree ?? root, isolation,
       logPrefix: `${dir}/dispatch/${dispatchId}`,
       // One line: it travels as a command-line argument on every platform.
-      prompt: `You are a dispatched WAICC ${r.mode} recipient, not the coordinator, for the project at ${JSON.stringify(root)}. First call the waicc_receive MCP tool with sessionId ${JSON.stringify(s.id)} and requestId ${JSON.stringify(r.id)}. Then read ${JSON.stringify(starter)} and the assignment inputs, and do only that assignment. Source is read-only: do not edit, create or delete files. Check your draft with waicc_validate_reply and fix every reported problem, submit exactly once with waicc_submit_reply, then stop. If the waicc tools are unavailable or refuse, stop and explain why; never write reply.json yourself.`,
+      prompt: isolation
+        ? `You are a dispatched WAICC implementation recipient, not the coordinator. You are working in an isolated copy of the project at ${JSON.stringify(isolation.worktree)}; the real checkout is not yours to edit. First call the waicc_receive MCP tool with ${ids}, then read its handoff and other inputs with waicc_read_input. Implement the whole assignment in dependency order in this copy, changing only files inside the task's allowedPaths: when you finish, WAICC applies your changes to the real checkout only if every changed file is in scope, and applies nothing otherwise. ${checks} Report whole-work completion evidence and every check honestly, marking any check you could not run not_run with its limit. ${finish}`
+        : `You are a dispatched WAICC ${r.mode} recipient, not the coordinator, for the project at ${JSON.stringify(root)}. First call the waicc_receive MCP tool with ${ids}. Then read ${JSON.stringify(starter)} and the assignment inputs, and do only that assignment. Source is read-only: do not edit, create or delete files. ${finish}`,
     };
-    const plan: DispatchPlan = { ...base, ...invocation(base) };
-    commit(root, s, "dispatch.started", {
-      [`${plan.logPrefix}/start.json`]: json({
-        schemaVersion: 1, dispatchId, sessionId: s.id, requestId: r.id, mode: r.mode,
-        via: plan.via, model: plan.model, program: plan.program, args: plan.args, env: plan.env,
-        startedAt: now(), timeoutMs: plan.timeoutMs,
-      }),
-    });
-    return plan;
+    try {
+      const plan: DispatchPlan = { ...base, ...invocation(base) };
+      commit(root, s, "dispatch.started", {
+        [`${plan.logPrefix}/start.json`]: json({
+          schemaVersion: 1, dispatchId, sessionId: s.id, requestId: r.id, mode: r.mode,
+          via: plan.via, model: plan.model, program: plan.program, args: plan.args, env: plan.env,
+          isolation, startedAt: now(), timeoutMs: plan.timeoutMs,
+        }),
+      });
+      return plan;
+    } catch (error) {
+      if (isolation) removeIsolation(root, isolation);
+      throw error;
+    }
   });
+}
+
+/** Brings an isolated agent's work back, all or nothing; the worktree is kept whenever nothing is applied. */
+function settleIsolation(plan: DispatchPlan, replySubmitted: boolean) {
+  const isolation = plan.isolation!;
+  let changes: ReturnType<typeof isolatedChanges> = [];
+  try {
+    changes = isolatedChanges(isolation);
+    ensure(replySubmitted, "Nothing was applied: the agent submitted no reply.");
+    withLock(plan.root, () => applyIsolatedChanges(plan.root, plan.pin, isolation, changes));
+    removeIsolation(plan.root, isolation);
+    return { applied: true, changes, worktree: null, reason: null };
+  } catch (error) {
+    return { applied: false, changes, worktree: isolation.worktree, reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 const tail = (text: string, limit = 24_000): string => (text.length > limit ? text.slice(-limit) : text);
@@ -221,17 +263,18 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   const startedAt = Date.now();
   let result: AgentResult;
   try {
-    result = await run(plan.program, plan.args, { cwd: plan.root, timeout: plan.timeoutMs, signal, env: plan.env });
+    result = await run(plan.program, plan.args, { cwd: plan.cwd, timeout: plan.timeoutMs, signal, env: plan.env });
   } catch (error) {
     result = { stdout: "", stderr: error instanceof Error ? error.message : String(error), code: 1, killed: Boolean(signal?.aborted) };
   } finally {
     for (const path of plan.scratch) rmSync(path, { force: true });
   }
   const replySubmitted = existsSync(plan.replyPath);
+  const isolation = plan.isolation ? settleIsolation(plan, replySubmitted) : null;
   const report = {
     schemaVersion: 1, dispatchId: plan.dispatchId, sessionId: plan.sessionId, requestId: plan.requestId,
     mode: plan.mode, via: plan.via, model: plan.model, finishedAt: now(), durationMs: Date.now() - startedAt,
-    code: result.code, killed: result.killed, replySubmitted,
+    code: result.code, killed: result.killed, replySubmitted, isolation,
     stdout: tail(result.stdout), stderr: tail(result.stderr),
     outputTruncated: result.stdout.length > 24_000 || result.stderr.length > 24_000,
   };
@@ -245,10 +288,13 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   return {
     dispatched: true, via: plan.via, model: plan.model, sessionId: plan.sessionId, requestId: plan.requestId,
     replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs,
+    isolation,
     log: saved ? join(plan.root, sessionRelative(plan.sessionId), logPath) : null,
-    nextAction: replySubmitted
-      ? "A validated reply was submitted. Run /waicc-continue to assess it; dispatch did not assess, accept or advance the contract."
-      : `No reply was submitted (exit ${result.code}${result.killed ? ", stopped" : ""}). The handoff is still waiting: read the log, then dispatch again, use another agent, or hand it off manually.`,
+    nextAction: isolation && !isolation.applied && replySubmitted
+      ? `A reply was submitted but its code was NOT applied: ${isolation.reason} The agent's copy is kept at ${isolation.worktree}. Inspect it, then /waicc-cancel this handoff (the reply describes changes that are not in your checkout) or apply in-scope work yourself.`
+      : replySubmitted
+        ? `A validated reply was submitted${!isolation ? "" : isolation.changes.length ? ` and ${isolation.changes.length} changed file(s) were applied to your checkout` : ", but the agent changed no files; read its reply for why"}. Run /waicc-continue to assess it; dispatch did not assess, accept or advance the contract.`
+        : `No reply was submitted (exit ${result.code}${result.killed ? ", stopped" : ""}). The handoff is still waiting${isolation ? ` and nothing was applied; the agent's copy is kept at ${isolation.worktree}` : ""}: read the log, then dispatch again, use another agent, or hand it off manually.`,
   };
 }
 

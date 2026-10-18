@@ -435,8 +435,9 @@ identity, source freshness, coverage and the 256 KB limit, and writes nothing.
 `{sessionId, requestId}`, `waicc_assignment`, `waicc_validate_reply {reply}` and
 `waicc_submit_reply {reply}`. Receive applies the Pi receive rules (exactly one WAITING
 round, no reply, matching source) and additionally requires the supplied request ID to be
-that waiting round. It never accepts implementation assignments, because an external
-agent's own edit tools cannot be confined to task paths. One server process holds at
+that waiting round. It refuses implementation assignments, because an external agent's
+own edit tools cannot be confined to task paths, unless dispatch started it with
+`--implement` for an agent coding in an isolated worktree (see below). One server process holds at
 most one pin and never retargets. Validation and submission use the same engine as
 `waicc_reply`; tool failures return `isError` results so the agent can correct and retry.
 `--session <id> --request <id>` restricts a server to one request. Planning and review
@@ -445,8 +446,22 @@ an invalid `proposedContract` error is prefixed `proposedContract:` and repeats 
 
 `/waicc-dispatch` and `waicc dispatch` are explicit human actions. They accept only a
 single WAITING planning, review or advisor round, or an implementation round with
-`--implement` and `--via pi`, with no reply, unchanged source and no unfinished dispatch
-for that round. Testing rounds are refused: their checks need interactive confirmation. A `dispatch/<id>/start.json` artifact is committed
+`--implement` (Pi, Claude or Codex), with no reply, unchanged source and no unfinished
+dispatch for that round. Testing rounds are refused: their checks need interactive confirmation.
+
+Claude and Codex implementation runs in an isolated Git worktree. Dispatch stages exactly
+the fingerprinted files into a temporary index, writes a snapshot commit on no branch
+(`commit-tree`, parent HEAD when one exists), adds a detached worktree outside the project
+without checkout and copies the checkout's own bytes into it, so line-ending settings
+cannot alter the copy; the checkout and its index are untouched. The agent's MCP server is
+started with `--implement`, which allows receiving that one implementation request, and
+`waicc_read_input` serves the assignment's inputs to an agent outside the project. After
+the run, `git add -A` in the worktree and `diff --cached --name-status --no-renames`
+against the snapshot list added, modified and deleted files; ignored output is excluded.
+Changes are applied under the writer lock only if a reply exists, every path passes the
+task allowedPaths check and the checkout fingerprint still equals the snapshot's; the
+changed files are then copied (or deleted) and the worktree removed. Otherwise nothing is
+applied and the worktree is kept; `result.json` records the changes, outcome and reason. A `dispatch/<id>/start.json` artifact is committed
 before launch: agent, model, program, arguments, start time and timeout. An unfinished
 start blocks another dispatch until its result is recorded or its timeout plus two
 minutes passes. The agent runs at project root with stdin closed and is killed with its
