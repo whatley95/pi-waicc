@@ -828,6 +828,10 @@ npm run check
 node src/cli.ts --help
 ```
 
+A clone runs the TypeScript sources directly. Packed or installed copies run the
+compiled `waicc` bin from `dist/` (`npm run build`, also run by `prepack`), because
+Node does not strip types from files under `node_modules`.
+
 The automated suite covers contract and dependency validation, reply identity and
 freshness, crash recovery, writer locks, path boundaries, Git/SVN evidence, memory,
 exports, recipient pin/resume/tool boundaries, and actual Pi 1.2.0 extension loading
