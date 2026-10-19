@@ -385,7 +385,8 @@ function grantImplementation(s: Session, c: Contract, source: string, origin: No
     limits: "Human authorization for the exact plan only. Decision gates, scope and host permissions remain in force; no installs, production actions, commits, pushes or deployment are implied." });
 }
 /** Explicit human transition; a PASS is evidence, never an implicit grant. */
-export function beginDevelopment(cwd: string, id: string, owner?: "main" | "delegate"): Session {
+/** `origin` records how the human authorized it: /waicc-develop, or --develop typed on a planning dispatch. */
+export function beginDevelopment(cwd: string, id: string, owner?: "main" | "delegate", origin: "human-develop" | "human-dispatch-develop" = "human-develop"): Session {
   const root = projectRoot(cwd);
   ensure(owner === undefined || ["main", "delegate"].includes(owner), "Invalid implementation owner");
   return withLock(root, () => {
@@ -403,7 +404,7 @@ export function beginDevelopment(cwd: string, id: string, owner?: "main" | "dele
     s.planApproval = { contractVersion: s.contractVersion, requirementsDigest: v.requirementsDigest,
       requestId: specPass ? s.reviewApproval!.requestId : acceptedRequestId! };
     const files: Record<string, string> = {};
-    grantImplementation(s, v.contract, source.fingerprint, "human-develop", files);
+    grantImplementation(s, v.contract, source.fingerprint, origin, files);
     s.status = decisionSummary(v.contract).openGates ? "IMPLEMENTATION_GATED" : "READY_TO_IMPLEMENT";
     return commit(root, s, "development.authorized-by-human", files);
   });

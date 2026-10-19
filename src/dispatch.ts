@@ -27,7 +27,8 @@ export const effortLevels: Record<Agent, string[]> = {
  * within task paths; Claude and Codex edit an isolated worktree whose changes are checked first.
  * Testing needs at least one --check the human pre-approves. */
 const dispatchModes: Mode[] = ["planning", "review", "advisor"];
-const checkModes: Mode[] = ["implementation", "testing"];
+/** Reviewers stay read-only: their checks are the human's exact commands, run by WAICC. */
+const checkModes: Mode[] = ["implementation", "testing", "review"];
 
 export interface DispatchOptions {
   via: Agent;
@@ -41,8 +42,14 @@ export interface DispatchOptions {
   checks?: CheckCommand[];
   /** Pi only: run the /waicc-continue step when a valid reply arrives (false: --no-continue). */
   continue?: boolean;
-  /** Pi only: review → fix → re-review cycles for a code review, at most this many. */
+  /** Pi only: assess → revise → re-dispatch cycles, for a planning handoff or a code review. */
   loop?: number;
+  /** Pi only: when a planning handoff's plan is accepted, authorize development, as /waicc-develop. */
+  develop?: boolean;
+  /** Pi only, with develop: when the main agent requests the code review, dispatch it as a review loop. */
+  review?: boolean;
+  /** The profile for that review; otherwise the review role's profile. */
+  reviewWith?: string;
 }
 /** Default and largest number of automatic review cycles. */
 export const loopCycles = { default: 3, max: 8 };
@@ -82,6 +89,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   const commands: string[] = [];
   let checkMinutes: number | undefined;
   let profile: string | undefined;
+  let auto = false;
   let first = 0;
   if (words[0] !== undefined && !words[0].startsWith("-")) {
     profile = words[0];
@@ -90,8 +98,11 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   }
   for (let i = first; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
-    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue") {
+    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review" || flag === "--auto") {
       if (flag === "--implement") options.implement = true;
+      else if (flag === "--auto") auto = true;
+      else if (flag === "--develop") options.develop = true;
+      else if (flag === "--review") options.review = true;
       else options.continue = flag !== "--no-continue"; // -c is short for --continue.
       i -= 1; // A switch takes no value.
       continue;
@@ -99,7 +110,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
     if (flag === "--loop") {
       // An optional cycle count follows; otherwise the default.
       const count = /^\d+$/.test(value ?? "") ? Number(value) : undefined;
-      ensure(count === undefined || (count >= 1 && count <= loopCycles.max), `--loop takes 1–${loopCycles.max} review cycles`);
+      ensure(count === undefined || (count >= 1 && count <= loopCycles.max), `--loop takes 1–${loopCycles.max} cycles`);
       options.loop = count ?? loopCycles.default;
       if (count === undefined) i -= 1;
       continue;
@@ -110,6 +121,15 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
       options.via = value as Agent;
     } else if (flag === "--model" || flag === "-m") {
       options.model = modelName(value);
+    } else if (flag === "--plan-with") {
+      // The planning profile, the same as naming it first; given once.
+      ensure(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value), "--plan-with takes an agent profile name");
+      ensure(profile === undefined || profile === value, "Give the planning profile once: first, or with --plan-with");
+      profile = value;
+    } else if (flag === "--review-with") {
+      ensure(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value), "--review-with takes an agent profile name");
+      options.reviewWith = value;
+      options.review = true;
     } else if (flag === "--effort") {
       options.effort = effortName(value);
     } else if (flag === "--timeout") {
@@ -121,13 +141,15 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
     } else ensure(false, `Unknown dispatch option ${flag}`);
   }
   if (commands.length) options.checks = checkCommands(commands, checkMinutes);
+  // --auto: plan until accepted, develop, then review until it passes; a typed --loop keeps its count.
+  if (auto) Object.assign(options, { develop: true, review: true, loop: options.loop ?? loopCycles.default });
   return { profile, options, checkMinutes };
 }
 
 /** Explicit settings only: --via is required and no agent profile is consulted. */
 export function dispatchOptions(input: string | string[]): DispatchOptions {
   const { profile, options } = parseDispatchArgs(input);
-  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]]`);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]] [--develop [--review|--review-with <profile>]] [--auto] [--plan-with <profile>]`);
   return options as DispatchOptions;
 }
 
@@ -330,7 +352,7 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
       );
     }
     const checks = options.checks ?? [];
-    ensure(!checks.length || checkModes.includes(r.mode), "--check applies only to testing and implementation handoffs");
+    ensure(!checks.length || checkModes.includes(r.mode), "--check applies only to testing, implementation and review handoffs");
     ensure(!checks.length || options.via !== "agy", "Antigravity uses its own MCP configuration and cannot receive pre-approved checks.");
     const dir = roundDirectory(r);
     const replyPath = safePath(root, `${sessionRelative(s.id)}/${dir}/reply.json`);

@@ -139,7 +139,7 @@ test("the loop stops when the same findings return, when no fresh review is requ
   assert.equal(b.loopMessages().length, 0);
   assess(stalled.root, stalled.id, { requestId: loadSession(stalled.root, stalled.id).rounds.at(-1)!.id, decision: "needs_changes", rationale: "F1 needs the human", dispositions: [] });
   await b.turnEnds();
-  assert.match(b.loopMessages().at(-1)!, /did not request a fresh review, so something needs you/);
+  assert.match(b.loopMessages().at(-1)!, /did not ask for a fresh review, so something needs you/);
 
   const capped = reviewWaiting(t);
   const c = harness(capped.root, [answer([{ id: "F1", description: "Missing account check" }])]);
@@ -169,8 +169,9 @@ test("--continue assesses automatically; --loop needs a code review; --stop ends
   prepare(planning, p.id, scope, "planning", "Plan", 0);
   const ph = harness(planning, []);
   await ph.use(p.id);
-  await ph.dispatch("--via codex --loop");
-  assert.match(ph.notices.at(-1)!, /--loop runs review → fix → re-review cycles, so it needs a waiting code review/);
+  // --review needs --develop, and --develop needs a planning handoff; nothing is dispatched.
+  await ph.dispatch("--via codex --loop --review");
+  assert.match(ph.notices.at(-1)!, /--review continues a planning run through development into the code review, so it needs --develop/);
   assert.equal(ph.dispatched(), 0);
 
   const stopping = reviewWaiting(t);
