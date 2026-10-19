@@ -473,6 +473,22 @@ override the profile, and typed `--check` replaces the role's checks. A config c
 grant `--implement`. Role checks from the project file must be confirmed: Pi shows them
 in a dialog and refuses without UI; the CLI requires `--confirm-checks`.
 
+`--continue` (or a user-file `"autoContinue": true`; `--no-continue` overrides; a project
+file that sets it is rejected) runs the ordinary continue step after a dispatch whose reply
+exists: intake validation, then the main agent's assessment prompt, delivered as a
+follow-up after any current turn. The dispatch is released before that prompt is sent and
+the prompt is not awaited, so the main agent's turn runs on its own. `--loop [1–8]`
+(default 3; implies `--continue`; Pi only) requires a waiting code review. Each assessment
+prompt carries a loop note: fix ALL actionable findings inside authorized scope, run checks,
+request ONE fresh whole-change code review in the same turn, or explain and stop when a
+finding needs a human, is disputed, blocked or out of scope; never close, commit, push or
+deploy. On each `agent_end` while the loop is assessing: a still-`AWAITING_ASSESSMENT`
+session keeps waiting; `READY_TO_CLOSE` or `contractReview: PASS` ends the loop as passed; a
+new WAITING review is dispatched with the same options if cycles remain, or left waiting at
+the limit; anything else ends the loop for the human. A reply whose finding descriptions
+equal the previous cycle's ends the loop, and that reply is assessed without the loop note.
+No reply, a launch error or `--stop` ends it too. Loop state lives in the Pi process.
+
 Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
 ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
 dropped from the change list, and removal unlinks each folder (removing only the link)

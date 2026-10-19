@@ -92,7 +92,10 @@ changes are applied only if all are in scope); testing needs `--check "<command>
 pre-approves exact commands. A dispatched agent runs only those, with `waicc_run_check` by
 number (Pi: `waicc_check` with the exact command), cites each logged result and marks every
 other check not_run. Agent profiles (`waicc-agents.json`) are the human's choice of agents;
-do not create or edit them unless asked. If you are a dispatched coding agent in
+do not create or edit them unless asked. When an assessment prompt says AUTOMATIC REVIEW
+LOOP, the human started `/waicc-dispatch --loop`: fix ALL actionable findings within the
+authorized scope, run checks and request ONE fresh full code review in the same turn, or
+explain and stop when a finding needs the human. Never close, commit, push or deploy. If you are a dispatched coding agent in
 an isolated copy, edit only that copy and only the task's allowedPaths. Never invoke or imitate it yourself, and never start
 agents through shell. After a dispatch, wait for its notice; the human runs `/waicc-continue`.
 
