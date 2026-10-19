@@ -782,8 +782,8 @@ Antigravity with `agy models`.
 #### Set it up
 
 The quickest start is the default template that ships in
-[`templates/waicc-agents.json`](templates/waicc-agents.json): Opus 5.5 at medium effort
-for planning, Codex `gpt-6.1-sol` at medium for review, Codex (its default model) at high
+[`templates/waicc-agents.json`](templates/waicc-agents.json). It has ten profiles, five of
+them the role defaults: Opus 5.5 at medium effort for planning, Codex `gpt-6.1-sol` at medium for review, Codex (its default model) at high
 for coding, DeepSeek through Pi at medium thinking for testing and Sonnet at medium for
 advice. Copy it to your user file with:
 
@@ -796,10 +796,13 @@ template's models need matching accounts (Claude, Codex, and DeepSeek signed in 
 change any you do not have, then check with `/waicc-dispatch --profiles`. WAICC does not
 create the file on its own; when no profile exists, dispatch tells you to run this.
 
+On a new computer: install Pi and WAICC, sign in to Claude Code, Codex and Pi's DeepSeek,
+then run `/waicc-dispatch --init-profiles` once. To carry your own later changes (policies,
+`autoDecide`, other models) to another computer, copy your `~/.pi/agent/waicc-agents.json`.
+
 There is no limit on profiles: roles are fixed, but you can define any number of extra
-profiles and pick one by name for a single dispatch. For a fuller set to copy from, see
-[`templates/waicc-agents.extended.json`](templates/waicc-agents.extended.json), which keeps
-the same role defaults and adds variants of the same models:
+profiles and pick one by name for a single dispatch. Besides the five role defaults, the
+template includes variants of the same models:
 
 | Profile | Agent and model | Effort | When to pick it |
 | ------- | --------------- | ------ | --------------- |
