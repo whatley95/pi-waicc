@@ -609,8 +609,15 @@ sent back to the planner automatically, until the plan is accepted (`PLAN_READY`
 ```
 
 - **Each stage uses its own role's profile**, so planning and review run on different models:
-  your `planning` and `review` roles in the agent config. `--review-with <profile>` picks
-  another profile for the review, for example `--review-with sol-ultra`.
+  your `planning` and `review` roles in the agent config. Choose either for one run:
+  `--plan-with <profile>` (or name the profile first) for planning, `--review-with <profile>`
+  for the review.
+- **`--auto` is short for `--loop 3 --develop --review`**; a typed `--loop 5` keeps its count.
+
+  ```text
+  /waicc-dispatch --auto                                          # opus plans, sol reviews
+  /waicc-dispatch --auto --plan-with opus-max --review-with sol-ultra
+  ```
 - **`--develop` is your approval of the plan, given in advance for this run.** Without it the
   run stops at `PLAN_READY` and you run `/waicc-develop` yourself, after reading the plan.
   It is recorded as authorized by `--develop` on the dispatch.
@@ -1009,6 +1016,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch [profile] --continue` (or `-c`)  | Run the continue step automatically when a valid reply arrives (`--no-continue` to skip once) |
 | `/waicc-dispatch [profile] --loop [cycles]`      | Code review → fix → re-review until it passes, or plan → assess → revise until accepted; at most 3 cycles by default; never closes |
 | `/waicc-dispatch --loop 3 --develop [--review]`  | Plan until accepted, start development, then review with your review profile until it passes |
+| `/waicc-dispatch --auto [--plan-with p] [--review-with p]` | Short for `--loop 3 --develop --review`, choosing each stage's profile |
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
