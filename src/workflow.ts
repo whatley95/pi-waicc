@@ -422,7 +422,7 @@ export function decisionsView(cwd: string, id: string) {
 export function openDecisionsText(c: Contract): string {
   const open = (c.decisions ?? []).filter((d) => d.status !== "resolved");
   return open.length
-    ? `Open decisions: ${open.map((d) => `${d.id} (${d.owner}): ${d.question}`).join("; ")}. Use /waicc-decide <ID> <answer>, or /waicc-decide alone to pick one.`
+    ? `Open decisions: ${open.map((d) => `${d.id} (${d.owner}): ${d.question}`).join("; ")}. Use /waicc-decide <ID> <answer>, /waicc-decide <ID> recommended, or /waicc-decide alone to pick one.`
     : "There are no open decisions; /waicc-decisions shows them all.";
 }
 
