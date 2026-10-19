@@ -6,6 +6,7 @@ import { loadSession } from "./files.ts";
 import { agentEffort, agents, checkCommands, effortName, minutes, modelName, parseDispatchArgs, type Agent, type DispatchOptions } from "./dispatch.ts";
 import { projectRoot } from "./source.ts";
 import { ensure, record } from "./validation.ts";
+import { consultLimit } from "./consult.ts";
 import type { Mode } from "./types.ts";
 
 /** Which agent and model a dispatch uses: set once, picked by the waiting handoff's role. */
@@ -30,6 +31,8 @@ export interface AgentConfig {
   policies: string[];
   /** User file only: accept recommendations for low-risk, reversible, non-sensitive decisions. */
   autoDecide: "off" | "low-risk";
+  /** User file only: how many times per Pi chat the main agent may ask the advisor on its own; 0 is off. */
+  autoAdvisor: number;
   profiles: Record<string, AgentProfile & { source: Source }>;
   roles: Partial<Record<Mode, RoleChoice & { source: Source }>>;
   files: { user: string; project: string; found: Source[] };
@@ -70,9 +73,9 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies" and "autoDecide" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide" and "autoAdvisor" are allowed'));
   // Settings that let WAICC act for you are yours alone: a repository must not grant them.
-  for (const key of ["policies", "autoDecide"])
+  for (const key of ["policies", "autoDecide", "autoAdvisor"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
   if (config.policies !== undefined) {
     ensure(Array.isArray(config.policies) && config.policies.length <= 20, at('"policies" must be a list of at most 20 rules'));
@@ -84,6 +87,15 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   if (config.autoDecide !== undefined) {
     ensure(config.autoDecide === "off" || config.autoDecide === "low-risk", at('"autoDecide" must be "off" or "low-risk"'));
     into.autoDecide = config.autoDecide;
+  }
+  if (config.autoAdvisor !== undefined) {
+    const value = config.autoAdvisor;
+    const count = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>).maxPerChat : undefined;
+    ensure(
+      typeof value === "boolean" || (Object.keys(value as object).every((key) => key === "maxPerChat") && Number.isInteger(count) && (count as number) >= 0 && (count as number) <= consultLimit.max),
+      at(`"autoAdvisor" must be true, false or { "maxPerChat": 0–${consultLimit.max} }`),
+    );
+    into.autoAdvisor = typeof value === "boolean" ? (value ? consultLimit.default : 0) : (count as number);
   }
   if (config.autoContinue !== undefined) {
     // A repository must not make your coordinator start assessments on its own.
@@ -122,7 +134,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -183,6 +195,7 @@ export function profilesView(cwd: string) {
     autoContinue: config.autoContinue,
     policies: config.policies,
     autoDecide: config.autoDecide,
+    autoAdvisor: config.autoAdvisor ? { maxPerChat: config.autoAdvisor, profile: config.roles.advisor?.profile ?? "not set: no advisor role" } : "off",
     files: {
       user: { path: config.files.user, found: config.files.found.includes("user") },
       project: { path: config.files.project, found: config.files.found.includes("project") },
@@ -208,4 +221,21 @@ export function decisionSettings(cwd: string): Pick<AgentConfig, "policies" | "a
 export function policyGuidance(policies: string[]): string {
   if (!policies.length) return "";
   return `The human's standing policies, their own rules given in advance:\n${policies.map((policy, i) => `${i + 1}. ${policy}`).join("\n")}\nWhen an OPEN human-owned decision is clearly and fully answered by one of these, record it with waicc_apply_policy: cite the policy number, give an answer that follows the policy exactly, and explain why it applies. Never stretch a policy beyond what it says, never combine policies to invent an answer, and never use one for an external decision. If a policy only partly fits, ask the human instead.`;
+}
+
+/** What the main agent's own advisor questions use: the advisor role's profile, within your per-chat limit. */
+export function consultSettings(cwd: string): { limit: number; profile: string | null; options: DispatchOptions | null; hint: string } {
+  const config = loadAgentConfig(cwd);
+  const role = config.roles.advisor;
+  const profile = role ? config.profiles[role.profile] : undefined;
+  return {
+    limit: config.autoAdvisor,
+    profile: role?.profile ?? null,
+    options: profile
+      ? { via: profile.via, ...(profile.model ? { model: profile.model } : {}), ...(profile.effort ? { effort: profile.effort } : {}), ...(profile.timeoutMinutes ? { timeoutMinutes: profile.timeoutMinutes } : {}) }
+      : null,
+    hint: config.autoAdvisor === 0
+      ? `Asking the advisor on your own is off ("autoAdvisor" in ${config.files.user}).`
+      : `No advisor role is set. Set roles.advisor in ${config.files.user}.${config.files.found.length ? "" : ` ${initHint}.`}`,
+  };
 }
