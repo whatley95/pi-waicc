@@ -570,7 +570,7 @@ handoff's role:
 /waicc-dispatch                    # review handoff   → your review profile
 /waicc-dispatch --implement        # coding still needs --implement every time
 /waicc-dispatch deepseek           # use another profile once
-/waicc-dispatch --model sonnet     # or override one setting once
+/waicc-dispatch --effort high      # or override one setting once (also --model)
 /waicc-dispatch --profiles         # show what each role resolves to
 ```
 
@@ -589,8 +589,10 @@ vary with project size, models and pricing.
 | `testing`        | Claude (Sonnet or Haiku) with `checks` | The tester mainly runs approved checks and reads their output (Sonnet: 52 s, about $0.19) |
 | `advisor`        | A cheaper model through Pi (for example DeepSeek) | Focused questions rarely need the strongest model |
 
-Model names change; list yours with `claude --help` (aliases such as `opus`, `sonnet`,
-`haiku`), Codex's `-m` names, `pi --list-models` or `agy models`.
+Model names change. Claude accepts aliases (`opus`, `sonnet`, `haiku`, always the latest)
+or exact IDs such as `claude-opus-5-5`; Codex lists its models and their effort levels in
+`~/.codex/models_cache.json` (for example `gpt-6.1-sol`); Pi lists with `pi --list-models`;
+Antigravity with `agy models`.
 
 #### Set it up
 
@@ -604,13 +606,13 @@ Create either file, or both:
 ```json
 {
   "profiles": {
-    "claude":   { "via": "claude", "model": "opus" },
+    "opus":     { "via": "claude", "model": "claude-opus-5-5", "effort": "medium" },
     "sonnet":   { "via": "claude", "model": "sonnet" },
-    "codex":    { "via": "codex",  "model": "gpt-5.5", "timeoutMinutes": 45 },
-    "deepseek": { "via": "pi",     "model": "deepseek/deepseek-v4-pro" }
+    "codex":    { "via": "codex",  "model": "gpt-6.1-sol", "effort": "medium", "timeoutMinutes": 45 },
+    "deepseek": { "via": "pi",     "model": "deepseek/deepseek-v4-pro", "effort": "high" }
   },
   "roles": {
-    "planning":       "claude",
+    "planning":       "opus",
     "review":         "codex",
     "implementation": "codex",
     "advisor":        "deepseek",
@@ -619,12 +621,23 @@ Create either file, or both:
 }
 ```
 
-- A **profile** has `via` (`claude`, `codex`, `pi` or `agy`), optional `model` and optional
-  `timeoutMinutes` (1–120). A **role** is `planning`, `review`, `advisor`,
+- A **profile** has `via` (`claude`, `codex`, `pi` or `agy`), and optionally `model`,
+  `effort` and `timeoutMinutes` (1–120). A **role** is `planning`, `review`, `advisor`,
   `implementation` or `testing`, set to a profile name or to `{ profile, checks,
   checkTimeoutMinutes }`.
+- **`effort`** is passed as each agent's own reasoning setting, checked against that agent's
+  levels before anything runs. A model may support fewer levels than its agent (Codex
+  lists each model's levels in its models cache). Omit it to use the agent's default.
+
+  | `via`    | Becomes                          | Levels |
+  | -------- | -------------------------------- | ------ |
+  | `claude` | `--effort <level>`               | low, medium, high, xhigh, max |
+  | `codex`  | `-c model_reasoning_effort=…`    | minimal, low, medium, high, xhigh, max, ultra |
+  | `pi`     | `--thinking <level>`             | off, minimal, low, medium, high, xhigh, max |
+  | `agy`    | `--effort <level>`               | low, medium, high |
+
 - Typed options win: a profile name you type replaces the role's profile, and `--via`,
-  `--model`, `--timeout` or `--check` replace that setting. A role's `checks` apply whichever
+  `--model`, `--effort`, `--timeout` or `--check` replace that setting. A role's `checks` apply whichever
   profile runs it, unless you type `--check`.
 - Unknown fields, agents, roles or undefined profiles are reported with the file and field.
   `/waicc-dispatch --profiles` (CLI: `waicc profiles`) shows both files, every profile and

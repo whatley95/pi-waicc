@@ -464,7 +464,7 @@ confirmation, which a headless run cannot give. Antigravity cannot receive check
 
 Agent profiles are read from `$PI_CODING_AGENT_DIR/waicc-agents.json` (default
 `~/.pi/agent`) and then `<project>/.pi/waicc-agents.json`, which wins for any profile or role
-both define. The only keys are `profiles` (`name → {via, model?, timeoutMinutes?}`) and
+both define. The only keys are `profiles` (`name → {via, model?, effort?, timeoutMinutes?}`, effort mapped to Claude `--effort`, Codex `model_reasoning_effort`, Pi `--thinking` or Antigravity `--effort` and checked against that agent's levels) and
 `roles` (`planning|review|advisor|implementation|testing → name | {profile, checks?,
 checkTimeoutMinutes?}`); anything else, an unknown agent or an undefined profile is
 rejected with its file. Dispatch arguments may start with a profile name; with no name
