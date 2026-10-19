@@ -301,3 +301,45 @@ test("human decision answer bounds do not produce an invalid or truncated canoni
   assert.ok(c.decisions![0].evidence.at(-1)!.length < 300);
   assert.equal(decided.deliveryVerified, false);
 });
+
+test("/waicc-decide forgives a missing or mistyped ID, and alone lets the human pick and type the answer", async (t) => {
+  // IDs match regardless of case; an unknown one lists the open decisions and the exact command.
+  const lower = fixture(t, true, true);
+  const sl = accept(lower.root, answer(lower.root, lower.s));
+  resolveDecision(lower.root, sl.id, "d1", "Keep policy");
+  assert.equal(readContract(lower.root, sl.id).contract.decisions![0].answer, "Keep policy");
+  const unknown = fixture(t, true, true);
+  const su = accept(unknown.root, answer(unknown.root, unknown.s));
+  assert.throws(() => resolveDecision(unknown.root, su.id, "Reachability", "confirmed"),
+    /Unknown decision ID "Reachability"\. Open decisions: D1 \(external\): Which backend policy\?\. Use \/waicc-decide <ID> <answer>, or \/waicc-decide alone to pick one\./);
+
+  // Without a dialog: say what is wrong and what to type, recording nothing.
+  const h = harness(unknown.root);
+  await h.commands.get("waicc-use").handler(su.id, h.ctx);
+  await h.commands.get("waicc-decide").handler("Reachability confirmed with controls", h.ctx);
+  assert.match(h.notices.at(-1)!, /"Reachability" is not an open decision ID\. Open decisions: D1 \(external\)/);
+  await h.commands.get("waicc-decide").handler("", h.ctx);
+  assert.match(h.notices.at(-1)!, /^Usage: \/waicc-decide <decision-id> <answer>\. Open decisions: D1/);
+  await h.commands.get("waicc-decide").handler("D1", h.ctx);
+  assert.match(h.notices.at(-1)!, /Add your answer: \/waicc-decide D1 <answer>/);
+  assert.equal(readContract(unknown.root, su.id).contract.decisions![0].status, "open");
+
+  // With a dialog: an answer typed without its ID is confirmed for the only open decision.
+  const asked: string[] = [];
+  const ui = (choice: { confirm: boolean; typed?: string }) => ({ ...h.ctx, hasUI: true, ui: {
+    notify: (m: string) => h.notices.push(m),
+    confirm: async (title: string, message: string) => (asked.push(`${title} ${message}`), choice.confirm),
+    select: async (title: string, options: string[]) => (asked.push(`${title} ${options.join("|")}`), options[0]),
+    input: async (title: string, placeholder: string) => (asked.push(`${title} ${placeholder}`), choice.typed),
+  } }) as unknown as ExtensionCommandContext;
+  await h.commands.get("waicc-decide").handler("Keep the current policy", ui({ confirm: false }));
+  assert.match(asked.at(-1)!, /^Record this as the answer to D1\? Which backend policy\?/);
+  assert.equal(readContract(unknown.root, su.id).contract.decisions![0].status, "open", "declined: nothing recorded");
+
+  // Alone: pick the decision, see the recommendation, type the answer.
+  await h.commands.get("waicc-decide").handler("", ui({ confirm: true, typed: "Keep the current policy" }));
+  assert.match(asked.at(-2)!, /^Which decision are you answering\? D1 \(external\): Which backend policy\?/);
+  assert.match(asked.at(-1)!, /^D1: Which backend policy\? Recommended: Retain existing account-isolation policy/);
+  const d1 = readContract(unknown.root, su.id).contract.decisions![0];
+  assert.deepEqual([d1.status, d1.answer], ["resolved", "Keep the current policy"]);
+});
