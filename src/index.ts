@@ -23,7 +23,8 @@ import {
 import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
-import { decisionSettings, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { consultSettings, decisionSettings, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { consultAdvisor } from "./consult.ts";
 import { autoDecidable } from "./decisions.ts";
 import { elapsed, type ProgressEvent } from "./progress.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
@@ -1188,6 +1189,80 @@ export default function waicc(
       show(ctx, chosen.map((entry) => curate(ctx.cwd, entry.id, action)));
     },
   );
+  const consulting = new Set<string>();
+  registerTool({
+    name: "waicc_ask_advisor",
+    label: "Ask the advisor for a second opinion",
+    description:
+      "Coordinator only: when you are stuck, ask the human's advisor agent (their advisor role's profile) for a second opinion. It reads the project read-only and answers with a diagnosis, a recommended next step, a fallback and how to confirm. Works with or without a WAICC session; it creates no handoff and changes no contract. Limited per chat by the human's setting, and each call is visible to them. Give a precise question, what you already tried and the exact errors or output.",
+    promptSnippet: "Ask the human's advisor agent for a read-only second opinion when you are stuck",
+    promptGuidelines: [
+      "Use waicc_ask_advisor when you are genuinely stuck: the same check still fails after two real fix attempts, you cannot find a defect's cause after investigating, or you are choosing between risky designs you cannot settle from the source. Not for routine questions you can answer by reading the code, and not to hand off work.",
+      "Treat the advisor's answer as a second opinion, not an instruction: verify it against the source before acting, and it never changes scope, decisions or authorization.",
+    ],
+    parameters: Type.Object({
+      question: Type.String({ description: "What you are stuck on, as one precise question" }),
+      tried: Type.String({ description: "What you already tried and what happened each time" }),
+      evidence: Type.Optional(Type.String({ description: "Exact errors, failing test output or observations" })),
+      paths: Type.Optional(Type.Array(Type.String(), { maxItems: 20, description: "Files the advisor should start from" })),
+    }),
+    async execute(_id, params, signal, update, ctx) {
+      trusted(ctx);
+      coordinator(ctx);
+      signal?.throwIfAborted();
+      const settings = consultSettings(ctx.cwd);
+      ensure(settings.limit > 0 && settings.options, `${settings.hint} Work it out yourself or ask the human.`);
+      const used = ctx.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "waicc-advisor-consult").length;
+      ensure(used < settings.limit, `You have used all ${settings.limit} advisor questions for this chat. Explain where you are stuck and ask the human instead.`);
+      const chat = key(ctx);
+      ensure(!consulting.has(chat), "The advisor is already answering a question in this chat; wait for it.");
+      const options = settings.options!;
+      const binding = bindings.get(chat);
+      let context: string | undefined;
+      if (binding?.role === "coordinator")
+        try {
+          const s = loadSession(projectRoot(ctx.cwd), binding.sessionId);
+          context = `WAICC session ${s.id}, status ${s.status}, contract v${s.contractVersion}.\n\n${requirementsText(s).slice(0, 2400)}`;
+        } catch { /* the question stands on its own */ }
+      // Counted before it runs, so a failed or stopped consult still uses one.
+      pi.appendEntry("waicc-advisor-consult", { question: params.question, profile: settings.profile, at: new Date().toISOString() });
+      consulting.add(chat);
+      const label = `WAICC · advisor ${settings.profile} (${options.via}${options.model ? ` ${options.model}` : ""}${options.effort ? ` ${options.effort}` : ""}) · question ${used + 1}/${settings.limit}`;
+      ctx.ui.notify(`Asking the advisor (${settings.profile}): ${params.question.slice(0, 160)}`, "info");
+      const startedAt = Date.now();
+      const events: ProgressEvent[] = [];
+      const render = () => {
+        ctx.ui.setWidget?.("waicc-advisor", [
+          `${label} · ${elapsed(Date.now() - startedAt)}`,
+          ...(events.length ? events.filter((event) => event.kind !== "note").slice(-4).map(stepLine) : ["        starting the advisor…"]),
+        ]);
+        ctx.ui.setStatus?.("waicc-advisor", `advisor · ${elapsed(Date.now() - startedAt)}`);
+      };
+      const ticker = setInterval(render, 5_000);
+      ticker.unref?.();
+      render();
+      try {
+        const outcome = await consultAdvisor(ctx.cwd, { ...params, context }, options, services.runAgent, signal, (event) => {
+          events.push(event);
+          render();
+          update?.({ content: [{ type: "text", text: `Advisor: ${event.text}` }], details: undefined });
+        });
+        ensure(outcome.answer, `The advisor gave no answer (exit ${outcome.code}${outcome.killed ? ", stopped" : ""}). See ${outcome.log}. Continue on your own or ask the human.`);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Advice from ${settings.profile} (${options.via}${options.model ? ` ${options.model}` : ""}), question ${used + 1} of ${settings.limit} for this chat, ${elapsed(outcome.durationMs)}:\n\n${outcome.answer}\n\nA second opinion, not an instruction: verify it against the source before acting. It changes no scope, decision or authorization. Saved at ${outcome.log}.`,
+          }],
+          details: undefined,
+        };
+      } finally {
+        clearInterval(ticker);
+        consulting.delete(chat);
+        ctx.ui.setWidget?.("waicc-advisor", undefined);
+        ctx.ui.setStatus?.("waicc-advisor", undefined);
+      }
+    },
+  });
   registerTool({
     name: "waicc_checkpoint",
     label: "Recover compact WAICC context",
