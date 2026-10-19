@@ -31,7 +31,7 @@ import {
 import { advisorInput, ensure } from "./validation.ts";
 import { checkCommand } from "./checks.ts";
 import { commandText, dispatch, maxCheckMs } from "./dispatch.ts";
-import { profilesView, resolveDispatch } from "./profiles.ts";
+import { initAgentConfig, profilesView, resolveDispatch } from "./profiles.ts";
 import { serveMcp } from "./mcp.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
@@ -95,7 +95,8 @@ try {
       break;
     }
     case "profiles":
-      output = profilesView(cwd);
+      ensure(!id || id === "init", "Usage: waicc profiles [init]");
+      output = id === "init" ? initAgentConfig() : profilesView(cwd);
       break;
     case "start": {
       const delegated = id === "--delegate";
@@ -249,7 +250,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | profiles | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | profiles [init] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));

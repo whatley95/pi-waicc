@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -211,4 +211,27 @@ test("profiles set each agent's effort, typed --effort overrides it, and every a
   assert.throws(() => resolveDispatch(root, id, "--effort LOUD"), /Invalid effort level/);
   const bad = project(t, { user: { profiles: { x: { via: "agy", effort: "max" } } } });
   assert.throws(() => loadAgentConfig(bad.root), /profile x: effort for agy must be one of low, medium, high/);
+});
+
+test("the shipped template is a valid default for every role, and init never replaces a file", async (t) => {
+  const { root, agentDir, id } = project(t);
+  assert.throws(() => resolveDispatch(root, id, ""), /--init-profiles \(CLI: waicc profiles init\)/);
+  const { initAgentConfig, templateConfigPath } = await import("../src/profiles.ts");
+  const created = initAgentConfig();
+  assert.equal(created.created, true);
+  assert.equal(created.path, join(agentDir, "waicc-agents.json"));
+  assert.equal(readFileSync(created.path, "utf8"), readFileSync(templateConfigPath(), "utf8"));
+  const config = loadAgentConfig(root);
+  assert.deepEqual(Object.keys(config.roles).sort(), ["advisor", "implementation", "planning", "review", "testing"]);
+  assert.equal(resolveDispatch(root, id, "").options.via, "claude", "planning works straight from the template");
+
+  writeFileSync(created.path, JSON.stringify({ profiles: { mine: { via: "pi" } }, roles: { planning: "mine" } }));
+  const again = initAgentConfig();
+  assert.equal(again.created, false);
+  assert.match(readFileSync(created.path, "utf8"), /"mine"/, "an existing file is left unchanged");
+
+  const cli = spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, "profiles", "init"], {
+    encoding: "utf8", windowsHide: true, env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+  });
+  assert.equal(JSON.parse(cli.stdout).created, false);
 });
