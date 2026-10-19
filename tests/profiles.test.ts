@@ -90,7 +90,7 @@ test("the project file wins over the user file, and nothing chosen names both fi
 test("agent configs are validated strictly, and can never grant --implement", (t) => {
   const cases: [unknown, RegExp][] = [
     ["{ not json", /is not valid JSON/],
-    [{ agents: {} }, /only "profiles" and "roles" are allowed/],
+    [{ agents: {} }, /only "profiles", "roles" and "autoContinue" are allowed/],
     [{ profiles: { x: { via: "gemini" } } }, /profile x: via must be one of claude, codex, pi, agy/],
     [{ profiles: { x: { via: "codex", implement: true } } }, /profile x allows only via, model, effort and timeoutMinutes/],
     [{ profiles: { "bad name": { via: "codex" } } }, /profile name "bad name"/],
@@ -247,4 +247,32 @@ test("the extended example template is valid and keeps the default roles", async
     Object.fromEntries(Object.entries(JSON.parse(readFileSync(templateConfigPath(), "utf8")).roles)),
   );
   assert.deepEqual(resolveDispatch(root, id, "opus-max").options, { via: "claude", model: "claude-opus-5-5", effort: "max" });
+});
+
+test("autoContinue comes only from your user file; --continue and --no-continue win, and a loop always continues", (t) => {
+  const mine = project(t, { user: { autoContinue: true, profiles, roles: { planning: "claude" } } });
+  assert.equal(resolveDispatch(mine.root, mine.id, "").options.continue, true);
+  assert.equal(resolveDispatch(mine.root, mine.id, "--via pi").options.continue, true, "also with a typed agent");
+  assert.equal(resolveDispatch(mine.root, mine.id, "--no-continue").options.continue, false);
+  assert.equal(profilesView(mine.root).autoContinue, true);
+  const off = project(t, { user: { profiles, roles: { planning: "claude" } } });
+  assert.equal(resolveDispatch(off.root, off.id, "").options.continue, undefined);
+  assert.equal(resolveDispatch(off.root, off.id, "--continue").options.continue, true);
+  assert.deepEqual(resolveDispatch(off.root, off.id, "--loop 2").options, { via: "claude", model: "opus", loop: 2, continue: true });
+  assert.equal(resolveDispatch(off.root, off.id, "--loop").options.loop, 3);
+  assert.throws(() => resolveDispatch(off.root, off.id, "--loop 99"), /--loop takes 1–8 review cycles/);
+  const shared = project(t, { project: { autoContinue: true } });
+  assert.throws(() => loadAgentConfig(shared.root), /"autoContinue" is allowed only in your user file/);
+  const typo = project(t, { user: { autoContinue: "yes" } });
+  assert.throws(() => loadAgentConfig(typo.root), /"autoContinue" must be true or false/);
+});
+
+test("the CLI's --continue validates the reply, and --loop is refused outside Pi", (t) => {
+  const { root, agentDir, id } = project(t, { user: { profiles, roles: { planning: "claude" } } });
+  const cli = (...args: string[]) => spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, ...args], {
+    encoding: "utf8", windowsHide: true, env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+  });
+  const looped = cli("dispatch", id, "--loop");
+  assert.equal(looped.status, 1);
+  assert.match(looped.stderr, /--loop needs the main agent in Pi/);
 });
