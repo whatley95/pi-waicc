@@ -632,6 +632,12 @@ sent back to the planner automatically, until the plan is accepted (`PLAN_READY`
   review loop. `--develop` without `--loop` is a single planning cycle. `/waicc-dispatch --stop`
   ends the run at any stage. The run never closes, commits, pushes or deploys.
 
+Verified live with `/waicc-dispatch --auto`: Claude Opus 5.5 planned (accepted in one cycle),
+development started automatically, the Pi main agent (DeepSeek V4 Pro) coded the function and
+its test, and Codex `gpt-6.1-sol` reviewed automatically, running the review role's
+`node --test` check through WAICC (6/6 passed). The review passed and the run ended at
+`READY_TO_CLOSE` in under 7 minutes, without closing anything.
+
 | `--via`  | Runs                                 | Read-only enforcement                                   | Model flag              |
 | -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
 | `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP. Coding: edits in an isolated worktree, no shell | `--model opus` |
