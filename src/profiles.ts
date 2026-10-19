@@ -151,7 +151,7 @@ export function resolveDispatch(cwd: string, id: string, input: string | string[
   const config = loadAgentConfig(cwd);
   // --continue / --no-continue win; otherwise your user file's autoContinue, and a loop always continues.
   const continued = (options: Partial<DispatchOptions>): Partial<DispatchOptions> =>
-    options.continue !== undefined || options.loop ? { ...options, continue: options.continue ?? true }
+    options.continue !== undefined || options.loop || options.develop ? { ...options, continue: options.continue ?? true }
       : config.autoContinue ? { ...options, continue: true } : options;
   const needsConfig = typed.profile !== undefined || typed.options.via === undefined;
   if (!needsConfig) return { options: continued(typed.options) as DispatchOptions, mode, profile: null, confirmChecks: false };

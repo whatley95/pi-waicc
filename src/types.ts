@@ -226,7 +226,7 @@ export interface Session {
   implementationAuthorization?: {
     id: string; contractVersion: number; requirementsDigest: string; allowedPathsDigest: string;
     sourceFingerprint: string; grantedAt: string; artifactPath: string;
-    origin: "human-develop" | "human-implementation-delegation" | "human-decision-resolution";
+    origin: "human-develop" | "human-dispatch-develop" | "human-implementation-delegation" | "human-decision-resolution";
   };
   context?: { summary: string; updatedAt: string; artifactPath: string };
   checkpoint?: { jsonPath: string; markdownPath: string; sequence: number };

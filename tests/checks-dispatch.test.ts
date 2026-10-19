@@ -56,7 +56,7 @@ test("testing dispatch needs pre-approved checks, which reach every agent's WAIC
   assert.throws(() => prepareDispatch(root, id, { via: "claude" }), /needs at least one pre-approved check/);
   assert.throws(() => prepareDispatch(root, id, { via: "agy", checks: [whereAmI] }), /Antigravity .* cannot receive pre-approved checks/);
   const planning = waiting(t, "planning");
-  assert.throws(() => prepareDispatch(planning.root, planning.id, { via: "claude", checks: [whereAmI] }), /only to testing and implementation/);
+  assert.throws(() => prepareDispatch(planning.root, planning.id, { via: "claude", checks: [whereAmI] }), /only to testing, implementation and review handoffs/);
   assert.throws(() => dispatchOptions("--via codex --check-timeout 99"), /1–30 minutes/);
   assert.throws(() => dispatchOptions(`--via codex ${Array(11).fill('--check "npm test"').join(" ")}`), /At most 10/);
 
@@ -126,4 +126,30 @@ test("a dispatched Pi tester runs pre-approved checks without a dialog, and no o
   assert.equal(ran.outcome, "passed");
   await assert.rejects(check({ program: whereAmI.program, args: ["-e", "1"] }), /Only the pre-approved checks can run/);
   assert.equal((await hooks.get("tool_call")({ toolName: "bash", input: { command: "echo" } }, ctx))?.block, true);
+});
+
+test("a code reviewer runs pre-approved checks through WAICC, read-only: a check that changes source fails", async (t) => {
+  const { root, id } = waiting(t, "planning");
+  // Accept the plan, implement, and request the whole-change code review.
+  submitRecipientReply(root, receiveHandoff(root, id).pin, body("planned"));
+  const planned = ingest(root, id);
+  assess(root, id, { requestId: planned.rounds.at(-1)!.id, decision: "planned", rationale: "Checked", dispositions: [] });
+  writeFileSync(join(root, "source.txt"), "implemented");
+  const { issue } = await import("../src/workflow.ts");
+  issue(root, id, "review", "Review the whole change", undefined, undefined, { kind: "code", completion: {
+    summary: "Done", tasks: [{ taskId: "SEARCH", evidence: "source.txt" }],
+    checks: [{ description: "Tests", outcome: "not_run", evidence: "For the reviewer to run" }], findings: [] } });
+  const requestId = loadSession(root, id).rounds.at(-1)!.id;
+  const plan = prepareDispatch(root, id, { via: "codex", checks: [whereAmI] });
+  assert.match(plan.prompt, /waicc_run_check by number \(0: /, "the reviewer is told about the approved checks");
+  await runDispatch(plan, silent);
+
+  const writes: CheckCommand = { program: process.execPath, args: ["-e", "require('fs').writeFileSync('source.txt', 'changed by a check')"], timeoutMs: 60_000 };
+  const reviewer = mcpServer(root, { sessionId: id, requestId, checks: [whereAmI, writes] });
+  const call = async (name: string, args: object) => ((await reviewer({ id: 1, method: "tools/call", params: { name, arguments: args } })) as any).result;
+  await call("waicc_receive", { sessionId: id, requestId });
+  assert.equal(JSON.parse((await call("waicc_run_check", { check: 0 })).content[0].text).outcome, "passed");
+  const changed = JSON.parse((await call("waicc_run_check", { check: 1 })).content[0].text);
+  assert.equal(changed.outcome, "failed", "a reviewer's check must not change the reviewed source");
+  assert.equal(changed.sourceChanged, true);
 });
