@@ -598,8 +598,9 @@ Antigravity with `agy models`.
 
 The quickest start is the default template that ships in
 [`templates/waicc-agents.json`](templates/waicc-agents.json): Opus 5.5 at medium effort
-for planning, Codex `gpt-6.1-sol` at medium for review, Codex for coding, DeepSeek through
-Pi for testing and Sonnet for advice. Copy it to your user file with:
+for planning, Codex `gpt-6.1-sol` at medium for review, Codex (its default model) at high
+for coding, DeepSeek through Pi at medium thinking for testing and Sonnet at medium for
+advice. Copy it to your user file with:
 
 ```text
 /waicc-dispatch --init-profiles        # CLI: waicc profiles init
