@@ -41,8 +41,14 @@ export interface DispatchOptions {
   checks?: CheckCommand[];
   /** Pi only: run the /waicc-continue step when a valid reply arrives (false: --no-continue). */
   continue?: boolean;
-  /** Pi only: review → fix → re-review cycles for a code review, at most this many. */
+  /** Pi only: assess → revise → re-dispatch cycles, for a planning handoff or a code review. */
   loop?: number;
+  /** Pi only: when a planning handoff's plan is accepted, authorize development, as /waicc-develop. */
+  develop?: boolean;
+  /** Pi only, with develop: when the main agent requests the code review, dispatch it as a review loop. */
+  review?: boolean;
+  /** The profile for that review; otherwise the review role's profile. */
+  reviewWith?: string;
 }
 /** Default and largest number of automatic review cycles. */
 export const loopCycles = { default: 3, max: 8 };
@@ -90,8 +96,10 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   }
   for (let i = first; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
-    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue") {
+    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review") {
       if (flag === "--implement") options.implement = true;
+      else if (flag === "--develop") options.develop = true;
+      else if (flag === "--review") options.review = true;
       else options.continue = flag !== "--no-continue"; // -c is short for --continue.
       i -= 1; // A switch takes no value.
       continue;
@@ -110,6 +118,10 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
       options.via = value as Agent;
     } else if (flag === "--model" || flag === "-m") {
       options.model = modelName(value);
+    } else if (flag === "--review-with") {
+      ensure(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value), "--review-with takes an agent profile name");
+      options.reviewWith = value;
+      options.review = true;
     } else if (flag === "--effort") {
       options.effort = effortName(value);
     } else if (flag === "--timeout") {
@@ -127,7 +139,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
 /** Explicit settings only: --via is required and no agent profile is consulted. */
 export function dispatchOptions(input: string | string[]): DispatchOptions {
   const { profile, options } = parseDispatchArgs(input);
-  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]]`);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]] [--develop [--review|--review-with <profile>]]`);
   return options as DispatchOptions;
 }
 

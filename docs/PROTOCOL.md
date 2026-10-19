@@ -489,6 +489,20 @@ the limit; anything else ends the loop for the human. A reply whose finding desc
 equal the previous cycle's ends the loop, and that reply is assessed without the loop note.
 No reply, a launch error or `--stop` ends it too. Loop state lives in the Pi process.
 
+`--loop` also accepts a waiting planning handoff. Its note asks the main agent to accept an
+acceptable plan (`planned`), use `followup` with exactly what the next round must address
+when the planner can fix it (assessment then creates the next planning round), or record a
+human decision and stop. `PLAN_READY` ends a planning loop; a new WAITING planning round is
+dispatched if cycles remain. `--develop` (planning only; implies `--continue`; alone it is a
+single planning cycle) then calls `beginDevelopment` with origin `human-dispatch-develop`
+and sends the `/waicc-develop` instruction, unless any decision is still open, in which case
+the run stops and lists them. `--review` (or `--review-with <profile>`, needs `--develop`)
+keeps the run in a developing phase: on each `agent_end`, a WAITING whole-change code review
+is resolved with that profile, or the review role's, plus `--loop <same cycles>`, checked for
+authorization and main ownership, and launched as a review loop; another handoff type ends
+the run; no waiting handoff keeps waiting. Review-role checks from a project file end the run,
+since they need confirmation.
+
 Decisions may carry `risk` (low|medium|high) and `reversible` (boolean), rated by the
 planner. The user file may set `policies` (at most 20 rules of 1–500 characters) and
 `autoDecide` (`off` | `low-risk`); a project file setting either is rejected. Policies are
