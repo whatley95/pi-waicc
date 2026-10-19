@@ -260,7 +260,7 @@ test("autoContinue comes only from your user file; --continue and --no-continue 
   assert.equal(resolveDispatch(off.root, off.id, "--continue").options.continue, true);
   assert.deepEqual(resolveDispatch(off.root, off.id, "--loop 2").options, { via: "claude", model: "opus", loop: 2, continue: true });
   assert.equal(resolveDispatch(off.root, off.id, "--loop").options.loop, 3);
-  assert.throws(() => resolveDispatch(off.root, off.id, "--loop 99"), /--loop takes 1–8 review cycles/);
+  assert.throws(() => resolveDispatch(off.root, off.id, "--loop 99"), /--loop takes 1–8 cycles/);
   const shared = project(t, { project: { autoContinue: true } });
   assert.throws(() => loadAgentConfig(shared.root), /"autoContinue" is allowed only in your user file/);
   const typo = project(t, { user: { autoContinue: "yes" } });
@@ -281,4 +281,16 @@ test("-c is short for --continue", (t) => {
   const { root, id } = project(t, { user: { profiles, roles: { planning: "claude" } } });
   assert.equal(resolveDispatch(root, id, "-c").options.continue, true);
   assert.deepEqual(resolveDispatch(root, id, "codex -c").options, { via: "codex", model: "gpt-5.5", timeoutMinutes: 45, continue: true });
+});
+
+test("--auto is --loop 3 --develop --review, and --plan-with and --review-with choose each stage's profile", (t) => {
+  const { root, id } = project(t, { user: { profiles: { ...profiles, opus: { via: "claude", model: "opus" } }, roles: { planning: "opus", review: "codex" } } });
+  const auto = resolveDispatch(root, id, "--auto");
+  assert.deepEqual([auto.profile, auto.options.loop, auto.options.develop, auto.options.review, auto.options.continue], ["opus", 3, true, true, true]);
+  assert.equal(resolveDispatch(root, id, "--auto --loop 5").options.loop, 5, "a typed --loop keeps its count");
+  const chosen = resolveDispatch(root, id, "--auto --plan-with deepseek --review-with claude");
+  assert.deepEqual([chosen.profile, chosen.options.via, chosen.options.reviewWith], ["deepseek", "pi", "claude"]);
+  assert.equal(resolveDispatch(root, id, "deepseek --auto").profile, "deepseek", "naming it first still works");
+  assert.throws(() => resolveDispatch(root, id, "codex --plan-with deepseek"), /Give the planning profile once/);
+  assert.throws(() => resolveDispatch(root, id, "--plan-with nope --auto"), /Unknown agent profile "nope"/);
 });

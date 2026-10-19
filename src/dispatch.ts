@@ -88,6 +88,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   const commands: string[] = [];
   let checkMinutes: number | undefined;
   let profile: string | undefined;
+  let auto = false;
   let first = 0;
   if (words[0] !== undefined && !words[0].startsWith("-")) {
     profile = words[0];
@@ -96,8 +97,9 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   }
   for (let i = first; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
-    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review") {
+    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review" || flag === "--auto") {
       if (flag === "--implement") options.implement = true;
+      else if (flag === "--auto") auto = true;
       else if (flag === "--develop") options.develop = true;
       else if (flag === "--review") options.review = true;
       else options.continue = flag !== "--no-continue"; // -c is short for --continue.
@@ -107,7 +109,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
     if (flag === "--loop") {
       // An optional cycle count follows; otherwise the default.
       const count = /^\d+$/.test(value ?? "") ? Number(value) : undefined;
-      ensure(count === undefined || (count >= 1 && count <= loopCycles.max), `--loop takes 1–${loopCycles.max} review cycles`);
+      ensure(count === undefined || (count >= 1 && count <= loopCycles.max), `--loop takes 1–${loopCycles.max} cycles`);
       options.loop = count ?? loopCycles.default;
       if (count === undefined) i -= 1;
       continue;
@@ -118,6 +120,11 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
       options.via = value as Agent;
     } else if (flag === "--model" || flag === "-m") {
       options.model = modelName(value);
+    } else if (flag === "--plan-with") {
+      // The planning profile, the same as naming it first; given once.
+      ensure(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value), "--plan-with takes an agent profile name");
+      ensure(profile === undefined || profile === value, "Give the planning profile once: first, or with --plan-with");
+      profile = value;
     } else if (flag === "--review-with") {
       ensure(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value), "--review-with takes an agent profile name");
       options.reviewWith = value;
@@ -133,13 +140,15 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
     } else ensure(false, `Unknown dispatch option ${flag}`);
   }
   if (commands.length) options.checks = checkCommands(commands, checkMinutes);
+  // --auto: plan until accepted, develop, then review until it passes; a typed --loop keeps its count.
+  if (auto) Object.assign(options, { develop: true, review: true, loop: options.loop ?? loopCycles.default });
   return { profile, options, checkMinutes };
 }
 
 /** Explicit settings only: --via is required and no agent profile is consulted. */
 export function dispatchOptions(input: string | string[]): DispatchOptions {
   const { profile, options } = parseDispatchArgs(input);
-  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]] [--develop [--review|--review-with <profile>]]`);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]] [--develop [--review|--review-with <profile>]] [--auto] [--plan-with <profile>]`);
   return options as DispatchOptions;
 }
 
