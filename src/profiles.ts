@@ -24,6 +24,8 @@ export interface RoleChoice {
 }
 type Source = "user" | "project";
 export interface AgentConfig {
+  /** User file only: run the continue step after every dispatch that returns a valid reply. */
+  autoContinue: boolean;
   profiles: Record<string, AgentProfile & { source: Source }>;
   roles: Partial<Record<Mode, RoleChoice & { source: Source }>>;
   files: { user: string; project: string; found: Source[] };
@@ -64,7 +66,13 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles"].includes(key)), at('only "profiles" and "roles" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue"].includes(key)), at('only "profiles", "roles" and "autoContinue" are allowed'));
+  if (config.autoContinue !== undefined) {
+    // A repository must not make your coordinator start assessments on its own.
+    ensure(source === "user", at('"autoContinue" is allowed only in your user file'));
+    ensure(typeof config.autoContinue === "boolean", at('"autoContinue" must be true or false'));
+    into.autoContinue = config.autoContinue;
+  }
   for (const [key, value] of Object.entries(record(config.profiles ?? {}, at("profiles")))) {
     ensure(name.test(key), at(`profile name ${JSON.stringify(key)} uses characters other than letters, digits, - and _`));
     const profile = record(value, at(`profile ${key}`));
@@ -96,7 +104,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -122,9 +130,13 @@ function waitingMode(cwd: string, id: string): Mode {
 export function resolveDispatch(cwd: string, id: string, input: string | string[]): ResolvedDispatch {
   const typed = parseDispatchArgs(input);
   const mode = waitingMode(cwd, id);
-  const needsConfig = typed.profile !== undefined || typed.options.via === undefined;
-  if (!needsConfig) return { options: typed.options as DispatchOptions, mode, profile: null, confirmChecks: false };
   const config = loadAgentConfig(cwd);
+  // --continue / --no-continue win; otherwise your user file's autoContinue, and a loop always continues.
+  const continued = (options: Partial<DispatchOptions>): Partial<DispatchOptions> =>
+    options.continue !== undefined || options.loop ? { ...options, continue: options.continue ?? true }
+      : config.autoContinue ? { ...options, continue: true } : options;
+  const needsConfig = typed.profile !== undefined || typed.options.via === undefined;
+  if (!needsConfig) return { options: continued(typed.options) as DispatchOptions, mode, profile: null, confirmChecks: false };
   const role = config.roles[mode];
   const profileName = typed.profile ?? role?.profile;
   ensure(
@@ -143,13 +155,14 @@ export function resolveDispatch(cwd: string, id: string, input: string | string[
     ...(roleChecks ? { checks: checkCommands(roleChecks.checks!, typed.checkMinutes ?? roleChecks.checkTimeoutMinutes) } : {}),
     ...typed.options,
   };
-  return { options, mode, profile: profileName, confirmChecks: roleChecks?.source === "project" };
+  return { options: continued(options) as DispatchOptions, mode, profile: profileName, confirmChecks: roleChecks?.source === "project" };
 }
 
 /** What each role would use, for /waicc-dispatch --profiles. */
 export function profilesView(cwd: string) {
   const config = loadAgentConfig(cwd);
   return {
+    autoContinue: config.autoContinue,
     files: {
       user: { path: config.files.user, found: config.files.found.includes("user") },
       project: { path: config.files.project, found: config.files.found.includes("project") },
