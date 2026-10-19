@@ -36,6 +36,7 @@ import {
   assess,
   beginDevelopment,
   decisionsView,
+  openDecisionsText,
   resolveDecision,
   readContract,
   cancel,
@@ -57,7 +58,7 @@ import {
 } from "./workflow.ts";
 import { advisorInput, decodeJsonArguments, ensure } from "./validation.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
-import type { RecipientPin, Session } from "./types.ts";
+import type { Contract, RecipientPin, Session } from "./types.ts";
 import { authorizationState } from "./state.ts";
 import { AutoPlanningRequests, autoPlanningInstructions, autoPlanningMode } from "./auto-planning.ts";
 import type { RoundPhase } from "./types.ts";
@@ -469,11 +470,34 @@ export default function waicc(
     ensure(!args || !/\s/.test(args), "Usage: /waicc-decisions [session-id]");
     show(ctx, decisionsView(ctx.cwd, selected(ctx, args || undefined)));
   });
-  command("waicc-decide", "Record a human answer to an existing gate: <decision-id> <answer>; not a scope amendment", async (args, ctx) => {
-    const match = /^(\S+)\s+([\s\S]+)$/.exec(args);
-    ensure(match, "Usage: /waicc-decide <decision-id> <answer>");
+  command("waicc-decide", "Record your answer to a decision gate: <decision-id> <answer>, or no arguments to pick one and type the answer; not a scope amendment", async (args, ctx) => {
     const id = selected(ctx);
-    resolveDecision(ctx.cwd, id, match[1], match[2]);
+    const view = decisionsView(ctx.cwd, id);
+    const open = view.decisions.filter((decision) => decision.status !== "resolved");
+    const listed = openDecisionsText({ decisions: view.decisions } as Contract);
+    ensure(open.length, listed);
+    const word = /^(\S+)\s*([\s\S]*)$/.exec(args);
+    let decision = word ? open.find((d) => d.id.toLowerCase() === word[1].toLowerCase()) : undefined;
+    let answer = decision ? word![2].trim() : "";
+    if (!decision && args) {
+      // An answer typed without its ID: with one open decision, confirm it is meant for that one.
+      ensure(open.length === 1 && ctx.hasUI, `${JSON.stringify(word![1])} is not an open decision ID. ${listed}`);
+      ensure(await ctx.ui.confirm(`Record this as the answer to ${open[0].id}?`, `${open[0].question}\n\nAnswer: ${args}`), "Nothing recorded.");
+      [decision, answer] = [open[0], args];
+    }
+    if (!decision) {
+      ensure(ctx.hasUI, `Usage: /waicc-decide <decision-id> <answer>. ${listed}`);
+      const labels = open.map((d) => `${d.id} (${d.owner}): ${d.question}`);
+      const picked = await ctx.ui.select("Which decision are you answering?", labels);
+      ensure(picked, "Nothing recorded.");
+      decision = open[labels.indexOf(picked)];
+    }
+    if (!answer) {
+      ensure(ctx.hasUI, `Add your answer: /waicc-decide ${decision.id} <answer>`);
+      answer = (await ctx.ui.input(`${decision.id}: ${decision.question}`, `Recommended: ${decision.recommendation}`))?.trim() ?? "";
+      ensure(answer, "Nothing recorded.");
+    }
+    resolveDecision(ctx.cwd, id, decision.id, answer);
     show(ctx, { ...decisionsView(ctx.cwd, id), session: status(ctx.cwd, id) });
   });
   for (const [names, mode, focus] of [
