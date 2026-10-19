@@ -227,6 +227,56 @@ fields or replace an already established answer. It may explicitly repin a curre
 grant for that narrow answer-only revision, but never carries review PASS. Ordinary
 revisions/amendments invalidate authority and require renewed `/waicc-develop`.
 
+#### Fewer decisions to answer: standing policies and low-risk auto-accept
+
+Two opt-in settings in your **user** agent config (`~/.pi/agent/waicc-agents.json`; a
+project file that sets them is rejected) answer routine decisions for you, so only the
+ones that really need you are left:
+
+```json
+{
+  "policies": [
+    "Prefer framework-native solutions; do not add new dependencies",
+    "Never use staging or production systems without asking"
+  ],
+  "autoDecide": "low-risk",
+  "profiles": { … },
+  "roles": { … }
+}
+```
+
+- **Standing policies are your rules, given in advance.** The main agent sees them, and
+  when an open **human-owned** decision is clearly and fully answered by one, it records
+  the answer with `waicc_apply_policy`, citing the policy number and why it applies. It must
+  not stretch a policy or combine policies, and a policy never answers an `external`
+  decision. Each one is announced in the chat and recorded as "resolved by standing policy".
+- **`"autoDecide": "low-risk"` accepts the agent's recommendation automatically** for
+  decisions the planner rated low risk and reversible, after each assessment and on
+  `/waicc-develop`. It is announced and recorded as "accepted automatically".
+- **Always yours, whatever the settings:** `external` decisions, anything not rated low risk
+  or not reversible, and anything mentioning access, credentials, staging or production,
+  deployment, money, deleting or migrating data, security, permissions, privacy or legal
+  matters.
+- `/waicc-decide auto` runs the low-risk check now and explains, decision by decision, why
+  each remaining one still needs you. `/waicc-decisions` shows how every decision was
+  resolved.
+
+Risk ratings come from the agents: the planner proposes them and the main agent may revise
+them when it adopts the plan, so a decision can become low risk during assessment. The
+hard rules above (external, not reversible, sensitive subjects) cannot be overridden by any
+rating, and every automatic answer is announced so you can review it.
+
+Verified live with a Pi main agent (DeepSeek V4 Pro): with a policy against new
+dependencies, it answered "add lodash or use built-in string methods?" with
+`waicc_apply_policy` citing that policy; with `autoDecide: low-risk`, two low-risk
+decisions were accepted automatically and announced, and the external decision stayed
+open for the human.
+
+Why not a confidence score: a model's confidence is not calibrated, and many decisions
+are about authority rather than certainty. An agent can be sure you would allow a staging
+check, and it is still not your permission. Rules you wrote, and a risk rating backed by
+evidence with sensitive subjects excluded, are what make an automatic answer safe.
+
 Status exposes objective/phase, plan acceptance, separate spec/code reviews, recorded
 implementation authorization and its reason, open gates, reported task counts and
 phase/overall round budgets. Unknown progress is `null`, not zero; reported completion
@@ -763,6 +813,8 @@ To write it yourself, create either file, or both:
 
 Safety rules:
 
+- **`"policies"`** and **`"autoDecide": "low-risk"`** (user file only) answer routine
+  decisions for you; see [Fewer decisions to answer](#fewer-decisions-to-answer-standing-policies-and-low-risk-auto-accept).
 - **`"autoContinue": true`** (user file only) runs the continue step after every dispatch
   that returns a valid reply; a project file that sets it is rejected.
 - **A config can never authorize coding.** There is no `implement` field; type
@@ -905,6 +957,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-develop [--main\|--delegate]`             | Explicitly accept/authorize the current plan in this session; no handoff or round consumed |
 | `/waicc-decisions [session-id]`                 | Show the consolidated gate brief, recommendations, evidence and affected tasks |
 | `/waicc-decide <decision-id> <answer>`           | Record an existing gate's human answer in a versioned audit; not a scope amendment |
+| `/waicc-decide auto`                             | Run your low-risk auto-accept now and see why each remaining decision still needs you |
 | `/waicc-decide`                                  | Pick an open decision from a list, then accept its recommendation or type your own |
 | `/waicc-decide <decision-id>\|all recommended`    | Accept the agent's recommendation as your answer, for one decision or all of them |
 | `/waicc-planning --delegate <requirements>`      | Plan with the main agent as coordinator and delegated implementation/fix cycles |

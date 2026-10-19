@@ -26,6 +26,10 @@ type Source = "user" | "project";
 export interface AgentConfig {
   /** User file only: run the continue step after every dispatch that returns a valid reply. */
   autoContinue: boolean;
+  /** User file only: your rules, given in advance, that may answer human-owned decisions. */
+  policies: string[];
+  /** User file only: accept recommendations for low-risk, reversible, non-sensitive decisions. */
+  autoDecide: "off" | "low-risk";
   profiles: Record<string, AgentProfile & { source: Source }>;
   roles: Partial<Record<Mode, RoleChoice & { source: Source }>>;
   files: { user: string; project: string; found: Source[] };
@@ -66,7 +70,21 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue"].includes(key)), at('only "profiles", "roles" and "autoContinue" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies" and "autoDecide" are allowed'));
+  // Settings that let WAICC act for you are yours alone: a repository must not grant them.
+  for (const key of ["policies", "autoDecide"])
+    ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
+  if (config.policies !== undefined) {
+    ensure(Array.isArray(config.policies) && config.policies.length <= 20, at('"policies" must be a list of at most 20 rules'));
+    into.policies = (config.policies as unknown[]).map((policy, i) => {
+      ensure(typeof policy === "string" && policy.trim().length > 0 && policy.length <= 500, at(`policy ${i + 1} must be text of 1–500 characters`));
+      return (policy as string).trim();
+    });
+  }
+  if (config.autoDecide !== undefined) {
+    ensure(config.autoDecide === "off" || config.autoDecide === "low-risk", at('"autoDecide" must be "off" or "low-risk"'));
+    into.autoDecide = config.autoDecide;
+  }
   if (config.autoContinue !== undefined) {
     // A repository must not make your coordinator start assessments on its own.
     ensure(source === "user", at('"autoContinue" is allowed only in your user file'));
@@ -104,7 +122,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -163,6 +181,8 @@ export function profilesView(cwd: string) {
   const config = loadAgentConfig(cwd);
   return {
     autoContinue: config.autoContinue,
+    policies: config.policies,
+    autoDecide: config.autoDecide,
     files: {
       user: { path: config.files.user, found: config.files.found.includes("user") },
       project: { path: config.files.project, found: config.files.found.includes("project") },
@@ -176,4 +196,16 @@ export function profilesView(cwd: string) {
       ? "Run /waicc-dispatch with no agent: the waiting handoff's role picks its profile. Name a profile or add --via to override once; --implement is still required for coding."
       : `No agent profiles yet. ${initHint} at ${config.files.user} (just you), or create ${config.files.project} (shared with the repository); see the README's "Agent profiles".`,
   };
+}
+
+/** Your standing policies and low-risk setting, from your user file only. */
+export function decisionSettings(cwd: string): Pick<AgentConfig, "policies" | "autoDecide"> {
+  const { policies, autoDecide } = loadAgentConfig(cwd);
+  return { policies, autoDecide };
+}
+
+/** Instructions for the main agent: when, and only when, a policy answers a decision. */
+export function policyGuidance(policies: string[]): string {
+  if (!policies.length) return "";
+  return `The human's standing policies, their own rules given in advance:\n${policies.map((policy, i) => `${i + 1}. ${policy}`).join("\n")}\nWhen an OPEN human-owned decision is clearly and fully answered by one of these, record it with waicc_apply_policy: cite the policy number, give an answer that follows the policy exactly, and explain why it applies. Never stretch a policy beyond what it says, never combine policies to invent an answer, and never use one for an external decision. If a policy only partly fits, ask the human instead.`;
 }

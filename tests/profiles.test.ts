@@ -90,7 +90,7 @@ test("the project file wins over the user file, and nothing chosen names both fi
 test("agent configs are validated strictly, and can never grant --implement", (t) => {
   const cases: [unknown, RegExp][] = [
     ["{ not json", /is not valid JSON/],
-    [{ agents: {} }, /only "profiles", "roles" and "autoContinue" are allowed/],
+    [{ agents: {} }, /only "profiles", "roles", "autoContinue", "policies" and "autoDecide" are allowed/],
     [{ profiles: { x: { via: "gemini" } } }, /profile x: via must be one of claude, codex, pi, agy/],
     [{ profiles: { x: { via: "codex", implement: true } } }, /profile x allows only via, model, effort and timeoutMinutes/],
     [{ profiles: { "bad name": { via: "codex" } } }, /profile name "bad name"/],
