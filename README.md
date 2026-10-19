@@ -933,7 +933,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-export`                                  | Package the pending handoff, requirements, contract and selected skill references                     |
 | `/waicc-limit [phase] <2–20>`                   | Explicitly change one phase budget or the overall cap; no resets |
 | `/waicc-memory [query]`                          | Inspect candidate/active/stale memory                                                                 |
-| `/waicc-memory confirm\|revoke <id>`             | Human curation of a memory entry                                                                      |
+| `/waicc-memory confirm\|revoke [<id>\|all]`       | Human curation: a specific entry, all candidates after one dialog, or pick from a list with no ID |
 | `/waicc-ignore`                                  | Configure SVN ignore rules explicitly; Git is automatic                                               |
 
 Bindings are per Pi chat and repository, persisted in Pi's session entries. Multiple
@@ -1185,6 +1185,21 @@ Candidates do not enter automatic recall until a human confirms them. Changed or
 missing evidence makes an entry stale; reading or repeating it never renews it.
 File existence is not semantic verification. Keep speculative fixes and unfinished
 work in the session, not durable memory.
+
+Confirming stays a human step on purpose: a confirmed entry goes into every future
+handoff in the project, for every agent, so a wrong agent conclusion would quietly
+mislead all later work. It is quick:
+
+```text
+/waicc-memory                  # review candidates: text, kind and source file
+/waicc-memory confirm          # pick one from a list (or "All")
+/waicc-memory confirm all      # one dialog listing every candidate, then confirm them together
+/waicc-memory confirm <id>     # a specific entry
+/waicc-memory revoke           # the same choices for removing an entry
+```
+
+A wrong or missing ID lists the candidates instead of failing. Stale candidates, whose
+source file changed, are not offered: propose a fresh one from the current source.
 
 All WAI skills and their linked domain/design references are packaged. They load
 on demand; external handoffs carry selected copies and do not require WAI tools.
