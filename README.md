@@ -45,7 +45,9 @@ pi update git:github.com/whatley95/pi-waicc
 ```
 
 Pi keeps its own copy of the package (see `pi list`); new commands such as
-`/waicc-dispatch` appear only after that copy is updated.
+`/waicc-dispatch` appear only after that copy is updated. **A running Pi keeps the code it
+loaded at start:** after `pi update`, run `/reload` in each open Pi chat (or restart Pi),
+otherwise you keep seeing the old behaviour and messages.
 
 WAICC is independent of pi-yoowai. If both packages are enabled, select one copy
 of each shared WAI skill in Pi's resource configuration to avoid duplicate names.
@@ -207,9 +209,17 @@ main agent tells you the exact command, the question and its recommended answer.
 
 `/waicc-decisions` shows the consolidated owners, evidence, recommendations and
 affected tasks. `/waicc-decide D1 <answer>` records an existing gate's answer as a
-versioned human decision with an audit, not an automatic scope amendment. Run
-`/waicc-decide` alone to pick the decision from a list and type the answer, with the
-recommendation shown. IDs match regardless of case (`d6` is `D6`). An answer typed without
+versioned human decision with an audit, not an automatic scope amendment. To agree
+with the agent's recommendation, you do not retype it:
+
+```text
+/waicc-decide D1 recommended      # D1's recommendation becomes your answer
+/waicc-decide all recommended     # every open decision, after one dialog listing them
+/waicc-decide                     # pick a decision, then "Accept the recommendation" or type your own
+```
+
+Saying "go with your recommendation" in chat is not enough: the agent cannot record
+decisions, so it gives you the `recommended` command instead. IDs match regardless of case (`d6` is `D6`). An answer typed without
 its ID is confirmed for the only open decision; with several open, or a wrong ID, WAICC
 lists the open decisions and records nothing. Pending
 handoffs must be finished/cancelled first. The command cannot change task/path/scope
@@ -895,7 +905,8 @@ model assessment is not proof of tested delivery.
 | `/waicc-develop [--main\|--delegate]`             | Explicitly accept/authorize the current plan in this session; no handoff or round consumed |
 | `/waicc-decisions [session-id]`                 | Show the consolidated gate brief, recommendations, evidence and affected tasks |
 | `/waicc-decide <decision-id> <answer>`           | Record an existing gate's human answer in a versioned audit; not a scope amendment |
-| `/waicc-decide`                                  | Pick an open decision from a list and type the answer, with the recommendation shown |
+| `/waicc-decide`                                  | Pick an open decision from a list, then accept its recommendation or type your own |
+| `/waicc-decide <decision-id>\|all recommended`    | Accept the agent's recommendation as your answer, for one decision or all of them |
 | `/waicc-planning --delegate <requirements>`      | Plan with the main agent as coordinator and delegated implementation/fix cycles |
 | `/waicc-help-develop [focus]`                      | Delegate the entire accepted implementation or ALL review fixes |
 | `/waicc-implement [focus]`                       | Compatibility alias for `/waicc-help-develop`, including `--main` |

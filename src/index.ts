@@ -470,35 +470,59 @@ export default function waicc(
     ensure(!args || !/\s/.test(args), "Usage: /waicc-decisions [session-id]");
     show(ctx, decisionsView(ctx.cwd, selected(ctx, args || undefined)));
   });
-  command("waicc-decide", "Record your answer to a decision gate: <decision-id> <answer>, or no arguments to pick one and type the answer; not a scope amendment", async (args, ctx) => {
+  command("waicc-decide", "Record your answer to a decision gate: <decision-id> <answer>, <decision-id> recommended, all recommended, or no arguments to pick one; not a scope amendment", async (args, ctx) => {
     const id = selected(ctx);
     const view = decisionsView(ctx.cwd, id);
     const open = view.decisions.filter((decision) => decision.status !== "resolved");
     const listed = openDecisionsText({ decisions: view.decisions } as Contract);
     ensure(open.length, listed);
+    // "recommended" accepts the agent's recommendation as your answer.
+    const recommended = (text: string) => /^(recommended|recommendation|rec)$/i.test(text.trim());
+    const record = (decision: (typeof open)[number], answer: string) => resolveDecision(ctx.cwd, id, decision.id, answer);
+    const done = () => show(ctx, { ...decisionsView(ctx.cwd, id), session: status(ctx.cwd, id) });
     const word = /^(\S+)\s*([\s\S]*)$/.exec(args);
+    if (word && word[1].toLowerCase() === "all") {
+      ensure(recommended(word[2]), "Usage: /waicc-decide all recommended (accept every open decision's recommendation)");
+      if (ctx.hasUI)
+        ensure(await ctx.ui.confirm(`Accept the recommendation for all ${open.length} open decision${open.length === 1 ? "" : "s"}?`,
+          open.map((d) => `${d.id}: ${d.question}\n  → ${d.recommendation}`).join("\n\n")), "Nothing recorded.");
+      for (const decision of open) record(decision, decision.recommendation);
+      return done();
+    }
     let decision = word ? open.find((d) => d.id.toLowerCase() === word[1].toLowerCase()) : undefined;
     let answer = decision ? word![2].trim() : "";
     if (!decision && args) {
       // An answer typed without its ID: with one open decision, confirm it is meant for that one.
       ensure(open.length === 1 && ctx.hasUI, `${JSON.stringify(word![1])} is not an open decision ID. ${listed}`);
-      ensure(await ctx.ui.confirm(`Record this as the answer to ${open[0].id}?`, `${open[0].question}\n\nAnswer: ${args}`), "Nothing recorded.");
-      [decision, answer] = [open[0], args];
+      const text = recommended(args) ? open[0].recommendation : args;
+      ensure(await ctx.ui.confirm(`Record this as the answer to ${open[0].id}?`, `${open[0].question}\n\nAnswer: ${text}`), "Nothing recorded.");
+      [decision, answer] = [open[0], text];
     }
     if (!decision) {
-      ensure(ctx.hasUI, `Usage: /waicc-decide <decision-id> <answer>. ${listed}`);
+      ensure(ctx.hasUI, `Usage: /waicc-decide <decision-id> <answer>, or <decision-id> recommended. ${listed}`);
       const labels = open.map((d) => `${d.id} (${d.owner}): ${d.question}`);
       const picked = await ctx.ui.select("Which decision are you answering?", labels);
       ensure(picked, "Nothing recorded.");
       decision = open[labels.indexOf(picked)];
     }
+    if (recommended(answer)) {
+      // Typed explicitly; show what that means when a dialog is available.
+      if (ctx.hasUI)
+        ensure(await ctx.ui.confirm(`Accept the recommendation for ${decision.id}?`, `${decision.question}\n\n→ ${decision.recommendation}`), "Nothing recorded.");
+      answer = decision.recommendation;
+    }
     if (!answer) {
-      ensure(ctx.hasUI, `Add your answer: /waicc-decide ${decision.id} <answer>`);
-      answer = (await ctx.ui.input(`${decision.id}: ${decision.question}`, `Recommended: ${decision.recommendation}`))?.trim() ?? "";
+      ensure(ctx.hasUI, `Add your answer: /waicc-decide ${decision.id} <answer>, or /waicc-decide ${decision.id} recommended`);
+      const accept = `Accept the recommendation: ${decision.recommendation}`;
+      const choice = await ctx.ui.select(`${decision.id}: ${decision.question}`, [accept, "Type my own answer"]);
+      ensure(choice, "Nothing recorded.");
+      answer = choice === accept
+        ? decision.recommendation
+        : (await ctx.ui.input(`${decision.id}: ${decision.question}`, `Recommended: ${decision.recommendation}`))?.trim() ?? "";
       ensure(answer, "Nothing recorded.");
     }
-    resolveDecision(ctx.cwd, id, decision.id, answer);
-    show(ctx, { ...decisionsView(ctx.cwd, id), session: status(ctx.cwd, id) });
+    record(decision, answer);
+    done();
   });
   for (const [names, mode, focus] of [
     [["waicc-help-develop", "waicc-implement"], "implementation", "Complete ALL accepted planned work and ALL prior code-review fixes; run relevant permitted checks and return whole-work completion evidence."],
