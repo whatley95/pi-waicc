@@ -489,6 +489,21 @@ the limit; anything else ends the loop for the human. A reply whose finding desc
 equal the previous cycle's ends the loop, and that reply is assessed without the loop note.
 No reply, a launch error or `--stop` ends it too. Loop state lives in the Pi process.
 
+Decisions may carry `risk` (low|medium|high) and `reversible` (boolean), rated by the
+planner. The user file may set `policies` (at most 20 rules of 1–500 characters) and
+`autoDecide` (`off` | `low-risk`); a project file setting either is rejected. Policies are
+appended to the coordinator's instructions; `waicc_apply_policy {sessionId, decisionId,
+policy, answer, rationale}` (coordinator only) resolves an open `human`-owned decision,
+refusing external and agent-owned ones and unknown policy numbers, with the policy text
+and rationale in the decision evidence and a record whose `recordedBy` is
+`standing-policy`. With `autoDecide: low-risk`, after each `waicc_assess` and on
+`/waicc-develop`, every open decision that is human-owned, `risk: low`, `reversible: true`
+and whose question and recommendation match no sensitive subject (access, credentials,
+staging/production, deploy, money, delete/migrate, security, permissions, privacy, legal)
+is resolved with its recommendation, `recordedBy: auto-low-risk`. A pending handoff stops
+the pass until the next one. Both are announced to the human; `/waicc-decide auto` runs
+the pass on demand and reports why each remaining decision still needs the human.
+
 Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
 ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
 dropped from the change list, and removal unlinks each folder (removing only the link)
