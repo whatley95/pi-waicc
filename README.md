@@ -198,9 +198,20 @@ source baseline and provenance without changing the contract or consuming a roun
 valid grant but still-blocked tasks. Main may do genuinely unblocked authorized work;
 whole-plan delegation and full code review wait until gates are resolved.
 
+**Decisions** (`D1`, `D6`, …) are choices the plan cannot make on its own. Each has an owner:
+`agent` decisions are facts the agents settle by investigating the code; `human` and
+`external` ones need a person, such as permission to touch a staging system, a fact only
+another team knows, or a product choice. An open decision blocks only its affected tasks
+and their dependents. Agents never record the answer to a human or external decision: the
+main agent tells you the exact command, the question and its recommended answer.
+
 `/waicc-decisions` shows the consolidated owners, evidence, recommendations and
 affected tasks. `/waicc-decide D1 <answer>` records an existing gate's answer as a
-versioned human decision with an audit, not an automatic scope amendment. Pending
+versioned human decision with an audit, not an automatic scope amendment. Run
+`/waicc-decide` alone to pick the decision from a list and type the answer, with the
+recommendation shown. IDs match regardless of case (`d6` is `D6`). An answer typed without
+its ID is confirmed for the only open decision; with several open, or a wrong ID, WAICC
+lists the open decisions and records nothing. Pending
 handoffs must be finished/cancelled first. The command cannot change task/path/scope
 fields or replace an already established answer. It may explicitly repin a current
 grant for that narrow answer-only revision, but never carries review PASS. Ordinary
@@ -884,6 +895,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-develop [--main\|--delegate]`             | Explicitly accept/authorize the current plan in this session; no handoff or round consumed |
 | `/waicc-decisions [session-id]`                 | Show the consolidated gate brief, recommendations, evidence and affected tasks |
 | `/waicc-decide <decision-id> <answer>`           | Record an existing gate's human answer in a versioned audit; not a scope amendment |
+| `/waicc-decide`                                  | Pick an open decision from a list and type the answer, with the recommendation shown |
 | `/waicc-planning --delegate <requirements>`      | Plan with the main agent as coordinator and delegated implementation/fix cycles |
 | `/waicc-help-develop [focus]`                      | Delegate the entire accepted implementation or ALL review fixes |
 | `/waicc-implement [focus]`                       | Compatibility alias for `/waicc-help-develop`, including `--main` |
