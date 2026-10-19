@@ -39,12 +39,25 @@ const stopWords = new Set(
     " ",
   ),
 );
+/** Every entry with its state: candidate, active, stale (its source changed) or revoked. */
+export function memoryStates(cwd: string): (MemoryEntry & { state: string })[] {
+  const root = projectRoot(cwd);
+  return load(root).map((entry) => {
+    let state = entry.revoked ? "revoked" : entry.confirmedAt ? "active" : "candidate";
+    try {
+      if (digest(readText(safePath(root, relativePath(entry.source)))) !== entry.sourceDigest) state = "stale";
+    } catch {
+      state = "stale";
+    }
+    return { ...entry, state };
+  });
+}
+
 export function recall(
   cwd: string,
   query = "",
   includeCandidates = false,
 ): (MemoryEntry & { state: string })[] {
-  const root = projectRoot(cwd);
   const terms = [
     ...new Set(
       query
@@ -53,24 +66,7 @@ export function recall(
         .filter((word) => word.length > 2 && !stopWords.has(word)),
     ),
   ];
-  return load(root)
-    .map((entry) => {
-      let state = entry.revoked
-        ? "revoked"
-        : entry.confirmedAt
-          ? "active"
-          : "candidate";
-      try {
-        if (
-          digest(readText(safePath(root, relativePath(entry.source)))) !==
-          entry.sourceDigest
-        )
-          state = "stale";
-      } catch {
-        state = "stale";
-      }
-      return { ...entry, state };
-    })
+  return memoryStates(cwd)
     .filter(
       (entry) =>
         !entry.revoked && (includeCandidates || entry.state === "active"),
