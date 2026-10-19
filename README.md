@@ -624,6 +624,10 @@ sent back to the planner automatically, until the plan is accepted (`PLAN_READY`
 - **It never starts coding while a decision is open.** If the accepted plan still has an
   unanswered decision (after your policies and `autoDecide`), the run stops and lists it:
   answer it with `/waicc-decide`, then run `/waicc-develop`.
+- **Give the review its checks.** Reviewers are read-only, so without pre-approved checks they
+  cannot run your tests, and a review that requires them is blocked. Set them on your
+  `review` role (`"review": { "profile": "sol", "checks": ["npm test"] }`) and the automatic
+  review uses them.
 - **`--review` needs `--develop`**; the review stage then follows the same stop rules as any
   review loop. `--develop` without `--loop` is a single planning cycle. `/waicc-dispatch --stop`
   ends the run at any stage. The run never closes, commits, pushes or deploys.
@@ -675,6 +679,11 @@ What it does and does not do:
   - **Testing handoffs can now be dispatched,** with at least one `--check`; the tester
     stays read-only. A test run that changes source fails, as with interactive checks.
   - **Coding agents can run them too,** to verify their own work before submitting.
+  - **Code reviewers can run them too,** staying read-only: a review that requires tests to
+    run otherwise has to report them `not_run` and is usually blocked. A reviewer's check that
+    changes the reviewed source fails, as a tester's does. Give your `review` role its checks
+    so automatic reviews (`--review`, `--auto`) get them:
+    `"review": { "profile": "sol", "checks": ["npm test"] }`.
   - Checks run with your account's permissions and are not an OS sandbox: approve only
     local, reviewed commands, never deployments, installs or anything using secrets.
     Antigravity cannot receive pre-approved checks.
@@ -816,7 +825,7 @@ To write it yourself, create either file, or both:
   },
   "roles": {
     "planning":       "opus",
-    "review":         "codex",
+    "review":         { "profile": "codex", "checks": ["npm test"] },
     "implementation": "codex",
     "advisor":        "deepseek",
     "testing":        { "profile": "sonnet", "checks": ["npm test", "npm run lint"], "checkTimeoutMinutes": 10 }
