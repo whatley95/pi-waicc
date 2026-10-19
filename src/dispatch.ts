@@ -27,7 +27,8 @@ export const effortLevels: Record<Agent, string[]> = {
  * within task paths; Claude and Codex edit an isolated worktree whose changes are checked first.
  * Testing needs at least one --check the human pre-approves. */
 const dispatchModes: Mode[] = ["planning", "review", "advisor"];
-const checkModes: Mode[] = ["implementation", "testing"];
+/** Reviewers stay read-only: their checks are the human's exact commands, run by WAICC. */
+const checkModes: Mode[] = ["implementation", "testing", "review"];
 
 export interface DispatchOptions {
   via: Agent;
@@ -351,7 +352,7 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
       );
     }
     const checks = options.checks ?? [];
-    ensure(!checks.length || checkModes.includes(r.mode), "--check applies only to testing and implementation handoffs");
+    ensure(!checks.length || checkModes.includes(r.mode), "--check applies only to testing, implementation and review handoffs");
     ensure(!checks.length || options.via !== "agy", "Antigravity uses its own MCP configuration and cannot receive pre-approved checks.");
     const dir = roundDirectory(r);
     const replyPath = safePath(root, `${sessionRelative(s.id)}/${dir}/reply.json`);
