@@ -593,6 +593,45 @@ main agent assessed, fixed both, ran the tests (4/4) and requested a fresh revie
 was dispatched automatically and passed, and the loop ended at `READY_TO_CLOSE` after
 2 cycles in under 5 minutes without closing anything.
 
+**Plan until accepted, and on through review: `--loop` on planning, `--develop`, `--review`.**
+`--loop` also works on a waiting planning handoff: the planner plans, the main agent
+assesses, and when the plan needs more work it asks for a revised one (`followup`), which is
+sent back to the planner automatically, until the plan is accepted (`PLAN_READY`).
+
+```text
+/waicc-planning Add the status message field
+/waicc-dispatch --loop 3 --develop --review
+   → your planning profile (opus) plans until the plan is accepted
+   → development is authorized automatically, because you typed --develop
+   → the main agent codes; when it requests the whole-change code review,
+     it is dispatched with your review profile (sol) as a review loop
+   → "Review passed after 1 cycle. Nothing was closed: run /waicc-close when you are satisfied."
+```
+
+- **Each stage uses its own role's profile**, so planning and review run on different models:
+  your `planning` and `review` roles in the agent config. Choose either for one run:
+  `--plan-with <profile>` (or name the profile first) for planning, `--review-with <profile>`
+  for the review.
+- **`--auto` is short for `--loop 3 --develop --review`**; a typed `--loop 5` keeps its count.
+
+  ```text
+  /waicc-dispatch --auto                                          # opus plans, sol reviews
+  /waicc-dispatch --auto --plan-with opus-max --review-with sol-ultra
+  ```
+- **`--develop` is your approval of the plan, given in advance for this run.** Without it the
+  run stops at `PLAN_READY` and you run `/waicc-develop` yourself, after reading the plan.
+  It is recorded as authorized by `--develop` on the dispatch.
+- **It never starts coding while a decision is open.** If the accepted plan still has an
+  unanswered decision (after your policies and `autoDecide`), the run stops and lists it:
+  answer it with `/waicc-decide`, then run `/waicc-develop`.
+- **Give the review its checks.** Reviewers are read-only, so without pre-approved checks they
+  cannot run your tests, and a review that requires them is blocked. Set them on your
+  `review` role (`"review": { "profile": "sol", "checks": ["npm test"] }`) and the automatic
+  review uses them.
+- **`--review` needs `--develop`**; the review stage then follows the same stop rules as any
+  review loop. `--develop` without `--loop` is a single planning cycle. `/waicc-dispatch --stop`
+  ends the run at any stage. The run never closes, commits, pushes or deploys.
+
 | `--via`  | Runs                                 | Read-only enforcement                                   | Model flag              |
 | -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
 | `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP. Coding: edits in an isolated worktree, no shell | `--model opus` |
@@ -640,6 +679,11 @@ What it does and does not do:
   - **Testing handoffs can now be dispatched,** with at least one `--check`; the tester
     stays read-only. A test run that changes source fails, as with interactive checks.
   - **Coding agents can run them too,** to verify their own work before submitting.
+  - **Code reviewers can run them too,** staying read-only: a review that requires tests to
+    run otherwise has to report them `not_run` and is usually blocked. A reviewer's check that
+    changes the reviewed source fails, as a tester's does. Give your `review` role its checks
+    so automatic reviews (`--review`, `--auto`) get them:
+    `"review": { "profile": "sol", "checks": ["npm test"] }`.
   - Checks run with your account's permissions and are not an OS sandbox: approve only
     local, reviewed commands, never deployments, installs or anything using secrets.
     Antigravity cannot receive pre-approved checks.
@@ -781,7 +825,7 @@ To write it yourself, create either file, or both:
   },
   "roles": {
     "planning":       "opus",
-    "review":         "codex",
+    "review":         { "profile": "codex", "checks": ["npm test"] },
     "implementation": "codex",
     "advisor":        "deepseek",
     "testing":        { "profile": "sonnet", "checks": ["npm test", "npm run lint"], "checkTimeoutMinutes": 10 }
@@ -979,7 +1023,9 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch [profile]`                      | Dispatch with the agent profile for the waiting handoff's role, or a named profile |
 | `/waicc-dispatch --progress`                     | List every step the running agent has taken so far |
 | `/waicc-dispatch [profile] --continue` (or `-c`)  | Run the continue step automatically when a valid reply arrives (`--no-continue` to skip once) |
-| `/waicc-dispatch [profile] --loop [cycles]`      | Code review → fix → re-review until it passes, at most 3 cycles by default; never closes |
+| `/waicc-dispatch [profile] --loop [cycles]`      | Code review → fix → re-review until it passes, or plan → assess → revise until accepted; at most 3 cycles by default; never closes |
+| `/waicc-dispatch --loop 3 --develop [--review]`  | Plan until accepted, start development, then review with your review profile until it passes |
+| `/waicc-dispatch --auto [--plan-with p] [--review-with p]` | Short for `--loop 3 --develop --review`, choosing each stage's profile |
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
