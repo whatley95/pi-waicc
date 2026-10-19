@@ -78,6 +78,10 @@ export interface ContractDecision {
   evidence: string[];
   recommendation: string;
   answer?: string;
+  /** How much a wrong answer would cost; low only when reversible, in scope and not sensitive. */
+  risk?: "low" | "medium" | "high";
+  /** Whether the answer can be changed later without lasting effect. */
+  reversible?: boolean;
 }
 export interface SourceSnapshot {
   vcs: "git" | "svn" | "none";

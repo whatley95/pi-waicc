@@ -252,9 +252,13 @@ export function validateContract(
         "evidence",
         "recommendation",
         "answer",
+        "risk",
+        "reversible",
       ],
       "Decision",
     );
+    ensure(d.risk === undefined || ["low", "medium", "high"].includes(d.risk as string), "Decision risk must be low, medium or high");
+    ensure(d.reversible === undefined || typeof d.reversible === "boolean", "Decision reversible must be true or false");
     identifier(d.id, "Decision ID");
     text(d.question, "Decision question");
     ensure(

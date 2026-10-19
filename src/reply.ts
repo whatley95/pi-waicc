@@ -248,6 +248,7 @@ export function normalizeReply(value: unknown): {
         }
         enumWord(decision, "owner", ["agent", "human", "external"], label, changes);
         enumWord(decision, "status", ["open", "resolved", "deferred"], label, changes);
+        if (decision.risk !== undefined) enumWord(decision, "risk", ["low", "medium", "high"], label, changes);
         return decision;
       });
   }
