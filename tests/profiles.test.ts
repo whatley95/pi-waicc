@@ -276,3 +276,9 @@ test("the CLI's --continue validates the reply, and --loop is refused outside Pi
   assert.equal(looped.status, 1);
   assert.match(looped.stderr, /--loop needs the main agent in Pi/);
 });
+
+test("-c is short for --continue", (t) => {
+  const { root, id } = project(t, { user: { profiles, roles: { planning: "claude" } } });
+  assert.equal(resolveDispatch(root, id, "-c").options.continue, true);
+  assert.deepEqual(resolveDispatch(root, id, "codex -c").options, { via: "codex", model: "gpt-5.5", timeoutMinutes: 45, continue: true });
+});
