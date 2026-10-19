@@ -936,6 +936,22 @@ it; recipient role/tool restrictions remain intact. Restoration does not silentl
 rebind a cleared chat. The session directory's presence in one store or the other
 is the commit point for these moves; no canonical journal entry is rewritten.
 
+## Project roots and sub-projects
+
+The project root is the nearest folder, walking up from the working directory, that has
+WAICC state (`.pi/pi-waicc/`), a `.git` or a `.svn`. `/waicc-init` (CLI `waicc init`) creates
+that state folder, with its self-ignoring `.gitignore`, in the current folder, making it a
+sub-project of a larger repository. A sub-project inside a Git work tree (no `.git` of its
+own) is fingerprinted with Git from that folder: `ls-files` and the index listing cover only
+its subtree, and the revision is the subtree's own tree (`HEAD:<prefix>`), not the
+repository's commit, so commits elsewhere do not change its fingerprint. Git is consulted
+only when a parent folder has a `.git`. Isolated worktrees of a sub-project start from the
+repository's last commit with the sub-project's entries replaced by its fingerprinted files;
+the rest is checked out as context, the sub-project's files are copied byte for byte, and the
+agent works in the sub-project's folder inside the worktree. Changes are listed relative to
+the sub-project; any outside it are relative paths starting `../`, which fail the scope
+check, so nothing is applied.
+
 ## Persistence and concurrency
 
 Every mutation takes an exclusive project writer lock. New artifacts are written

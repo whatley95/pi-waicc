@@ -13,7 +13,7 @@ import type {
   ExtensionContext,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { json, loadSession, readText } from "./files.ts";
+import { initialize, json, loadSession, readText } from "./files.ts";
 import { join } from "node:path";
 import {
   copyHandoffPrompt,
@@ -29,7 +29,7 @@ import { elapsed, type ProgressEvent } from "./progress.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { curate, memoryStates, propose, recall } from "./memory.ts";
-import { projectRoot, samePath, snapshot } from "./source.ts";
+import { initProject, projectRoot, samePath, snapshot } from "./source.ts";
 import { manualHandoffMessage } from "./render.ts";
 import type { manualHandoff } from "./render.ts";
 import {
@@ -507,6 +507,10 @@ export default function waicc(
     beginDevelopment(ctx.cwd, id, args === "--main" ? "main" : args === "--delegate" ? "delegate" : undefined);
     autoResolve(ctx, id);
     await prompt(ctx, "The human explicitly accepted this current plan and authorized in-scope development in the SAME session. Read implementationAuthorization and decision gates. Main implements by default; saved delegate ownership means coordinate ONE whole-plan handoff only when execution gates are all resolved. Main may finish genuinely unblocked tasks while others remain gated, but no partial/batch review or deployment. Finish ALL work/fixes/checks before one independent full code review. This command created no handoff and launches no agent.");
+  });
+  command("waicc-init", "Make the current folder its own WAICC project, for example one service in a monorepo", async (_args, ctx) => {
+    // From now on this chat resolves to the new project; its old selection stays with the old one.
+    show(ctx, initProject(ctx.cwd, initialize));
   });
   command("waicc-decisions", "Show a consolidated decision brief, recommendations and affected tasks: [session-id]", async (args, ctx) => {
     ensure(!args || !/\s/.test(args), "Usage: /waicc-decisions [session-id]");
