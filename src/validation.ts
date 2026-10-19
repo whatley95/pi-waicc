@@ -12,6 +12,26 @@ const packagedSkills = readdirSync(new URL("../skills/", import.meta.url), {
 export function ensure(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+/** A JSON object or array sent as text, decoded; anything else is returned unchanged.
+ * Some models send nested tool arguments as JSON strings and retry forever when refused. */
+export function decodeJsonText(value: unknown): unknown {
+  if (typeof value !== "string" || !/^s*[{[]/.test(value)) return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed !== null && typeof parsed === "object" ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
+/** Decodes JSON text in every top-level argument whose schema does not declare plain text. */
+export function decodeJsonArguments<T>(params: T, schema: unknown): T {
+  if (!params || typeof params !== "object") return params;
+  const properties = (schema as { properties?: Record<string, { type?: unknown }> } | undefined)?.properties ?? {};
+  return Object.fromEntries(Object.entries(params as Record<string, unknown>).map(([key, value]) =>
+    [key, properties[key]?.type === "string" ? value : decodeJsonText(value)])) as T;
+}
+
 export function record(value: unknown, name: string): Record<string, unknown> {
   ensure(
     value !== null && typeof value === "object" && !Array.isArray(value),

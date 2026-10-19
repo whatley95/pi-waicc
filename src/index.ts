@@ -55,7 +55,7 @@ import {
   saveContext,
   useMainWork,
 } from "./workflow.ts";
-import { advisorInput, ensure } from "./validation.ts";
+import { advisorInput, decodeJsonArguments, ensure } from "./validation.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { RecipientPin, Session } from "./types.ts";
 import { authorizationState } from "./state.ts";
@@ -136,6 +136,9 @@ export default function waicc(
   const copied = new Map<string, string>();
   const compactedRuns = new Set<string>();
   const automaticRequests = new AutoPlanningRequests();
+  // Every WAICC tool accepts nested arguments sent as JSON text (see decodeJsonArguments).
+  const registerTool: ExtensionAPI["registerTool"] = (tool) =>
+    pi.registerTool({ ...tool, execute: (id, params, ...rest) => tool.execute(id, decodeJsonArguments(params, tool.parameters), ...rest) });
   const dispatches = new Map<string, {
     controller: AbortController; done: Promise<unknown>;
     label: string; startedAt: number; events: ProgressEvent[];
@@ -786,7 +789,7 @@ export default function waicc(
   }
   command(
     "waicc-dispatch",
-    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] [--continue|--no-continue] [--loop [cycles]] | --progress | --profiles | --init-profiles | --stop",
+    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] [--continue|-c|--no-continue] [--loop [cycles]] | --progress | --profiles | --init-profiles | --stop",
     async (args, ctx) => {
       if (args === "--profiles") {
         show(ctx, profilesView(ctx.cwd));
@@ -983,7 +986,7 @@ export default function waicc(
       } else show(ctx, recall(ctx.cwd, args, true));
     },
   );
-  pi.registerTool({
+  registerTool({
     name: "waicc_checkpoint",
     label: "Recover compact WAICC context",
     description: "Read-only compact recovery: current canonical owner checkpoint, or the recipient's frozen request checkpoint. Follow exact-contract/evidence pointers; no history deletion, status changes or permission grants.",
@@ -999,7 +1002,7 @@ export default function waicc(
       return result(checkpointView(projectRoot(ctx.cwd), loadSession(projectRoot(ctx.cwd), selected(ctx, params.sessionId))));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_context",
     label: "Save WAICC coordinator context",
     description: "Coordinator: save important user context, constraints, source references and established decisions/rationale before handoff. All roles receive a frozen copy. This does not amend requirements or adopt advice. Pending handoffs must first be finished/cancelled.",
@@ -1010,7 +1013,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_status",
     label: "WAICC status",
     description:
@@ -1028,7 +1031,7 @@ export default function waicc(
       return result(status(ctx.cwd, selected(ctx, params.sessionId)));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_start_planning",
     label: "Start automatic WAICC planning",
     description: "Coordinator only; auto-planning defaults on: capture the current human work request exactly in a planning-only session when tracked steps, dependencies or completion checks would keep work on track, even for small tasks. Not for trivial one-step edits, questions or skip-planning requests. Requires a live requestId from auto-planning guidance. Never launches agents, changes scope, accepts plans or authorizes coding. Existing selected sessions are returned unchanged, never replaced.",
@@ -1052,7 +1055,7 @@ export default function waicc(
           : `Planning-only startup. Save important prior chat constraints/decisions/source references with waicc_context, then waicc_prepare expectedVersion 0 mode planning with a faithful requirements brief; tasks may be []. The independent planner forms the detailed source-backed plan. ${guidance}` });
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_prepare",
     label: "Prepare WAICC handoff",
     description:
@@ -1083,7 +1086,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_assess",
     label: "Assess WAICC reply",
     description:
@@ -1120,7 +1123,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_request",
     label: "WAICC follow-up",
     description:
@@ -1151,7 +1154,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_check",
     label: "Run confirmed WAICC check",
     description: "Recipient only, explicit --run-checks plus interactive confirmation EACH time. Execute an exact local check program/args at project root, with timeout and source-pinned output log. General execution tools stay blocked; not an OS sandbox. No production, installs, resets or deployments. Do not pass secrets. Logs/exit codes are evidence, not code-review approval.",
@@ -1185,7 +1188,7 @@ export default function waicc(
       return result(await runRecipientCheck(ctx.cwd, binding.pin, command, source, run, signal));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_reply",
     label: "Submit pinned WAICC reply",
     description:
@@ -1213,7 +1216,7 @@ export default function waicc(
       return result(submitted);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_memory",
     label: "WAICC project memory",
     description:

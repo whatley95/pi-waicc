@@ -479,7 +479,7 @@ Every step and the agent's last message are also saved in the run's `dispatch/<i
 Progress comes from each agent's own event stream (Claude `stream-json`, Codex `--json`,
 Pi `--mode json`); Antigravity's stream is not verified, so it may show fewer steps.
 
-**Continue automatically.** Add `--continue` and, when the agent submits a valid reply,
+**Continue automatically.** Add `--continue` (short: `-c`) and, when the agent submits a valid reply,
 WAICC runs the `/waicc-continue` step for you: the reply is validated and the main agent
 starts assessing it. If the main agent is busy, the assessment waits for its current turn.
 It only saves you the command: accepting a plan still leaves coding to your
@@ -902,7 +902,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch --via <agent> --check "<command>"...` | Dispatch a testing (or coding) handoff that may run only these exact pre-approved commands |
 | `/waicc-dispatch [profile]`                      | Dispatch with the agent profile for the waiting handoff's role, or a named profile |
 | `/waicc-dispatch --progress`                     | List every step the running agent has taken so far |
-| `/waicc-dispatch [profile] --continue`           | Run the continue step automatically when a valid reply arrives (`--no-continue` to skip once) |
+| `/waicc-dispatch [profile] --continue` (or `-c`)  | Run the continue step automatically when a valid reply arrives (`--no-continue` to skip once) |
 | `/waicc-dispatch [profile] --loop [cycles]`      | Code review → fix → re-review until it passes, at most 3 cycles by default; never closes |
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
@@ -1185,6 +1185,12 @@ calls, and learning from unverified replies are intentionally absent in 0.1.0.
 See [skill provenance](THIRD_PARTY_NOTICES.md).
 
 ## Integrity and limits
+
+Some models send a nested tool argument (a contract, completion report or reply) as JSON
+text instead of an object. WAICC decodes such text for every argument whose schema is not
+plain text, in Pi tools and the MCP server, so these models no longer loop on
+"Contract must be an object". Text that is not a JSON object or array is left unchanged and
+still reported.
 
 Contracts retain source quotes and stable requirement IDs. Dependency graphs must
 be acyclic; acceptance criteria reference known requirements. Readiness requires
