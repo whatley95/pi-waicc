@@ -999,6 +999,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-memory [query]`                          | Inspect candidate/active/stale memory                                                                 |
 | `/waicc-memory confirm\|revoke [<id>\|all]`       | Human curation: a specific entry, all candidates after one dialog, or pick from a list with no ID |
 | `/waicc-ignore`                                  | Configure SVN ignore rules explicitly; Git is automatic                                               |
+| `/waicc-init`                                    | Make the current folder its own WAICC project, such as one service in a monorepo |
 
 Bindings are per Pi chat and repository, persisted in Pi's session entries. Multiple
 sessions are never silently resolved by choosing the newest. `/waicc-use` provides
@@ -1182,6 +1183,33 @@ Standalone CLI equivalent:
 ```sh
 node src/cli.ts --root <project> advisor <session-id> --requirements REQ-001 "Which pagination approach fits?"
 ```
+
+## Monorepos: one service as its own project
+
+WAICC's project is normally the repository root. In a monorepo that can be too much: tens of
+thousands of files to fingerprint (WAICC stops at 10,000), and every commit by any team
+would look like a change to your handoffs. Make the service folder its own project, once:
+
+```text
+cd services/status
+/waicc-init          # CLI: waicc init
+```
+
+From then on, Pi started in that folder (or below it) treats it as the WAICC project:
+
+- **Only that folder is fingerprinted**, through Git, as its own subtree. Commits elsewhere in
+  the monorepo do not change its fingerprint, so they never invalidate its handoffs.
+- **Its state lives in its own `.pi/pi-waicc/`**, which ignores itself, so the monorepo shows
+  no new files. Sessions you already had at the repository root stay there.
+- **Allowed paths, checks and memory sources are relative to the service folder.**
+- **Isolated coding (Claude/Codex) gets the whole monorepo as context:** the rest of the
+  repository as last committed, plus the service's current files exactly. Shared modules
+  still build, but only changes inside the service can be applied; a change to another
+  service is reported as outside the task's allowed paths, and nothing is applied.
+
+Work that spans services, such as changing a producer in another service, belongs in that
+service's own session (run `/waicc-init` there too), or in a shared parent folder initialized
+the same way if one contract must cover both and it stays under the file limit.
 
 ## Project storage and version control
 
