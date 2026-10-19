@@ -23,7 +23,8 @@ import {
 import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
-import { initAgentConfig, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { decisionSettings, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { autoDecidable } from "./decisions.ts";
 import { elapsed, type ProgressEvent } from "./progress.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
@@ -58,7 +59,7 @@ import {
 } from "./workflow.ts";
 import { advisorInput, decodeJsonArguments, ensure } from "./validation.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
-import type { Contract, RecipientPin, Session } from "./types.ts";
+import type { Contract, ContractDecision, RecipientPin, Session } from "./types.ts";
 import { authorizationState } from "./state.ts";
 import { AutoPlanningRequests, autoPlanningInstructions, autoPlanningMode } from "./auto-planning.ts";
 import type { RoundPhase } from "./types.ts";
@@ -342,6 +343,46 @@ export default function waicc(
       },
     });
   }
+  /** Your standing policies for the main agent's instructions; a broken config is reported elsewhere. */
+  function policiesFor(ctx: ExtensionContext): string {
+    try {
+      const text = policyGuidance(decisionSettings(ctx.cwd).policies);
+      return text ? `\n\n${text}` : "";
+    } catch {
+      return "";
+    }
+  }
+  /** Your autoDecide setting: accept qualifying recommendations, and say so. Returns what it accepted. */
+  function autoResolve(ctx: ExtensionContext, id: string): string[] {
+    let enabled = false;
+    try {
+      enabled = decisionSettings(ctx.cwd).autoDecide === "low-risk";
+    } catch {
+      return [];
+    }
+    if (!enabled) return [];
+    let decisions: ContractDecision[] = [];
+    try {
+      decisions = readContract(ctx.cwd, id).contract.decisions ?? [];
+    } catch {
+      return [];
+    }
+    const accepted: string[] = [];
+    for (const decision of decisions.filter((d) => autoDecidable(d).ok)) {
+      try {
+        resolveDecision(ctx.cwd, id, decision.id, decision.recommendation, { kind: "auto-low-risk" });
+        accepted.push(`${decision.id}: ${decision.question} → ${decision.recommendation}`);
+      } catch {
+        break; // For example a pending handoff: the next assessment tries again.
+      }
+    }
+    if (accepted.length) {
+      const message = `Accepted automatically under your autoDecide setting (low risk, reversible, nothing sensitive):\n${accepted.map((line) => `• ${line}`).join("\n")}\nReview with /waicc-decisions. Everything else still waits for you.`;
+      ctx.ui.notify(`${accepted.length} low-risk decision${accepted.length === 1 ? "" : "s"} accepted automatically.`, "info");
+      pi.sendMessage({ customType: "waicc-auto-decisions", content: message, display: true }, { triggerTurn: false });
+    }
+    return accepted;
+  }
   async function prompt(
     ctx: ExtensionCommandContext,
     instruction: string,
@@ -353,7 +394,7 @@ export default function waicc(
     const query = `${requirementsText(saved)}\n${focus}`;
     const recovery = checkpointView(projectRoot(ctx.cwd), saved, snapshot(ctx.cwd).fingerprint, false);
     await pi.sendUserMessage(
-      `${guidance}\n\n${instruction}\n\nSession recovery (index, not a substitute for the exact contract/reply; use waicc_status when assessing):\n${json({ ...recovery, requirementsPreview: requirementsText(saved).slice(0, 2400), advisor: saved.rounds.at(-1)?.advisor })}\n\nRelevant confirmed project memory:\n${json(recall(ctx.cwd, query))}`,
+      `${guidance}${policiesFor(ctx)}\n\n${instruction}\n\nSession recovery (index, not a substitute for the exact contract/reply; use waicc_status when assessing):\n${json({ ...recovery, requirementsPreview: requirementsText(saved).slice(0, 2400), advisor: saved.rounds.at(-1)?.advisor })}\n\nRelevant confirmed project memory:\n${json(recall(ctx.cwd, query))}`,
       { deliverAs: "followUp" },
     );
   }
@@ -464,13 +505,14 @@ export default function waicc(
     ensure(["", "--main", "--delegate"].includes(args), "Usage: /waicc-develop [--main|--delegate]");
     const id = selected(ctx);
     beginDevelopment(ctx.cwd, id, args === "--main" ? "main" : args === "--delegate" ? "delegate" : undefined);
+    autoResolve(ctx, id);
     await prompt(ctx, "The human explicitly accepted this current plan and authorized in-scope development in the SAME session. Read implementationAuthorization and decision gates. Main implements by default; saved delegate ownership means coordinate ONE whole-plan handoff only when execution gates are all resolved. Main may finish genuinely unblocked tasks while others remain gated, but no partial/batch review or deployment. Finish ALL work/fixes/checks before one independent full code review. This command created no handoff and launches no agent.");
   });
   command("waicc-decisions", "Show a consolidated decision brief, recommendations and affected tasks: [session-id]", async (args, ctx) => {
     ensure(!args || !/\s/.test(args), "Usage: /waicc-decisions [session-id]");
     show(ctx, decisionsView(ctx.cwd, selected(ctx, args || undefined)));
   });
-  command("waicc-decide", "Record your answer to a decision gate: <decision-id> <answer>, <decision-id> recommended, all recommended, or no arguments to pick one; not a scope amendment", async (args, ctx) => {
+  command("waicc-decide", "Record your answer to a decision gate: <decision-id> <answer>, <decision-id> recommended, all recommended, auto (your low-risk setting), or no arguments to pick one; not a scope amendment", async (args, ctx) => {
     const id = selected(ctx);
     const view = decisionsView(ctx.cwd, id);
     const open = view.decisions.filter((decision) => decision.status !== "resolved");
@@ -480,6 +522,20 @@ export default function waicc(
     const recommended = (text: string) => /^(recommended|recommendation|rec)$/i.test(text.trim());
     const record = (decision: (typeof open)[number], answer: string) => resolveDecision(ctx.cwd, id, decision.id, answer);
     const done = () => show(ctx, { ...decisionsView(ctx.cwd, id), session: status(ctx.cwd, id) });
+    if (args.toLowerCase() === "auto") {
+      const enabled = decisionSettings(ctx.cwd).autoDecide === "low-risk";
+      const accepted = enabled ? autoResolve(ctx, id) : [];
+      const left = (readContract(ctx.cwd, id).contract.decisions ?? []).filter((d) => d.status !== "resolved");
+      show(ctx, {
+        autoDecide: enabled ? "low-risk" : "off",
+        accepted,
+        stillYours: left.map((d) => ({ id: d.id, question: d.question, why: enabled ? autoDecidable(d).reason : "autoDecide is off" })),
+        nextAction: enabled
+          ? left.length ? "Answer the rest with /waicc-decide (or <ID> recommended)." : "No open decisions are left."
+          : 'Set "autoDecide": "low-risk" in your user agent config to accept qualifying recommendations automatically.',
+      });
+      return;
+    }
     const word = /^(\S+)\s*([\s\S]*)$/.exec(args);
     if (word && word[1].toLowerCase() === "all") {
       ensure(recommended(word[2]), "Usage: /waicc-decide all recommended (accept every open decision's recommendation)");
@@ -1195,7 +1251,40 @@ export default function waicc(
       coordinator(ctx);
       signal?.throwIfAborted();
       assess(ctx.cwd, params.sessionId, params as Assessment);
-      return result(status(ctx.cwd, params.sessionId), ctx, true);
+      const autoDecided = autoResolve(ctx, params.sessionId);
+      return result({ ...(autoDecided.length ? { autoDecided } : {}), ...(status(ctx.cwd, params.sessionId) as object) }, ctx, true);
+    },
+  });
+  registerTool({
+    name: "waicc_apply_policy",
+    label: "Answer a decision by the human's standing policy",
+    description:
+      "Coordinator only: record the answer to an OPEN human-owned decision that one of the human's standing policies (listed in your instructions) clearly and fully answers. Cite the policy by number; the answer must follow the policy exactly; explain why it applies. Never for external or agent-owned decisions, and never stretched beyond what the policy says: if it only partly fits, ask the human. The answer is announced to the human.",
+    parameters: Type.Object({
+      sessionId: sessionSchema,
+      decisionId: Type.String(),
+      policy: Type.Integer({ minimum: 1, description: "Policy number, as listed" }),
+      answer: Type.String(),
+      rationale: Type.String({ description: "Why this policy answers this decision" }),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      trusted(ctx);
+      coordinator(ctx);
+      signal?.throwIfAborted();
+      const { policies } = decisionSettings(ctx.cwd);
+      const policy = policies[params.policy - 1];
+      ensure(policy, policies.length ? `There is no policy ${params.policy}; the human has ${policies.length}.` : "The human has no standing policies; ask them to decide.");
+      const decision = (readContract(ctx.cwd, params.sessionId).contract.decisions ?? []).find((d) => d.id.toLowerCase() === params.decisionId.toLowerCase());
+      ensure(decision && decision.status !== "resolved", `No open decision ${JSON.stringify(params.decisionId)}.`);
+      ensure(decision.owner === "human", decision.owner === "external"
+        ? "External decisions need the person who owns them; a policy cannot answer them."
+        : "Agent-owned decisions are resolved by investigation, not by policies.");
+      ensure(params.answer.trim() && params.rationale.trim(), "Give the answer and why the policy applies");
+      resolveDecision(ctx.cwd, params.sessionId, decision.id, params.answer.trim(), { kind: "policy", policy, rationale: params.rationale.trim() });
+      const message = `${decision.id} answered by your policy ${params.policy} ("${policy}"): ${params.answer.trim()}\nWhy: ${params.rationale.trim()}\nReview with /waicc-decisions.`;
+      ctx.ui.notify(`${decision.id} answered by your standing policy ${params.policy}.`, "info");
+      pi.sendMessage({ customType: "waicc-auto-decisions", content: message, display: true }, { triggerTurn: false });
+      return result({ ...decisionsView(ctx.cwd, params.sessionId), session: status(ctx.cwd, params.sessionId) });
     },
   });
   registerTool({
@@ -1503,7 +1592,7 @@ export default function waicc(
     return {
       message: {
         customType: "waicc-context",
-        content: `${automatic}\n\n${contractOwner}\n\n${sourceFirst}\n\nWAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}. If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
+        content: `${automatic}\n\n${contractOwner}${policiesFor(ctx)}\n\n${sourceFirst}\n\nWAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}. If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
         display: false,
       },
     };

@@ -427,7 +427,10 @@ export function openDecisionsText(c: Contract): string {
 }
 
 /** Resolves only an existing gate; no task, path, requirement or scope rewriting. */
-export function resolveDecision(cwd: string, id: string, decisionId: string, answer: string): Session {
+/** Who decided: the human by command, a standing policy the human wrote, or the human's low-risk setting. */
+export type DecisionSource = { kind: "human" } | { kind: "policy"; policy: string; rationale: string } | { kind: "auto-low-risk" };
+
+export function resolveDecision(cwd: string, id: string, decisionId: string, answer: string, by: DecisionSource = { kind: "human" }): Session {
   const root = projectRoot(cwd); identifier(decisionId); text(answer, "Decision answer");
   return withLock(root, () => {
     const s = loadSession(root, id); requireOpen(s); noPending(s);
@@ -446,18 +449,23 @@ export function resolveDecision(cwd: string, id: string, decisionId: string, ans
     const wasAuthorized = authorizationState(s, c).authorized;
     const recordId = randomUUID(), path = `decisions/${recordId}.json`, oldVersion = s.contractVersion;
     decision.status = "resolved"; decision.answer = answer;
-    decision.evidence.push(`Human-recorded answer; exact text and provenance retained in ${path}`);
+    decision.evidence.push(by.kind === "policy"
+      ? `Resolved by the human's standing policy "${by.policy}" (applied by the coordinator: ${by.rationale}); record in ${path}`
+      : by.kind === "auto-low-risk"
+        ? `Recommendation accepted automatically under the human's autoDecide low-risk setting (low risk, reversible); record in ${path}`
+        : `Human-recorded answer; exact text and provenance retained in ${path}`);
     validateContract(c, requirementsText(s));
     s.contractVersion++;
     s.planApproval = accepted ? { contractVersion: s.contractVersion, requirementsDigest: digest(requirementsText(s)),
       requestId: acceptedRequestId ?? s.reviewApproval!.requestId } : null;
     resetReview(s); // The changed version never inherits specification/code PASS.
     const source = snapshot(root), files = contractFiles(s, c, source);
-    files[path] = json({ id: recordId, decisionId, answer, recordedAt: now(), recordedBy: "human-command", previousVersion: oldVersion, contractVersion: s.contractVersion,
+    files[path] = json({ id: recordId, decisionId, answer, recordedAt: now(), recordedBy: by.kind === "policy" ? "standing-policy" : by.kind === "auto-low-risk" ? "auto-low-risk" : "human-command",
+      ...(by.kind === "policy" ? { policy: by.policy, rationale: by.rationale } : {}), previousVersion: oldVersion, contractVersion: s.contractVersion,
       requirementsDigest: digest(requirementsText(s)), scopeChanged: false, reviewInvalidated: true });
     if (wasAuthorized) grantImplementation(s, c, source.fingerprint, "human-decision-resolution", files);
     s.status = wasAuthorized ? decisionSummary(c).openGates ? "IMPLEMENTATION_GATED" : "READY_TO_IMPLEMENT" : accepted ? "PLAN_READY" : "NEEDS_CHANGES";
-    return commit(root, s, "decision.answered-by-human", files);
+    return commit(root, s, by.kind === "human" ? "decision.answered-by-human" : `decision.answered-by-${by.kind}`, files);
   });
 }
 /** Explicit human command selects delegation; subsequent agent requests honor that choice. */
