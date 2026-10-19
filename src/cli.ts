@@ -92,9 +92,13 @@ try {
         !resolved.confirmChecks || rest.includes("--confirm-checks"),
         `These checks come from the project's agent config: ${resolved.options.checks?.map(commandText).join("; ")}. Review them, then add --confirm-checks to run them.`,
       );
+      // The loop needs a main agent to assess and fix between reviews, which only Pi has.
+      ensure(!resolved.options.loop, "--loop needs the main agent in Pi to assess and fix between reviews; use /waicc-dispatch --loop there.");
       // Live steps go to stderr; stdout keeps the one JSON result.
-      output = await runDispatch(prepareDispatch(cwd, id, resolved.options), runAgent, undefined, (event) =>
+      const outcome = await runDispatch(prepareDispatch(cwd, id, resolved.options), runAgent, undefined, (event) =>
         process.stderr.write(`[${elapsed(event.at)}] ${event.kind === "rejected" ? "✗ " : event.kind === "note" ? "says: " : ""}${event.text}\n`));
+      // Without a main agent, continuing means validating the reply into AWAITING_ASSESSMENT.
+      output = resolved.options.continue && outcome.replySubmitted ? { ...outcome, continued: ingest(cwd, id).status } : outcome;
       break;
     }
     case "profiles":

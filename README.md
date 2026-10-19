@@ -479,6 +479,49 @@ Every step and the agent's last message are also saved in the run's `dispatch/<i
 Progress comes from each agent's own event stream (Claude `stream-json`, Codex `--json`,
 Pi `--mode json`); Antigravity's stream is not verified, so it may show fewer steps.
 
+**Continue automatically.** Add `--continue` (short: `-c`) and, when the agent submits a valid reply,
+WAICC runs the `/waicc-continue` step for you: the reply is validated and the main agent
+starts assessing it. If the main agent is busy, the assessment waits for its current turn.
+It only saves you the command: accepting a plan still leaves coding to your
+`/waicc-develop`, and nothing is ever closed for you. To make it your default, set
+`"autoContinue": true` in your user agent config (see [Agent profiles](#agent-profiles-choose-an-agent-per-role-once));
+`--no-continue` turns it off for one run. A project's config cannot turn it on. The CLI's
+`--continue` validates the reply into `AWAITING_ASSESSMENT`, since there is no main agent.
+
+**Review until it passes: `--loop`.** For a waiting code review, `/waicc-dispatch sol --loop`
+runs review → fix → re-review cycles, at most 3 by default (`--loop 5` for up to 8):
+
+```text
+/waicc-review Check authorization and regressions
+/waicc-dispatch sol --loop
+   → sol reviews (cycle 1/3) → the main agent assesses, fixes ALL findings, runs checks
+     and requests a fresh review → sol re-reviews (cycle 2/3) → pass
+   → "Review passed after 2 cycles. Nothing was closed: run /waicc-close when you are satisfied."
+```
+
+Each cycle's agent, model and cycle number show in the live panel. The loop stops and hands
+back to you when:
+
+- the review **passes** (`READY_TO_CLOSE`; it never closes the contract);
+- the main agent **does not request a fresh review**, because a finding needs your decision,
+  is disputed, blocked or out of scope;
+- **the same findings come back** after the fixes (the reply is still assessed, but no new
+  review is sent);
+- the **cycle limit** is reached (a fresh review is left waiting for you);
+- the reviewer submits **no reply**, or you run `/waicc-dispatch --stop`.
+
+The main agent fixes only inside work you already authorized with `/waicc-develop`; the loop
+never starts coding by itself, and never commits, pushes or deploys. It also stays within
+WAICC's own code-review round budget. Each cycle is a full review plus fixes, so watch the
+first few loops: if they keep hitting the limit, tighten the review focus or the plan.
+`--loop` needs Pi; the CLI refuses it.
+
+Verified live with a real Pi coordinator (DeepSeek V4 Pro as the main agent) and Claude
+Sonnet reviewing a planted cross-account bug: the review found it and a missing test, the
+main agent assessed, fixed both, ran the tests (4/4) and requested a fresh review, which
+was dispatched automatically and passed, and the loop ended at `READY_TO_CLOSE` after
+2 cycles in under 5 minutes without closing anything.
+
 | `--via`  | Runs                                 | Read-only enforcement                                   | Model flag              |
 | -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
 | `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP. Coding: edits in an isolated worktree, no shell | `--model opus` |
@@ -699,6 +742,8 @@ To write it yourself, create either file, or both:
 
 Safety rules:
 
+- **`"autoContinue": true`** (user file only) runs the continue step after every dispatch
+  that returns a valid reply; a project file that sets it is rejected.
 - **A config can never authorize coding.** There is no `implement` field; type
   `--implement` on each coding dispatch.
 - **Checks from the project file are confirmed before they run.** Anyone who can change
@@ -857,6 +902,8 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch --via <agent> --check "<command>"...` | Dispatch a testing (or coding) handoff that may run only these exact pre-approved commands |
 | `/waicc-dispatch [profile]`                      | Dispatch with the agent profile for the waiting handoff's role, or a named profile |
 | `/waicc-dispatch --progress`                     | List every step the running agent has taken so far |
+| `/waicc-dispatch [profile] --continue` (or `-c`)  | Run the continue step automatically when a valid reply arrives (`--no-continue` to skip once) |
+| `/waicc-dispatch [profile] --loop [cycles]`      | Code review → fix → re-review until it passes, at most 3 cycles by default; never closes |
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
@@ -1138,6 +1185,12 @@ calls, and learning from unverified replies are intentionally absent in 0.1.0.
 See [skill provenance](THIRD_PARTY_NOTICES.md).
 
 ## Integrity and limits
+
+Some models send a nested tool argument (a contract, completion report or reply) as JSON
+text instead of an object. WAICC decodes such text for every argument whose schema is not
+plain text, in Pi tools and the MCP server, so these models no longer loop on
+"Contract must be an object". Text that is not a JSON object or array is left unchanged and
+still reported.
 
 Contracts retain source quotes and stable requirement IDs. Dependency graphs must
 be acyclic; acceptance criteria reference known requirements. Readiness requires

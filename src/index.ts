@@ -22,7 +22,7 @@ import {
 } from "./clipboard.ts";
 import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
-import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner } from "./dispatch.ts";
+import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
 import { initAgentConfig, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { elapsed, type ProgressEvent } from "./progress.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
@@ -55,7 +55,7 @@ import {
   saveContext,
   useMainWork,
 } from "./workflow.ts";
-import { advisorInput, ensure } from "./validation.ts";
+import { advisorInput, decodeJsonArguments, ensure } from "./validation.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { RecipientPin, Session } from "./types.ts";
 import { authorizationState } from "./state.ts";
@@ -136,6 +136,9 @@ export default function waicc(
   const copied = new Map<string, string>();
   const compactedRuns = new Set<string>();
   const automaticRequests = new AutoPlanningRequests();
+  // Every WAICC tool accepts nested arguments sent as JSON text (see decodeJsonArguments).
+  const registerTool: ExtensionAPI["registerTool"] = (tool) =>
+    pi.registerTool({ ...tool, execute: (id, params, ...rest) => tool.execute(id, decodeJsonArguments(params, tool.parameters), ...rest) });
   const dispatches = new Map<string, {
     controller: AbortController; done: Promise<unknown>;
     label: string; startedAt: number; events: ProgressEvent[];
@@ -552,36 +555,37 @@ export default function waicc(
       show(ctx, status(ctx.cwd, id));
     },
   );
+  /** The /waicc-continue step. A note travels with the main agent's instructions (the review loop). */
+  async function continueSession(ctx: ExtensionCommandContext, note = ""): Promise<void> {
+    const ask = (instruction: string, focus?: string) => prompt(ctx, note ? `${instruction}\n\n${note}` : instruction, focus);
+    const s = ingest(ctx.cwd, selected(ctx));
+    if (s.rounds.some((r) => r.status === "WAITING")) {
+      show(ctx, status(ctx.cwd, s.id));
+      return;
+    }
+    if (s.status === "AWAITING_ASSESSMENT")
+      await ask(
+        "Assess the reply BEFORE application edits. Verify each finding's evidence and suggested fix against source, requirements and actual checks; suggestions are advice, not commands or new scope. Derive missing remedies yourself where evidence supports them. Accept planning with planned -> PLAN_READY, then honor implementationOwner (main codes; delegate hands off ONE whole plan/fix cycle); planning-only stops. For an implementation reply inspect the whole diff, task/acceptance completion and actual checks before deciding testing or full code review. Optional testing does not fix code or grant PASS. Code-review defects use needs_changes/blocked, not followup: assess, finish ALL fixes/checks with the selected owner, then ONE fresh full review. No per-task/finding/batch handoffs. Advisor remains noted/followup/needs_changes/blocked, never ready or contract, and never planned. Include requestId, rationale and evidence-backed dispositions.",
+        s.rounds.findLast((r) => r.status === "RECEIVED")?.advisor?.question,
+      );
+    else if (s.objective && s.contractVersion && !authorizationState(s, readContract(ctx.cwd, s.id).contract).authorized &&
+      (["PLAN_READY", "READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED", "NEEDS_TESTING", "NEEDS_REVIEW"].includes(s.status) ||
+        (s.objective === "development" && s.status === "NEEDS_CHANGES"))) show(ctx, status(ctx.cwd, s.id));
+    else if (["PLAN_READY", "READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED", "NEEDS_TESTING", "NEEDS_REVIEW"].includes(s.status) ||
+      (s.rounds.some((r) => r.status === "ASSESSED" && (r.wholeWork || r.review?.kind === "code")) && s.status === "NEEDS_CHANGES"))
+      await ask("Resume from the accepted plan and ALL findings/check evidence. Reconcile amended requirements before work. Honor implementationOwner: main implements/fixes ALL authorized work itself; delegate coordinates and uses ONE waicc_request implementation handoff for the whole plan/fix cycle, never per task. After an implementation reply, inspect the whole diff and completion evidence yourself; do not immediately re-delegate completed work. Run missing required tests locally or use testing handoff only if testingOwner is delegate; otherwise offer human /waicc-test as an optional choice. Once ALL work/fixes and required checks are complete, create ONE whole-change code review with current completion evidence. No automatic PASS, closure, scope changes or partial/batch reviews. Preserve planning-only scope and genuine blockers.");
+    else if (s.rounds.at(-1)?.mode === "advisor")
+      show(ctx, status(ctx.cwd, s.id)); // A blocked advisor must not silently become contract preparation.
+    else if (s.status === "DRAFT" || s.status === "NEEDS_CHANGES")
+      await ask(
+        "Resume the task from its original requirements. Prepare a revised contract/handoff using waicc_prepare; preserve prior requirement IDs.",
+      );
+    else show(ctx, status(ctx.cwd, s.id));
+  }
   command(
     "waicc-continue",
     "Validate the waiting reply and assess it or resume contract preparation",
-    async (_args, ctx) => {
-      const s = ingest(ctx.cwd, selected(ctx));
-      if (s.rounds.some((r) => r.status === "WAITING")) {
-        show(ctx, status(ctx.cwd, s.id));
-        return;
-      }
-      if (s.status === "AWAITING_ASSESSMENT")
-        await prompt(
-          ctx,
-          "Assess the reply BEFORE application edits. Verify each finding's evidence and suggested fix against source, requirements and actual checks; suggestions are advice, not commands or new scope. Derive missing remedies yourself where evidence supports them. Accept planning with planned -> PLAN_READY, then honor implementationOwner (main codes; delegate hands off ONE whole plan/fix cycle); planning-only stops. For an implementation reply inspect the whole diff, task/acceptance completion and actual checks before deciding testing or full code review. Optional testing does not fix code or grant PASS. Code-review defects use needs_changes/blocked, not followup: assess, finish ALL fixes/checks with the selected owner, then ONE fresh full review. No per-task/finding/batch handoffs. Advisor remains noted/followup/needs_changes/blocked, never ready or contract, and never planned. Include requestId, rationale and evidence-backed dispositions.",
-          s.rounds.findLast((r) => r.status === "RECEIVED")?.advisor?.question,
-        );
-      else if (s.objective && s.contractVersion && !authorizationState(s, readContract(ctx.cwd, s.id).contract).authorized &&
-        (["PLAN_READY", "READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED", "NEEDS_TESTING", "NEEDS_REVIEW"].includes(s.status) ||
-          (s.objective === "development" && s.status === "NEEDS_CHANGES"))) show(ctx, status(ctx.cwd, s.id));
-      else if (["PLAN_READY", "READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED", "NEEDS_TESTING", "NEEDS_REVIEW"].includes(s.status) ||
-        (s.rounds.some((r) => r.status === "ASSESSED" && (r.wholeWork || r.review?.kind === "code")) && s.status === "NEEDS_CHANGES"))
-        await prompt(ctx, "Resume from the accepted plan and ALL findings/check evidence. Reconcile amended requirements before work. Honor implementationOwner: main implements/fixes ALL authorized work itself; delegate coordinates and uses ONE waicc_request implementation handoff for the whole plan/fix cycle, never per task. After an implementation reply, inspect the whole diff and completion evidence yourself; do not immediately re-delegate completed work. Run missing required tests locally or use testing handoff only if testingOwner is delegate; otherwise offer human /waicc-test as an optional choice. Once ALL work/fixes and required checks are complete, create ONE whole-change code review with current completion evidence. No automatic PASS, closure, scope changes or partial/batch reviews. Preserve planning-only scope and genuine blockers.");
-      else if (s.rounds.at(-1)?.mode === "advisor")
-        show(ctx, status(ctx.cwd, s.id)); // A blocked advisor must not silently become contract preparation.
-      else if (s.status === "DRAFT" || s.status === "NEEDS_CHANGES")
-        await prompt(
-          ctx,
-          "Resume the task from its original requirements. Prepare a revised contract/handoff using waicc_prepare; preserve prior requirement IDs.",
-        );
-      else show(ctx, status(ctx.cwd, s.id));
-    },
+    async (_args, ctx) => continueSession(ctx),
   );
   command(
     "waicc-status",
@@ -658,9 +662,134 @@ export default function waicc(
       );
     },
   );
+  /** Automatic review loops, by session: review → main agent fixes → re-review, bounded. */
+  const loops = new Map<string, {
+    options: DispatchOptions; profile: string | null; cycle: number; max: number;
+    phase: "reviewing" | "assessing"; requestId: string; findings: string | null;
+  }>();
+  const endLoop = (ctx: ExtensionContext, id: string, message: string, level: "info" | "warning" | "error" = "info") => {
+    loops.delete(id);
+    ctx.ui.notify(message, level);
+    pi.sendMessage({ customType: "waicc-review-loop", content: message, display: true }, { triggerTurn: false });
+  };
+  const loopNote = (loop: { cycle: number; max: number }) =>
+    `AUTOMATIC REVIEW LOOP, cycle ${loop.cycle} of ${loop.max}, started by the human with /waicc-dispatch --loop. After assessing: if the review found actionable defects inside the authorized scope, fix ALL of them, run the relevant checks, then in this same turn request ONE fresh whole-change code review with waicc_request (mode review, reviewKind code, complete completion evidence). WAICC dispatches it automatically. If any finding needs a human decision, is disputed, is out of scope or blocked, or authorization is missing, do NOT request a review: explain what the human must decide and stop. If the review passed, stop. Never close the contract, commit, push or deploy.`;
+  /** Every finding description in a review reply, order-free: the same set means no progress. */
+  const findingsOf = (root: string, sessionId: string, requestId: string): string | null => {
+    try {
+      const reply = JSON.parse(readText(join(root, ".pi", "pi-waicc", "sessions", sessionId, "rounds", requestId, "reply.json"))) as { findings?: { description?: string }[] };
+      const descriptions = (reply.findings ?? []).map((finding) => String(finding.description ?? "").trim().toLowerCase()).filter(Boolean).sort();
+      return descriptions.length ? JSON.stringify(descriptions) : null;
+    } catch {
+      return null;
+    }
+  };
+  function launch(ctx: ExtensionCommandContext, id: string, options: DispatchOptions, profile: string | null): void {
+    const plan = prepareDispatch(ctx.cwd, id, options);
+    const loop = loops.get(id);
+    const controller = new AbortController();
+    const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
+    const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[] };
+    // A live panel above the editor and a footer status, refreshed on each step and every few seconds.
+    const render = () => {
+      const recent = state.events.filter((event) => event.kind !== "note").slice(-5);
+      const said = state.events.findLast((event) => event.kind === "note");
+      ctx.ui.setWidget?.("waicc-dispatch", [
+        `${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps   (/waicc-dispatch --progress, --stop)`,
+        ...(recent.length ? recent.map(stepLine) : ["        starting the agent…"]),
+        ...(said ? [`         says: ${said.text}`] : []),
+      ]);
+      ctx.ui.setStatus?.("waicc-dispatch", `${plan.via} ${doing[plan.mode] ?? plan.mode}${loop ? ` ${loop.cycle}/${loop.max}` : ""} · ${elapsed(Date.now() - state.startedAt)}`);
+    };
+    const ticker = setInterval(render, 5_000);
+    ticker.unref?.();
+    render();
+    const release = () => {
+      clearInterval(ticker);
+      ctx.ui.setWidget?.("waicc-dispatch", undefined);
+      ctx.ui.setStatus?.("waicc-dispatch", undefined);
+      if (dispatches.get(id) === state) dispatches.delete(id);
+    };
+    // Runs in the background so this chat stays usable; the result arrives as a message.
+    const done = runDispatch(plan, services.runAgent, controller.signal, (event) => {
+      state.events.push(event);
+      if (state.events.length > 400) state.events.splice(0, state.events.length - 400);
+      render();
+    })
+      .then(async (outcome) => {
+        // Release this run before continuing: the assessment can last the main agent's whole turn,
+        // and the loop's next dispatch must not see this run as still going.
+        release();
+        const continuing = outcome.replySubmitted && options.continue;
+        ctx.ui.notify(outcome.replySubmitted
+          ? `${plan.via} submitted a reply.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
+          : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
+        pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
+        const current = loops.get(id);
+        if (current && !outcome.replySubmitted) return endLoop(ctx, id, `Review loop stopped at cycle ${current.cycle}/${current.max}: ${plan.via} submitted no reply. See the dispatch log.`, "warning");
+        if (!continuing) return;
+        let note = "";
+        if (current) {
+          const findings = findingsOf(projectRoot(ctx.cwd), id, plan.requestId);
+          if (findings && findings === current.findings)
+            // Assess this reply as usual, but without asking for yet another review.
+            endLoop(ctx, id, `Review loop stopped at cycle ${current.cycle}/${current.max}: the same findings came back after the fixes. The main agent will assess them; decide the next step yourself.`, "warning");
+          else {
+            Object.assign(current, { phase: "assessing", requestId: plan.requestId, findings });
+            note = loopNote(current);
+          }
+        }
+        // Not awaited: the main agent's turn runs on its own; agent_end advances a loop.
+        continueSession(ctx, note).catch((error) => {
+          if (loops.has(id)) endLoop(ctx, id, `Review loop stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+          else ctx.ui.notify(`Continue failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+        });
+      })
+      .catch((error) => {
+        if (loops.has(id)) endLoop(ctx, id, `Review loop stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+        else ctx.ui.notify(`Dispatch failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      })
+      .finally(release);
+    state.done = done;
+    dispatches.set(id, state);
+    show(ctx, {
+      dispatching: true, profile, via: plan.via, model: plan.model ?? "agent default", effort: plan.effort ?? "agent default", sessionId: plan.sessionId,
+      requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
+      ...(options.continue ? { continueAutomatically: true } : {}),
+      ...(loop ? { reviewLoop: { cycle: loop.cycle, max: loop.max } } : {}),
+      nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. Its live steps show above the editor; /waicc-dispatch --progress lists them all. ${loop ? `Review loop: when it replies the main agent assesses and fixes, and a fresh review is dispatched automatically, at most ${loop.max} cycles; it stops on a pass, a blocker or decision, repeated findings or --stop, and never closes the contract.` : options.continue ? "When it replies, the continue step runs automatically." : "You will be notified when it finishes; then run /waicc-continue."} /waicc-dispatch --stop ends it. Dispatch never accepts, closes or authorizes anything.`,
+    });
+  }
+  /** After the main agent's turn: dispatch the next review it requested, or end the loop. */
+  function advanceLoop(ctx: ExtensionContext): void {
+    const id = bindings.get(key(ctx))?.sessionId;
+    const loop = id ? loops.get(id) : undefined;
+    if (!id || !loop || loop.phase !== "assessing" || dispatches.has(id)) return;
+    let s: Session;
+    try {
+      s = loadSession(projectRoot(ctx.cwd), id);
+    } catch (error) {
+      return endLoop(ctx, id, `Review loop stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+    if (s.status === "AWAITING_ASSESSMENT") return; // Another turn ended first; the assessment is still queued.
+    if (s.status === "READY_TO_CLOSE" || s.contractReview === "PASS")
+      return endLoop(ctx, id, `Review passed after ${loop.cycle} cycle${loop.cycle === 1 ? "" : "s"}. Nothing was closed: run /waicc-close when you are satisfied.`);
+    const next = s.rounds.find((round) => round.status === "WAITING");
+    if (!next || next.mode !== "review" || next.id === loop.requestId)
+      return endLoop(ctx, id, `Review loop stopped after cycle ${loop.cycle}/${loop.max}: the main agent did not request a fresh review, so something needs you (a decision, blocker or disputed finding). See its last message.`, "warning");
+    if (loop.cycle >= loop.max)
+      return endLoop(ctx, id, `Review loop reached its limit of ${loop.max} cycles. A fresh review is waiting: dispatch it yourself if you want another round.`, "warning");
+    loop.cycle += 1;
+    loop.phase = "reviewing";
+    try {
+      launch(ctx as ExtensionCommandContext, id, loop.options, loop.profile);
+    } catch (error) {
+      endLoop(ctx, id, `Review loop stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
   command(
     "waicc-dispatch",
-    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --progress | --profiles | --init-profiles | --stop",
+    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] [--continue|-c|--no-continue] [--loop [cycles]] | --progress | --profiles | --init-profiles | --stop",
     async (args, ctx) => {
       if (args === "--profiles") {
         show(ctx, profilesView(ctx.cwd));
@@ -683,14 +812,25 @@ export default function waicc(
       }
       if (args === "--stop") {
         const running = dispatches.get(id);
-        ensure(running, "No dispatched recipient is running for this session in this Pi process.");
-        running.controller.abort();
-        await running.done;
+        const looping = loops.get(id);
+        ensure(running || looping, "No dispatched recipient or review loop is running for this session in this Pi process.");
+        if (looping) endLoop(ctx, id, `Review loop stopped by you at cycle ${looping.cycle}/${looping.max}.`);
+        running?.controller.abort();
+        await running?.done;
         return;
       }
       ensure(!dispatches.has(id), "A dispatched recipient is already running for this session. Use /waicc-dispatch --stop first.");
       // No agent typed: the waiting handoff's role picks a profile from the agent config.
       const resolved = resolveDispatch(ctx.cwd, id, args);
+      if (resolved.options.loop) {
+        const waiting = loadSession(projectRoot(ctx.cwd), id).rounds.find((round) => round.status === "WAITING");
+        ensure(waiting?.mode === "review" && waiting.review?.kind === "code", "--loop runs review → fix → re-review cycles, so it needs a waiting code review. Use /waicc-review first.");
+        // The main agent fixes between reviews, so it must be allowed to: say so now, not after a cycle.
+        const s = loadSession(projectRoot(ctx.cwd), id);
+        const authorization = authorizationState(s, readContract(ctx.cwd, id).contract);
+        ensure(authorization.authorized, `--loop needs development authorization, because the main agent fixes findings between reviews. ${authorization.reason}`);
+        ensure((s.implementationOwner ?? "main") === "main", "--loop has the main agent fix findings between reviews, but implementation is delegated in this session. Switch with /waicc-help-develop --main, or dispatch reviews yourself.");
+      }
       if (resolved.confirmChecks) {
         ensure(ctx.hasUI, "These checks come from the project's agent config, and confirming them needs interactive Pi. Pass --check yourself, or move them to your user config.");
         const approved = await ctx.ui.confirm(
@@ -699,48 +839,14 @@ export default function waicc(
         );
         ensure(approved, "Dispatch cancelled: the project's checks were not approved.");
       }
-      const plan = prepareDispatch(ctx.cwd, id, resolved.options);
-      const controller = new AbortController();
-      const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}`;
-      const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[] };
-      // A live panel above the editor and a footer status, refreshed on each step and every few seconds.
-      const render = () => {
-        const recent = state.events.filter((event) => event.kind !== "note").slice(-5);
-        const said = state.events.findLast((event) => event.kind === "note");
-        ctx.ui.setWidget?.("waicc-dispatch", [
-          `${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps   (/waicc-dispatch --progress, --stop)`,
-          ...(recent.length ? recent.map(stepLine) : ["        starting the agent…"]),
-          ...(said ? [`         says: ${said.text}`] : []),
-        ]);
-        ctx.ui.setStatus?.("waicc-dispatch", `${plan.via} ${doing[plan.mode] ?? plan.mode} · ${elapsed(Date.now() - state.startedAt)}`);
-      };
-      const ticker = setInterval(render, 5_000);
-      ticker.unref?.();
-      render();
-      // Runs in the background so this chat stays usable; the result arrives as a message.
-      const done = runDispatch(plan, services.runAgent, controller.signal, (event) => {
-        state.events.push(event);
-        if (state.events.length > 400) state.events.splice(0, state.events.length - 400);
-        render();
-      })
-        .then((outcome) => {
-          ctx.ui.notify(outcome.replySubmitted ? `${plan.via} submitted a reply. Run /waicc-continue.` : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
-          pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
-        })
-        .catch((error) => ctx.ui.notify(`Dispatch failed: ${error instanceof Error ? error.message : String(error)}`, "error"))
-        .finally(() => {
-          clearInterval(ticker);
-          ctx.ui.setWidget?.("waicc-dispatch", undefined);
-          ctx.ui.setStatus?.("waicc-dispatch", undefined);
-          dispatches.delete(id);
-        });
-      state.done = done;
-      dispatches.set(id, state);
-      show(ctx, {
-        dispatching: true, profile: resolved.profile, via: plan.via, model: plan.model ?? "agent default", effort: plan.effort ?? "agent default", sessionId: plan.sessionId,
-        requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
-        nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. Its live steps show above the editor; /waicc-dispatch --progress lists them all. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
-      });
+      if (resolved.options.loop)
+        loops.set(id, { options: resolved.options, profile: resolved.profile, cycle: 1, max: resolved.options.loop, phase: "reviewing", requestId: "", findings: null });
+      try {
+        launch(ctx, id, resolved.options, resolved.profile);
+      } catch (error) {
+        loops.delete(id);
+        throw error;
+      }
     },
   );
   command(
@@ -880,7 +986,7 @@ export default function waicc(
       } else show(ctx, recall(ctx.cwd, args, true));
     },
   );
-  pi.registerTool({
+  registerTool({
     name: "waicc_checkpoint",
     label: "Recover compact WAICC context",
     description: "Read-only compact recovery: current canonical owner checkpoint, or the recipient's frozen request checkpoint. Follow exact-contract/evidence pointers; no history deletion, status changes or permission grants.",
@@ -896,7 +1002,7 @@ export default function waicc(
       return result(checkpointView(projectRoot(ctx.cwd), loadSession(projectRoot(ctx.cwd), selected(ctx, params.sessionId))));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_context",
     label: "Save WAICC coordinator context",
     description: "Coordinator: save important user context, constraints, source references and established decisions/rationale before handoff. All roles receive a frozen copy. This does not amend requirements or adopt advice. Pending handoffs must first be finished/cancelled.",
@@ -907,7 +1013,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_status",
     label: "WAICC status",
     description:
@@ -925,7 +1031,7 @@ export default function waicc(
       return result(status(ctx.cwd, selected(ctx, params.sessionId)));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_start_planning",
     label: "Start automatic WAICC planning",
     description: "Coordinator only; auto-planning defaults on: capture the current human work request exactly in a planning-only session when tracked steps, dependencies or completion checks would keep work on track, even for small tasks. Not for trivial one-step edits, questions or skip-planning requests. Requires a live requestId from auto-planning guidance. Never launches agents, changes scope, accepts plans or authorizes coding. Existing selected sessions are returned unchanged, never replaced.",
@@ -949,7 +1055,7 @@ export default function waicc(
           : `Planning-only startup. Save important prior chat constraints/decisions/source references with waicc_context, then waicc_prepare expectedVersion 0 mode planning with a faithful requirements brief; tasks may be []. The independent planner forms the detailed source-backed plan. ${guidance}` });
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_prepare",
     label: "Prepare WAICC handoff",
     description:
@@ -980,7 +1086,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_assess",
     label: "Assess WAICC reply",
     description:
@@ -1017,7 +1123,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_request",
     label: "WAICC follow-up",
     description:
@@ -1048,7 +1154,7 @@ export default function waicc(
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_check",
     label: "Run confirmed WAICC check",
     description: "Recipient only, explicit --run-checks plus interactive confirmation EACH time. Execute an exact local check program/args at project root, with timeout and source-pinned output log. General execution tools stay blocked; not an OS sandbox. No production, installs, resets or deployments. Do not pass secrets. Logs/exit codes are evidence, not code-review approval.",
@@ -1082,7 +1188,7 @@ export default function waicc(
       return result(await runRecipientCheck(ctx.cwd, binding.pin, command, source, run, signal));
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_reply",
     label: "Submit pinned WAICC reply",
     description:
@@ -1110,7 +1216,7 @@ export default function waicc(
       return result(submitted);
     },
   });
-  pi.registerTool({
+  registerTool({
     name: "waicc_memory",
     label: "WAICC project memory",
     description:
@@ -1144,7 +1250,10 @@ export default function waicc(
   pi.on("input", async (event, ctx) => {
     automaticRequests.capture(event, ctx, bindings.get(key(ctx))?.role === "recipient");
   });
-  pi.on("agent_end", async (_event, ctx) => { automaticRequests.clear(ctx); });
+  pi.on("agent_end", async (_event, ctx) => {
+    automaticRequests.clear(ctx);
+    advanceLoop(ctx);
+  });
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);
