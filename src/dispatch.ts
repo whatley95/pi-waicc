@@ -15,6 +15,13 @@ import type { Mode, RecipientPin } from "./types.ts";
 
 export const agents = ["claude", "codex", "pi", "agy"] as const;
 export type Agent = (typeof agents)[number];
+/** Each agent's own effort or thinking levels; a model may support only some of them. */
+export const effortLevels: Record<Agent, string[]> = {
+  claude: ["low", "medium", "high", "xhigh", "max"],
+  codex: ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+  pi: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+  agy: ["low", "medium", "high"],
+};
 /** Roles whose recipient never edits source. Implementation needs --implement: Pi edits in place
  * within task paths; Claude and Codex edit an isolated worktree whose changes are checked first.
  * Testing needs at least one --check the human pre-approves. */
@@ -24,6 +31,8 @@ const checkModes: Mode[] = ["implementation", "testing"];
 export interface DispatchOptions {
   via: Agent;
   model?: string;
+  /** Reasoning effort, passed as the agent's own setting (Claude --effort, Codex model_reasoning_effort, Pi --thinking). */
+  effort?: string;
   timeoutMinutes?: number;
   /** Explicit opt-in for an implementation handoff. */
   implement?: boolean;
@@ -83,6 +92,8 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
       options.via = value as Agent;
     } else if (flag === "--model" || flag === "-m") {
       options.model = modelName(value);
+    } else if (flag === "--effort") {
+      options.effort = effortName(value);
     } else if (flag === "--timeout") {
       options.timeoutMinutes = minutes(value, 120, "--timeout");
     } else if (flag === "--check") {
@@ -98,13 +109,24 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
 /** Explicit settings only: --via is required and no agent profile is consulted. */
 export function dispatchOptions(input: string | string[]): DispatchOptions {
   const { profile, options } = parseDispatchArgs(input);
-  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`);
   return options as DispatchOptions;
 }
 
 export function modelName(value: unknown): string {
   ensure(typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(value), "Invalid model name");
   return value;
+}
+
+export function effortName(value: unknown): string {
+  ensure(typeof value === "string" && /^[a-z]{2,16}$/.test(value), "Invalid effort level");
+  return value;
+}
+
+/** An effort level this agent accepts; the model may still reject levels it lacks. */
+export function agentEffort(via: Agent, effort: string, label = "effort"): string {
+  ensure(effortLevels[via].includes(effort), `${label} for ${via} must be one of ${effortLevels[via].join(", ")}`);
+  return effort;
 }
 
 export function minutes(value: unknown, max: number, label: string): number {
@@ -144,6 +166,7 @@ export interface DispatchPlan {
   mode: Mode;
   via: Agent;
   model: string | null;
+  effort: string | null;
   timeoutMs: number;
   pin: RecipientPin;
   /** Where the agent runs: the project, or its isolated worktree. */
@@ -162,6 +185,7 @@ export interface DispatchPlan {
 
 function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env">): Pick<DispatchPlan, "program" | "args" | "scratch" | "env"> {
   const model = plan.model;
+  const effort = plan.effort;
   const isolated = plan.isolation !== null;
   // Approved checks travel in a file, not on a command line that would need quoting.
   const checksFile = plan.checks.length && plan.via !== "pi" ? join(tmpdir(), `waicc-checks-${plan.dispatchId}.json`) : null;
@@ -191,6 +215,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
             ? ["--permission-mode", "acceptEdits", "--allowedTools", "mcp__waicc,Read,Grep,Glob,Edit,Write", "--disallowedTools", "Bash,NotebookEdit"]
             : ["--allowedTools", "mcp__waicc,Read,Grep,Glob", "--disallowedTools", "Edit,Write,NotebookEdit,Bash"]),
           ...(model ? ["--model", model] : []),
+          ...(effort ? ["--effort", effort] : []),
         ],
         scratch: [config, ...scratch], env: {},
       };
@@ -207,6 +232,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
           "-c", `mcp_servers.waicc.enabled_tools=${JSON.stringify(recipientTools)}`,
           "-c", 'mcp_servers.waicc.default_tools_approval_mode="approve"',
           ...(model ? ["-m", model] : []),
+          ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
           plan.prompt,
         ],
         scratch, env: {},
@@ -219,6 +245,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
           "-p", plan.prompt, "--output-format", "json", "--sandbox",
           "--print-timeout", `${Math.ceil(plan.timeoutMs / 60_000)}m`,
           ...(model ? ["--model", model] : []),
+          ...(effort ? ["--effort", effort] : []),
         ],
         scratch: [], env: {},
       };
@@ -237,6 +264,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
         args: [
           "-p", "--no-session", "-ne", "-e", extensionEntry(), "-a",
           ...(model ? ["--model", model] : []),
+          ...(effort ? ["--thinking", effort] : []),
           `You are a dispatched WAICC ${plan.mode} recipient, not the coordinator. Your request is already pinned: call waicc_status to read the assignment, then ${work} Check your draft with waicc_reply and validateOnly true, fix every reported problem, submit exactly once with waicc_reply, then stop. If WAICC refuses, stop and explain why.`,
         ],
         scratch: [],
@@ -266,6 +294,7 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
   return withLock(root, () => {
     const s = loadSession(root, id);
     ensure(s.status !== "CLOSED", "Contract is closed; nothing to dispatch.");
+    if (options.effort) agentEffort(options.via, options.effort);
     const waiting = s.rounds.filter((r) => r.status === "WAITING");
     ensure(waiting.length === 1, "Dispatch needs exactly one waiting handoff. Use /waicc-status.");
     const r = waiting[0];
@@ -305,7 +334,7 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
       : "You have no shell.";
     const base = {
       dispatchId, root, sessionId: s.id, requestId: r.id, mode: r.mode, via: options.via,
-      model: options.model ?? null, timeoutMs: (options.timeoutMinutes ?? 30) * 60_000, replyPath,
+      model: options.model ?? null, effort: options.effort ?? null, timeoutMs: (options.timeoutMinutes ?? 30) * 60_000, replyPath,
       pin: { sessionId: s.id, requestId: r.id, contractVersion: r.contractVersion, requirementsDigest: r.requirementsDigest, sourceFingerprint: r.source.fingerprint, mode: r.mode },
       cwd: isolation?.worktree ?? root, isolation, checks,
       logPrefix: `${dir}/dispatch/${dispatchId}`,
@@ -319,7 +348,7 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
       commit(root, s, "dispatch.started", {
         [`${plan.logPrefix}/start.json`]: json({
           schemaVersion: 1, dispatchId, sessionId: s.id, requestId: r.id, mode: r.mode,
-          via: plan.via, model: plan.model, program: plan.program, args: plan.args, env: plan.env,
+          via: plan.via, model: plan.model, effort: plan.effort, program: plan.program, args: plan.args, env: plan.env,
           isolation, checks, startedAt: now(), timeoutMs: plan.timeoutMs,
         }),
       });
@@ -362,7 +391,7 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   const isolation = plan.isolation ? settleIsolation(plan, replySubmitted) : null;
   const report = {
     schemaVersion: 1, dispatchId: plan.dispatchId, sessionId: plan.sessionId, requestId: plan.requestId,
-    mode: plan.mode, via: plan.via, model: plan.model, finishedAt: now(), durationMs: Date.now() - startedAt,
+    mode: plan.mode, via: plan.via, model: plan.model, effort: plan.effort, finishedAt: now(), durationMs: Date.now() - startedAt,
     code: result.code, killed: result.killed, replySubmitted, isolation,
     stdout: tail(result.stdout), stderr: tail(result.stderr),
     outputTruncated: result.stdout.length > 24_000 || result.stderr.length > 24_000,
@@ -375,7 +404,7 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
     return true;
   });
   return {
-    dispatched: true, via: plan.via, model: plan.model, sessionId: plan.sessionId, requestId: plan.requestId,
+    dispatched: true, via: plan.via, model: plan.model, effort: plan.effort, sessionId: plan.sessionId, requestId: plan.requestId,
     replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs,
     isolation,
     log: saved ? join(plan.root, sessionRelative(plan.sessionId), logPath) : null,
