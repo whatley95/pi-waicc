@@ -596,7 +596,21 @@ Antigravity with `agy models`.
 
 #### Set it up
 
-Create either file, or both:
+The quickest start is the default template that ships in
+[`templates/waicc-agents.json`](templates/waicc-agents.json): Opus 5.5 at medium effort
+for planning, Codex `gpt-6.1-sol` at medium for review, Codex for coding, DeepSeek through
+Pi for testing and Sonnet for advice. Copy it to your user file with:
+
+```text
+/waicc-dispatch --init-profiles        # CLI: waicc profiles init
+```
+
+It creates the file only if you have none and never replaces an existing one. The
+template's models need matching accounts (Claude, Codex, and DeepSeek signed in to Pi):
+change any you do not have, then check with `/waicc-dispatch --profiles`. WAICC does not
+create the file on its own; when no profile exists, dispatch tells you to run this.
+
+To write it yourself, create either file, or both:
 
 | File | Scope |
 | ---- | ----- |
@@ -803,6 +817,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch --via <agent> --check "<command>"...` | Dispatch a testing (or coding) handoff that may run only these exact pre-approved commands |
 | `/waicc-dispatch [profile]`                      | Dispatch with the agent profile for the waiting handoff's role, or a named profile |
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
+| `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
 | `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view                                          |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |
