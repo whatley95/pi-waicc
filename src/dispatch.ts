@@ -90,9 +90,9 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   }
   for (let i = first; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
-    if (flag === "--implement" || flag === "--continue" || flag === "--no-continue") {
+    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue") {
       if (flag === "--implement") options.implement = true;
-      else options.continue = flag === "--continue";
+      else options.continue = flag !== "--no-continue"; // -c is short for --continue.
       i -= 1; // A switch takes no value.
       continue;
     }
@@ -127,7 +127,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
 /** Explicit settings only: --via is required and no agent profile is consulted. */
 export function dispatchOptions(input: string | string[]): DispatchOptions {
   const { profile, options } = parseDispatchArgs(input);
-  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue] [--loop [cycles]]`);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]]`);
   return options as DispatchOptions;
 }
 

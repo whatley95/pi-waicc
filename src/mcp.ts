@@ -10,7 +10,7 @@ import {
 import { runRecipientCheck, type CheckCommand } from "./checks.ts";
 import { commandText, maxCheckMs, runAgent } from "./dispatch.ts";
 import { projectRoot, snapshot } from "./source.ts";
-import { ensure, identifier } from "./validation.ts";
+import { decodeJsonText, ensure, identifier } from "./validation.ts";
 import type { RecipientPin } from "./types.ts";
 
 /** Newest first; an unknown client version gets the newest one we implement. */
@@ -157,9 +157,9 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
 [Truncated: call waicc_read_input again with offset ${next} of ${text.length}.]` : chunk;
       }
       case "waicc_validate_reply":
-        return JSON.stringify(validateRecipientReply(cwd, pinned(), args.reply), null, 2);
+        return JSON.stringify(validateRecipientReply(cwd, pinned(), decodeJsonText(args.reply)), null, 2);
       case "waicc_submit_reply":
-        return JSON.stringify(submitRecipientReply(cwd, pinned(), args.reply), null, 2);
+        return JSON.stringify(submitRecipientReply(cwd, pinned(), decodeJsonText(args.reply)), null, 2);
       default:
         throw new Error(`Unknown tool ${name}`);
     }
