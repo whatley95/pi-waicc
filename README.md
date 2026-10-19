@@ -458,6 +458,27 @@ usable; you are notified when the agent finishes, then run `/waicc-continue`.
 `/waicc-dispatch --stop` ends a running agent. The CLI equivalent runs in the
 foreground: `waicc dispatch <session-id> --via codex`.
 
+**Watch it work.** While the agent runs, a live panel above the editor shows what it is
+doing, and the footer shows the agent and elapsed time:
+
+```text
+WAICC · codex gpt-6.1-sol (medium) reviewing · 1m 42s · 16 steps   (/waicc-dispatch --progress, --stop)
+     14s  › Reading src/search.ts
+     15s  › Searching for "accountId" in src
+     35s  ◆ Validating the draft reply
+     35s  ✗ Draft rejected: proposedContract: Task contains unsupported fields …
+         says: Fixing the task fields, then validating again.
+```
+
+`›` is a file or command step, `◆` a WAICC step (receiving the assignment, reading the
+handoff, running an approved check, validating or submitting the reply), `✗` a rejected
+draft or check with the reason, and `says:` the agent's latest message. The panel keeps the
+last five steps; `/waicc-dispatch --progress` lists every step so far. The panel and status
+clear when the agent finishes. The CLI prints the same steps to stderr as they happen.
+Every step and the agent's last message are also saved in the run's `dispatch/<id>/result.json`.
+Progress comes from each agent's own event stream (Claude `stream-json`, Codex `--json`,
+Pi `--mode json`); Antigravity's stream is not verified, so it may show fewer steps.
+
 | `--via`  | Runs                                 | Read-only enforcement                                   | Model flag              |
 | -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
 | `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP. Coding: edits in an isolated worktree, no shell | `--model opus` |
@@ -835,6 +856,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch --via pi\|claude\|codex --implement [--model m]` | Run a delegated implementation: Pi in place within task paths; Claude/Codex in an isolated worktree, applied all or nothing |
 | `/waicc-dispatch --via <agent> --check "<command>"...` | Dispatch a testing (or coding) handoff that may run only these exact pre-approved commands |
 | `/waicc-dispatch [profile]`                      | Dispatch with the agent profile for the waiting handoff's role, or a named profile |
+| `/waicc-dispatch --progress`                     | List every step the running agent has taken so far |
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
