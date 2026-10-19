@@ -236,15 +236,14 @@ test("the shipped template is a valid default for every role, and init never rep
   assert.equal(JSON.parse(cli.stdout).created, false);
 });
 
-test("the extended example template is valid and keeps the default roles", async (t) => {
+test("the default template carries the full profile set: role defaults plus variants picked by name", async (t) => {
   const { templateConfigPath } = await import("../src/profiles.ts");
-  const extended = readFileSync(templateConfigPath().replace(/waicc-agents\.json$/, "waicc-agents.extended.json"), "utf8");
-  const { root, id } = project(t, { user: extended });
+  const { root, id } = project(t, { user: readFileSync(templateConfigPath(), "utf8") });
   const config = loadAgentConfig(root);
-  assert.ok(Object.keys(config.profiles).length > 5, "extra profiles beyond the role defaults");
+  assert.deepEqual(Object.keys(config.profiles), ["opus", "opus-max", "sonnet", "haiku", "sol", "sol-ultra", "codex", "luna", "deepseek", "flash"]);
   assert.deepEqual(
     Object.fromEntries(Object.entries(config.roles).map(([role, choice]) => [role, choice!.profile])),
-    Object.fromEntries(Object.entries(JSON.parse(readFileSync(templateConfigPath(), "utf8")).roles)),
+    { planning: "opus", review: "sol", implementation: "codex", testing: "deepseek", advisor: "sonnet" },
   );
   assert.deepEqual(resolveDispatch(root, id, "opus-max").options, { via: "claude", model: "claude-opus-5-5", effort: "max" });
 });
