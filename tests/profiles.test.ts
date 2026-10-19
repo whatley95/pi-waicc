@@ -92,7 +92,7 @@ test("agent configs are validated strictly, and can never grant --implement", (t
     ["{ not json", /is not valid JSON/],
     [{ agents: {} }, /only "profiles" and "roles" are allowed/],
     [{ profiles: { x: { via: "gemini" } } }, /profile x: via must be one of claude, codex, pi, agy/],
-    [{ profiles: { x: { via: "codex", implement: true } } }, /profile x allows only via, model and timeoutMinutes/],
+    [{ profiles: { x: { via: "codex", implement: true } } }, /profile x allows only via, model, effort and timeoutMinutes/],
     [{ profiles: { "bad name": { via: "codex" } } }, /profile name "bad name"/],
     [{ profiles, roles: { coding: "codex" } }, /role "coding" must be one of planning, review, advisor, implementation, testing/],
     [{ profiles, roles: { implementation: { profile: "codex", implement: true } } }, /role implementation allows only profile, checks and checkTimeoutMinutes/],
@@ -176,4 +176,39 @@ test("the CLI lists profiles and needs --confirm-checks for project-file checks"
   const refused = cli("dispatch", id);
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /npm test\. Review them, then add --confirm-checks/);
+});
+
+test("profiles set each agent's effort, typed --effort overrides it, and every agent's own levels are enforced", async (t) => {
+  const { root, id } = project(t, {
+    user: {
+      profiles: {
+        opus: { via: "claude", model: "claude-opus-5-5", effort: "medium" },
+        sol: { via: "codex", model: "gpt-6.1-sol", effort: "medium" },
+        deepseek: { via: "pi", model: "deepseek/deepseek-v4-pro", effort: "high" },
+      },
+      roles: { planning: "opus", review: "sol" },
+    },
+  });
+  assert.deepEqual(resolveDispatch(root, id, "").options, { via: "claude", model: "claude-opus-5-5", effort: "medium" });
+  assert.equal(resolveDispatch(root, id, "--effort low").options.effort, "low");
+  // Each agent receives its own setting.
+  const { prepareDispatch, runDispatch } = await import("../src/dispatch.ts");
+  const flags: Record<string, string[]> = {
+    opus: ["--effort", "medium"],
+    sol: ["-c", 'model_reasoning_effort="medium"'],
+    deepseek: ["--thinking", "high"],
+  };
+  for (const [name, expected] of Object.entries(flags)) {
+    const plan = prepareDispatch(root, id, resolveDispatch(root, id, name).options);
+    assert.ok(plan.args.some((arg, i) => arg === expected[0] && plan.args[i + 1] === expected[1]), `${name}: ${expected.join(" ")} in ${plan.args.join(" ")}`);
+    assert.equal(plan.effort, expected[1].replace(/^model_reasoning_effort="(.*)"$/, "$1"));
+    await runDispatch(plan, async () => ({ stdout: "", stderr: "", code: 0, killed: false }));
+  }
+  const agy = prepareDispatch(root, id, { via: "agy", effort: "high" });
+  assert.ok(agy.args.join(" ").includes("--effort high"));
+  await runDispatch(agy, async () => ({ stdout: "", stderr: "", code: 0, killed: false }));
+  assert.throws(() => prepareDispatch(root, id, { via: "claude", effort: "ultra" }), /effort for claude must be one of low, medium, high, xhigh, max/);
+  assert.throws(() => resolveDispatch(root, id, "--effort LOUD"), /Invalid effort level/);
+  const bad = project(t, { user: { profiles: { x: { via: "agy", effort: "max" } } } });
+  assert.throws(() => loadAgentConfig(bad.root), /profile x: effort for agy must be one of low, medium, high/);
 });

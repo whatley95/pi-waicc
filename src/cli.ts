@@ -84,7 +84,7 @@ try {
       process.exit(0);
     }
     case "dispatch": {
-      ensure(id, "Usage: waicc dispatch <session> [profile] [--via claude|codex|pi|agy] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--confirm-checks]");
+      ensure(id, "Usage: waicc dispatch <session> [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check '<command>']... [--confirm-checks]");
       const resolved = resolveDispatch(cwd, id, rest.filter((word) => word !== "--confirm-checks"));
       // A terminal has no dialog: checks from the repository's own file need this explicit flag.
       ensure(

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadSession } from "./files.ts";
-import { agents, checkCommands, minutes, modelName, parseDispatchArgs, type Agent, type DispatchOptions } from "./dispatch.ts";
+import { agentEffort, agents, checkCommands, effortName, minutes, modelName, parseDispatchArgs, type Agent, type DispatchOptions } from "./dispatch.ts";
 import { projectRoot } from "./source.ts";
 import { ensure, record } from "./validation.ts";
 import type { Mode } from "./types.ts";
@@ -11,6 +11,8 @@ import type { Mode } from "./types.ts";
 export interface AgentProfile {
   via: Agent;
   model?: string;
+  /** The agent's own effort or thinking level, such as medium. */
+  effort?: string;
   timeoutMinutes?: number;
 }
 export interface RoleChoice {
@@ -49,11 +51,12 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   for (const [key, value] of Object.entries(record(config.profiles ?? {}, at("profiles")))) {
     ensure(name.test(key), at(`profile name ${JSON.stringify(key)} uses characters other than letters, digits, - and _`));
     const profile = record(value, at(`profile ${key}`));
-    ensure(Object.keys(profile).every((field) => ["via", "model", "timeoutMinutes"].includes(field)), at(`profile ${key} allows only via, model and timeoutMinutes`));
+    ensure(Object.keys(profile).every((field) => ["via", "model", "effort", "timeoutMinutes"].includes(field)), at(`profile ${key} allows only via, model, effort and timeoutMinutes`));
     ensure((agents as readonly unknown[]).includes(profile.via), at(`profile ${key}: via must be one of ${agents.join(", ")}`));
     into.profiles[key] = {
       via: profile.via as Agent,
       ...(profile.model === undefined ? {} : { model: modelName(profile.model) }),
+      ...(profile.effort === undefined ? {} : { effort: agentEffort(profile.via as Agent, effortName(profile.effort), at(`profile ${key}: effort`)) }),
       ...(profile.timeoutMinutes === undefined ? {} : { timeoutMinutes: minutes(profile.timeoutMinutes, 120, at(`profile ${key}: timeoutMinutes`)) }),
       source,
     };
@@ -118,6 +121,7 @@ export function resolveDispatch(cwd: string, id: string, input: string | string[
   const options: DispatchOptions = {
     via: profile.via,
     ...(profile.model ? { model: profile.model } : {}),
+    ...(profile.effort ? { effort: profile.effort } : {}),
     ...(profile.timeoutMinutes ? { timeoutMinutes: profile.timeoutMinutes } : {}),
     ...(roleChecks ? { checks: checkCommands(roleChecks.checks!, typed.checkMinutes ?? roleChecks.checkTimeoutMinutes) } : {}),
     ...typed.options,
