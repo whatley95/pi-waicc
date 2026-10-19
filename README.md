@@ -611,6 +611,24 @@ template's models need matching accounts (Claude, Codex, and DeepSeek signed in 
 change any you do not have, then check with `/waicc-dispatch --profiles`. WAICC does not
 create the file on its own; when no profile exists, dispatch tells you to run this.
 
+There is no limit on profiles: roles are fixed, but you can define any number of extra
+profiles and pick one by name for a single dispatch. For a fuller set to copy from, see
+[`templates/waicc-agents.extended.json`](templates/waicc-agents.extended.json), which keeps
+the same role defaults and adds variants of the same models:
+
+| Profile | Agent and model | Effort | When to pick it |
+| ------- | --------------- | ------ | --------------- |
+| `opus-max` | Claude `claude-opus-5-5` | max | Hard planning problems |
+| `haiku` | Claude `haiku` | low | Quick, cheap questions |
+| `sol-ultra` | Codex `gpt-6.1-sol` | ultra, 90-minute limit | Deep review of risky code |
+| `luna` | Codex `gpt-6-luna` | high | Coding with a fixed model instead of Codex's default |
+| `flash` | Pi `deepseek/deepseek-flash` | low | Fast, cheap checks or advice |
+
+```text
+/waicc-dispatch opus-max        # this planning handoff, with more thinking
+/waicc-dispatch sol-ultra       # this review, deeper
+```
+
 To write it yourself, create either file, or both:
 
 | File | Scope |
