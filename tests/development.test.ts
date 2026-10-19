@@ -311,7 +311,7 @@ test("/waicc-decide forgives a missing or mistyped ID, and alone lets the human 
   const unknown = fixture(t, true, true);
   const su = accept(unknown.root, answer(unknown.root, unknown.s));
   assert.throws(() => resolveDecision(unknown.root, su.id, "Reachability", "confirmed"),
-    /Unknown decision ID "Reachability"\. Open decisions: D1 \(external\): Which backend policy\?\. Use \/waicc-decide <ID> <answer>, or \/waicc-decide alone to pick one\./);
+    /Unknown decision ID "Reachability"\. Open decisions: D1 \(external\): Which backend policy\?\. Use \/waicc-decide <ID> <answer>, \/waicc-decide <ID> recommended, or \/waicc-decide alone to pick one\./);
 
   // Without a dialog: say what is wrong and what to type, recording nothing.
   const h = harness(unknown.root);
@@ -319,9 +319,9 @@ test("/waicc-decide forgives a missing or mistyped ID, and alone lets the human 
   await h.commands.get("waicc-decide").handler("Reachability confirmed with controls", h.ctx);
   assert.match(h.notices.at(-1)!, /"Reachability" is not an open decision ID\. Open decisions: D1 \(external\)/);
   await h.commands.get("waicc-decide").handler("", h.ctx);
-  assert.match(h.notices.at(-1)!, /^Usage: \/waicc-decide <decision-id> <answer>\. Open decisions: D1/);
+  assert.match(h.notices.at(-1)!, /^Usage: \/waicc-decide <decision-id> <answer>, or <decision-id> recommended\. Open decisions: D1/);
   await h.commands.get("waicc-decide").handler("D1", h.ctx);
-  assert.match(h.notices.at(-1)!, /Add your answer: \/waicc-decide D1 <answer>/);
+  assert.match(h.notices.at(-1)!, /Add your answer: \/waicc-decide D1 <answer>, or \/waicc-decide D1 recommended/);
   assert.equal(readContract(unknown.root, su.id).contract.decisions![0].status, "open");
 
   // With a dialog: an answer typed without its ID is confirmed for the only open decision.
@@ -336,10 +336,39 @@ test("/waicc-decide forgives a missing or mistyped ID, and alone lets the human 
   assert.match(asked.at(-1)!, /^Record this as the answer to D1\? Which backend policy\?/);
   assert.equal(readContract(unknown.root, su.id).contract.decisions![0].status, "open", "declined: nothing recorded");
 
-  // Alone: pick the decision, see the recommendation, type the answer.
-  await h.commands.get("waicc-decide").handler("", ui({ confirm: true, typed: "Keep the current policy" }));
-  assert.match(asked.at(-2)!, /^Which decision are you answering\? D1 \(external\): Which backend policy\?/);
+  // Alone: pick the decision, then accept the recommendation or type your own.
+  const typed = ui({ confirm: true, typed: "Keep the current policy" }) as any;
+  typed.ui.select = async (title: string, options: string[]) => (asked.push(`${title} ${options.join(" | ")}`), title.startsWith("Which") ? options[0] : options.at(-1));
+  await h.commands.get("waicc-decide").handler("", typed);
+  assert.match(asked.at(-3)!, /^Which decision are you answering\? D1 \(external\): Which backend policy\?/);
+  assert.match(asked.at(-2)!, /^D1: Which backend policy\? Accept the recommendation: Retain existing account-isolation policy \| Type my own answer$/);
   assert.match(asked.at(-1)!, /^D1: Which backend policy\? Recommended: Retain existing account-isolation policy/);
   const d1 = readContract(unknown.root, su.id).contract.decisions![0];
   assert.deepEqual([d1.status, d1.answer], ["resolved", "Keep the current policy"]);
+});
+
+test("/waicc-decide <ID> recommended and all recommended accept the agent's recommendation as your answer", async (t) => {
+  const recommendation = "Retain existing account-isolation policy";
+  // Typed with its ID, without a dialog: the recommendation is recorded as the answer.
+  const one = fixture(t, true, true);
+  const s1 = accept(one.root, answer(one.root, one.s));
+  const h = harness(one.root);
+  await h.commands.get("waicc-use").handler(s1.id, h.ctx);
+  await h.commands.get("waicc-decide").handler("d1 recommended", h.ctx);
+  assert.deepEqual(readContract(one.root, s1.id).contract.decisions!.map((d) => [d.id, d.status, d.answer]), [["D1", "resolved", recommendation]]);
+  // all recommended: one dialog listing each question and recommendation; declining records nothing.
+  const all = fixture(t, true, true);
+  const s2 = accept(all.root, answer(all.root, all.s));
+  const g = harness(all.root);
+  await g.commands.get("waicc-use").handler(s2.id, g.ctx);
+  const asked: string[] = [];
+  const dialog = (agree: boolean) => ({ ...g.ctx, hasUI: true, ui: { notify: (m: string) => g.notices.push(m),
+    confirm: async (title: string, message: string) => (asked.push(`${title}\n${message}`), agree) } }) as unknown as ExtensionCommandContext;
+  await g.commands.get("waicc-decide").handler("all recommended", dialog(false));
+  assert.match(asked.at(-1)!, /^Accept the recommendation for all 1 open decision\?\nD1: Which backend policy\?\n  → Retain existing/);
+  assert.equal(readContract(all.root, s2.id).contract.decisions![0].status, "open");
+  await g.commands.get("waicc-decide").handler("all recommended", dialog(true));
+  assert.equal(readContract(all.root, s2.id).contract.decisions![0].answer, recommendation);
+  await g.commands.get("waicc-decide").handler("all recommended", g.ctx);
+  assert.match(g.notices.at(-1)!, /no open decisions/);
 });
