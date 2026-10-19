@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadSession } from "./files.ts";
 import { agentEffort, agents, checkCommands, effortName, minutes, modelName, parseDispatchArgs, type Agent, type DispatchOptions } from "./dispatch.ts";
 import { projectRoot } from "./source.ts";
@@ -36,6 +37,22 @@ export const userConfigPath = (): string =>
   join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "waicc-agents.json");
 /** Shared with everyone who uses the repository; tracked like any other project file. */
 export const projectConfigPath = (root: string): string => join(root, ".pi", "waicc-agents.json");
+/** The default agent setup shipped with the package; src/ and dist/ sit at the same depth. */
+export const templateConfigPath = (): string => fileURLToPath(new URL("../templates/waicc-agents.json", import.meta.url));
+const initHint = "Run /waicc-dispatch --init-profiles (CLI: waicc profiles init) to create it from the default template";
+
+/** Creates the user file from the template, never replacing a file that exists. */
+export function initAgentConfig() {
+  const path = userConfigPath();
+  if (existsSync(path))
+    return { created: false, path, nextAction: "You already have an agent config; it was left unchanged. Edit it, then check with /waicc-dispatch --profiles." };
+  mkdirSync(dirname(path), { recursive: true });
+  copyFileSync(templateConfigPath(), path);
+  return {
+    created: true, path, template: templateConfigPath(),
+    nextAction: "Created your agent config from the default template. Its models need matching accounts (Claude, Codex, and DeepSeek in Pi); change any you do not have, then check with /waicc-dispatch --profiles.",
+  };
+}
 
 function readConfig(path: string, source: Source, into: AgentConfig): void {
   if (!existsSync(path)) return;
@@ -112,7 +129,7 @@ export function resolveDispatch(cwd: string, id: string, input: string | string[
   const profileName = typed.profile ?? role?.profile;
   ensure(
     profileName,
-    `No agent chosen for this ${mode} handoff. Add --via claude|codex|pi|agy, name a profile, or set roles.${mode} in ${config.files.user} or ${config.files.project}.`,
+    `No agent chosen for this ${mode} handoff. Add --via claude|codex|pi|agy, name a profile, or set roles.${mode} in ${config.files.user} or ${config.files.project}.${config.files.found.length ? "" : ` ${initHint}.`}`,
   );
   const profile = config.profiles[profileName];
   ensure(profile, `Unknown agent profile ${JSON.stringify(profileName)}. Defined: ${Object.keys(config.profiles).join(", ") || "none"}.`);
@@ -144,6 +161,6 @@ export function profilesView(cwd: string) {
     })),
     nextAction: Object.keys(config.profiles).length
       ? "Run /waicc-dispatch with no agent: the waiting handoff's role picks its profile. Name a profile or add --via to override once; --implement is still required for coding."
-      : `No agent profiles yet. Create ${config.files.user} (just you) or ${config.files.project} (shared with the repository); see the README's "Agent profiles".`,
+      : `No agent profiles yet. ${initHint} at ${config.files.user} (just you), or create ${config.files.project} (shared with the repository); see the README's "Agent profiles".`,
   };
 }

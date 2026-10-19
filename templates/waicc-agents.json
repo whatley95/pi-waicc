@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "opus":     { "via": "claude", "model": "claude-opus-5-5", "effort": "medium" },
+    "sonnet":   { "via": "claude", "model": "sonnet" },
+    "sol":      { "via": "codex",  "model": "gpt-6.1-sol", "effort": "medium" },
+    "codex":    { "via": "codex" },
+    "deepseek": { "via": "pi",     "model": "deepseek/deepseek-v4-pro" }
+  },
+  "roles": {
+    "planning":       "opus",
+    "review":         "sol",
+    "implementation": "codex",
+    "testing":        "deepseek",
+    "advisor":        "sonnet"
+  }
+}

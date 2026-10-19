@@ -15,6 +15,7 @@ test("installed CLI bin runs from node_modules as compiled JavaScript", (t) => {
   const manifest = JSON.parse(readFileSync("package.json", "utf8"));
   assert.match(manifest.bin.waicc, /^\.\/dist\/.+\.js$/);
   assert.ok(manifest.files.includes("dist"));
+  assert.ok(manifest.files.includes("templates"), "the default agent config ships with the package");
   const installed = join(base, "node_modules", "pi-waicc");
   execFileSync(
     process.execPath,
