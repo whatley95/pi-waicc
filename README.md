@@ -516,6 +516,12 @@ WAICC's own code-review round budget. Each cycle is a full review plus fixes, so
 first few loops: if they keep hitting the limit, tighten the review focus or the plan.
 `--loop` needs Pi; the CLI refuses it.
 
+Verified live with a real Pi coordinator (DeepSeek V4 Pro as the main agent) and Claude
+Sonnet reviewing a planted cross-account bug: the review found it and a missing test, the
+main agent assessed, fixed both, ran the tests (4/4) and requested a fresh review, which
+was dispatched automatically and passed, and the loop ended at `READY_TO_CLOSE` after
+2 cycles in under 5 minutes without closing anything.
+
 | `--via`  | Runs                                 | Read-only enforcement                                   | Model flag              |
 | -------- | ------------------------------------ | ------------------------------------------------------- | ----------------------- |
 | `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP. Coding: edits in an isolated worktree, no shell | `--model opus` |
