@@ -7,7 +7,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { canonicalPath, digest, safePath } from "./files.ts";
+import { canonicalPath, digest, runtimePath, safePath } from "./files.ts";
 export { canonicalPath, samePath } from "./files.ts";
 import { ensure } from "./validation.ts";
 import type { SourceSnapshot } from "./types.ts";
@@ -29,7 +29,9 @@ function command(binary: string, args: string[], cwd: string): string | null {
 export function projectRoot(cwd: string): string {
   let path = canonicalPath(cwd);
   while (true) {
-    if (existsSync(join(path, ".git")) || existsSync(join(path, ".svn")))
+    // A folder initialized with /waicc-init is its own project, even inside a larger
+    // repository (one service in a monorepo); otherwise the repository root is.
+    if (existsSync(join(path, runtimePath)) || existsSync(join(path, ".git")) || existsSync(join(path, ".svn")))
       return path;
     if (dirname(path) === path) return canonicalPath(cwd);
     path = dirname(path);
@@ -71,8 +73,39 @@ export function normalizeSvnXml(xml: string): string {
     },
   );
 }
+/** Makes this folder its own WAICC project, for example one service in a monorepo. */
+export function initProject(cwd: string, initialize: (root: string) => void) {
+  const folder = canonicalPath(cwd), before = projectRoot(folder);
+  const already = before === folder && existsSync(join(folder, runtimePath));
+  if (!already) initialize(folder);
+  const source = snapshot(folder), prefix = gitPrefix(folder);
+  return {
+    projectRoot: folder,
+    created: !already,
+    ...(before !== folder ? { previousProjectRoot: before } : {}),
+    sourceFiles: Object.keys(source.files).length,
+    vcs: source.vcs,
+    ...(prefix ? { repositoryPath: prefix } : {}),
+    nextAction: already
+      ? "This folder is already a WAICC project."
+      : `This folder is now its own WAICC project${prefix ? ` inside its repository (${prefix})` : ""}: WAICC fingerprints only its ${Object.keys(source.files).length} files, so changes elsewhere do not affect its handoffs. Sessions you already had at ${before} stay there; start new work here, and run Pi from this folder (or below it).`,
+  };
+}
+
+/** The project's path inside its Git repository ("" at the top), or null outside Git. */
+export function gitPrefix(root: string): string | null {
+  if (existsSync(join(root, ".git"))) return "";
+  // Ask Git only when a parent folder has a repository: starting git costs far more than this walk.
+  for (let dir = dirname(root); !existsSync(join(dir, ".git")); dir = dirname(dir))
+    if (dirname(dir) === dir) return null;
+  const prefix = command("git", ["rev-parse", "--show-prefix"], root);
+  return prefix === null ? null : prefix.trim().replaceAll("\\", "/");
+}
+
 export function snapshot(root: string): SourceSnapshot {
-  const vcs = existsSync(join(root, ".git"))
+  // A sub-project of a Git repository is fingerprinted as that subtree only.
+  const prefix = existsSync(join(root, ".svn")) && !existsSync(join(root, ".git")) ? null : gitPrefix(root);
+  const vcs = prefix !== null
     ? "git"
     : existsSync(join(root, ".svn"))
       ? "svn"
@@ -95,8 +128,11 @@ export function snapshot(root: string): SourceSnapshot {
       "Cannot enumerate Git source files; refusing incomplete source evidence",
     );
     paths = output.split("\0").filter(Boolean);
-    revision =
-      command("git", ["rev-parse", "--verify", "HEAD"], root)?.trim() ?? null;
+    // A sub-project's own tree, not the repository's commit: other projects' commits
+    // in the same monorepo must not look like a change here.
+    revision = prefix
+      ? command("git", ["rev-parse", "--verify", `HEAD:${prefix.replace(/\/$/, "")}`], root)?.trim() ?? null
+      : command("git", ["rev-parse", "--verify", "HEAD"], root)?.trim() ?? null;
     const index = command("git", ["ls-files", "--stage", "-z"], root);
     ensure(index !== null, "Cannot fingerprint the Git index");
     index
@@ -167,7 +203,7 @@ export function snapshot(root: string): SourceSnapshot {
         else paths.push(path);
         ensure(
           paths.length <= 10_000,
-          "Source exceeds 10,000 files; use a smaller project root",
+          "Source exceeds 10,000 files. In a monorepo, run /waicc-init (CLI: waicc init) inside the service folder to make it its own WAICC project.",
         );
       }
     };
@@ -176,7 +212,7 @@ export function snapshot(root: string): SourceSnapshot {
   paths = [...new Set(paths.map((path) => path.replaceAll("\\", "/")))]
     .filter((path) => !omit(path))
     .sort();
-  ensure(paths.length <= 10_000, "Source exceeds 10,000 files");
+  ensure(paths.length <= 10_000, `Source exceeds 10,000 files (${paths.length}). In a monorepo, run /waicc-init (CLI: waicc init) inside the service folder to make it its own WAICC project.`);
   const files: Record<string, string> = Object.create(null);
   let bytes = 0;
   for (const path of paths) {
