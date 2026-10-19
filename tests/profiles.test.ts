@@ -235,3 +235,16 @@ test("the shipped template is a valid default for every role, and init never rep
   });
   assert.equal(JSON.parse(cli.stdout).created, false);
 });
+
+test("the extended example template is valid and keeps the default roles", async (t) => {
+  const { templateConfigPath } = await import("../src/profiles.ts");
+  const extended = readFileSync(templateConfigPath().replace(/waicc-agents\.json$/, "waicc-agents.extended.json"), "utf8");
+  const { root, id } = project(t, { user: extended });
+  const config = loadAgentConfig(root);
+  assert.ok(Object.keys(config.profiles).length > 5, "extra profiles beyond the role defaults");
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(config.roles).map(([role, choice]) => [role, choice!.profile])),
+    Object.fromEntries(Object.entries(JSON.parse(readFileSync(templateConfigPath(), "utf8")).roles)),
+  );
+  assert.deepEqual(resolveDispatch(root, id, "opus-max").options, { via: "claude", model: "claude-opus-5-5", effort: "max" });
+});
