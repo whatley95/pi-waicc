@@ -1548,7 +1548,7 @@ export default function waicc(
         ensure(grant !== "implement" || assignment.pin.mode === "implementation", "Implementation opt-in does not match this request.");
         const approved = process.env[dispatchChecksVariable];
         const approvedChecks = approved ? (JSON.parse(approved) as unknown[]).map((check) => checkCommand(check, maxCheckMs)) : undefined;
-        ensure(!approvedChecks || ["implementation", "testing"].includes(assignment.pin.mode), "Pre-approved checks apply only to testing and implementation");
+        ensure(!approvedChecks || ["implementation", "testing", "review"].includes(assignment.pin.mode), "Pre-approved checks apply only to testing, implementation and review");
         const binding: Extract<ChatBinding, { role: "recipient" }> = {
           sessionId, role: "recipient", pin: assignment.pin, previousTools: pi.getActiveTools(), approvedChecks,
         };

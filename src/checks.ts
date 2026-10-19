@@ -44,14 +44,16 @@ export async function runRecipientCheck(
 ) {
   const root = projectRoot(cwd);
   command = checkCommand(command, options.maxTimeoutMs);
-  ensure(["implementation", "testing"].includes(pin.mode), "Only implementation/testing recipients may run checks");
+  ensure(["implementation", "testing", "review"].includes(pin.mode), "Only implementation, testing and (pre-approved) review recipients may run checks");
+  // Testers and reviewers are read-only: their source must stay exactly as handed off.
+  const readOnly = pin.mode === "testing" || pin.mode === "review";
   signal?.throwIfAborted();
   const id = randomUUID(), startedAt = now();
   const prefix = withLock(root, () => {
     assertRecipientCurrent(root, pin);
     const s = loadSession(root, pin.sessionId), r = s.rounds.find((round) => round.id === pin.requestId)!;
     ensure(snapshot(root).fingerprint === approvedSource, "Source changed while the command was being approved; confirm a fresh command against the new source");
-    if (pin.mode === "testing") ensure(approvedSource === pin.sourceFingerprint, "Testing source changed; request a fresh handoff");
+    if (readOnly) ensure(approvedSource === pin.sourceFingerprint, `${pin.mode === "review" ? "Reviewed" : "Testing"} source changed; request a fresh handoff`);
     const path = `${roundDirectory(r)}/checks/${id}`;
     commit(root, s, "check.started-after-human-confirmation", {
       [`${path}/start.json`]: json({ schemaVersion: 1, ...pin, command, startedAt, sourceBefore: approvedSource }),
@@ -70,7 +72,7 @@ export async function runRecipientCheck(
     schemaVersion: 1, ...pin, command, startedAt, finishedAt: now(),
     ...(options.workdir ? { ranIn: "isolated worktree" } : {}),
     sourceBefore: approvedSource, sourceAfter, sourceChanged,
-    outcome: result.code === 0 && !result.killed && !(pin.mode === "testing" && sourceChanged) ? "passed" : "failed",
+    outcome: result.code === 0 && !result.killed && !(readOnly && sourceChanged) ? "passed" : "failed",
     code: result.code, killed: result.killed,
     stdout: result.stdout.slice(0, 24_000), stderr: result.stderr.slice(0, 24_000),
     outputTruncated: result.stdout.length > 24_000 || result.stderr.length > 24_000,
@@ -86,7 +88,7 @@ export async function runRecipientCheck(
   });
   return {
     artifactPath: saved ? artifactPath : null, ...report,
-    nextAction: pin.mode === "testing" && sourceChanged
+    nextAction: readOnly && sourceChanged
       ? "STOP: the check changed reviewed source. No changes were reverted. Return to the coordinator to inspect changes and issue a fresh handoff."
       : saved ? "Inspect actual output and limits; cite this result in reply checks. A check exit code is not whole-work completion or review PASS."
         : "Contract was closed while the check ran. Stop; no result was added to closed history.",
