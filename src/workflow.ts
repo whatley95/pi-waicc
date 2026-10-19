@@ -418,6 +418,14 @@ export function decisionsView(cwd: string, id: string) {
       ? join(root, sessionRelative(s.id), versionDirectory(s.contractVersion), "DECISIONS.md") : null,
     nextAction: "Investigate agent-owned facts first. The human may /waicc-decide <decision-id> <answer> after pending work is assessed/cancelled. Scope changes require /waicc-amend, not a decision answer." };
 }
+/** One line per open decision and the exact command, for messages to the human. */
+export function openDecisionsText(c: Contract): string {
+  const open = (c.decisions ?? []).filter((d) => d.status !== "resolved");
+  return open.length
+    ? `Open decisions: ${open.map((d) => `${d.id} (${d.owner}): ${d.question}`).join("; ")}. Use /waicc-decide <ID> <answer>, or /waicc-decide alone to pick one.`
+    : "There are no open decisions; /waicc-decisions shows them all.";
+}
+
 /** Resolves only an existing gate; no task, path, requirement or scope rewriting. */
 export function resolveDecision(cwd: string, id: string, decisionId: string, answer: string): Session {
   const root = projectRoot(cwd); identifier(decisionId); text(answer, "Decision answer");
@@ -425,8 +433,10 @@ export function resolveDecision(cwd: string, id: string, decisionId: string, ans
     const s = loadSession(root, id); requireOpen(s); noPending(s);
     ensure(s.contractVersion > 0, "Prepare a contract before answering its decisions");
     const v = contract(root, s), c = structuredClone(v.contract);
-    const decision = c.decisions?.find((d) => d.id === decisionId);
-    ensure(decision, "Unknown decision ID; use /waicc-decisions");
+    // IDs match regardless of case (d6 is D6); an unknown one lists the open decisions to choose from.
+    const decision = c.decisions?.find((d) => d.id.toLowerCase() === decisionId.toLowerCase());
+    ensure(decision, `Unknown decision ID ${JSON.stringify(decisionId)}. ${openDecisionsText(c)}`);
+    decisionId = decision.id;
     if (decision.status === "resolved") {
       ensure(decision.answer === answer, "Decision is already resolved differently; revise/amend explicitly rather than replacing an established answer");
       return s;
