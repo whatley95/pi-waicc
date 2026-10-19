@@ -24,6 +24,7 @@ import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner } from "./dispatch.ts";
 import { initAgentConfig, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { elapsed, type ProgressEvent } from "./progress.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { curate, propose, recall } from "./memory.ts";
@@ -135,7 +136,13 @@ export default function waicc(
   const copied = new Map<string, string>();
   const compactedRuns = new Set<string>();
   const automaticRequests = new AutoPlanningRequests();
-  const dispatches = new Map<string, { controller: AbortController; done: Promise<unknown> }>();
+  const dispatches = new Map<string, {
+    controller: AbortController; done: Promise<unknown>;
+    label: string; startedAt: number; events: ProgressEvent[];
+  }>();
+  const doing: Record<string, string> = { planning: "planning", review: "reviewing", advisor: "advising", implementation: "coding", testing: "testing" };
+  const mark = (event: ProgressEvent) => (event.kind === "rejected" ? "✗" : event.kind === "waicc" ? "◆" : event.kind === "note" ? "·" : "›");
+  const stepLine = (event: ProgressEvent) => `${elapsed(event.at).padStart(7)}  ${mark(event)} ${event.text}`;
   let dispatchRefusal: string | undefined;
   const key = (ctx: ExtensionContext): string =>
     `${projectRoot(ctx.cwd)}:${ctx.sessionManager.getSessionId()}`;
@@ -653,7 +660,7 @@ export default function waicc(
   );
   command(
     "waicc-dispatch",
-    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --profiles | --init-profiles | --stop",
+    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --progress | --profiles | --init-profiles | --stop",
     async (args, ctx) => {
       if (args === "--profiles") {
         show(ctx, profilesView(ctx.cwd));
@@ -664,6 +671,16 @@ export default function waicc(
         return;
       }
       const id = selected(ctx);
+      if (args === "--progress") {
+        const running = dispatches.get(id);
+        ensure(running, "No dispatched agent is running for this session. A finished run's steps are in its dispatch log (result.json, progress).");
+        pi.sendMessage({
+          customType: "waicc-dispatch-progress",
+          content: [`${running.label} · ${elapsed(Date.now() - running.startedAt)}`, ...running.events.map(stepLine)].join("\n") || running.label,
+          display: true,
+        }, { triggerTurn: false });
+        return;
+      }
       if (args === "--stop") {
         const running = dispatches.get(id);
         ensure(running, "No dispatched recipient is running for this session in this Pi process.");
@@ -684,19 +701,45 @@ export default function waicc(
       }
       const plan = prepareDispatch(ctx.cwd, id, resolved.options);
       const controller = new AbortController();
+      const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}`;
+      const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[] };
+      // A live panel above the editor and a footer status, refreshed on each step and every few seconds.
+      const render = () => {
+        const recent = state.events.filter((event) => event.kind !== "note").slice(-5);
+        const said = state.events.findLast((event) => event.kind === "note");
+        ctx.ui.setWidget?.("waicc-dispatch", [
+          `${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps   (/waicc-dispatch --progress, --stop)`,
+          ...(recent.length ? recent.map(stepLine) : ["        starting the agent…"]),
+          ...(said ? [`         says: ${said.text}`] : []),
+        ]);
+        ctx.ui.setStatus?.("waicc-dispatch", `${plan.via} ${doing[plan.mode] ?? plan.mode} · ${elapsed(Date.now() - state.startedAt)}`);
+      };
+      const ticker = setInterval(render, 5_000);
+      ticker.unref?.();
+      render();
       // Runs in the background so this chat stays usable; the result arrives as a message.
-      const done = runDispatch(plan, services.runAgent, controller.signal)
+      const done = runDispatch(plan, services.runAgent, controller.signal, (event) => {
+        state.events.push(event);
+        if (state.events.length > 400) state.events.splice(0, state.events.length - 400);
+        render();
+      })
         .then((outcome) => {
           ctx.ui.notify(outcome.replySubmitted ? `${plan.via} submitted a reply. Run /waicc-continue.` : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
           pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
         })
         .catch((error) => ctx.ui.notify(`Dispatch failed: ${error instanceof Error ? error.message : String(error)}`, "error"))
-        .finally(() => dispatches.delete(id));
-      dispatches.set(id, { controller, done });
+        .finally(() => {
+          clearInterval(ticker);
+          ctx.ui.setWidget?.("waicc-dispatch", undefined);
+          ctx.ui.setStatus?.("waicc-dispatch", undefined);
+          dispatches.delete(id);
+        });
+      state.done = done;
+      dispatches.set(id, state);
       show(ctx, {
         dispatching: true, profile: resolved.profile, via: plan.via, model: plan.model ?? "agent default", effort: plan.effort ?? "agent default", sessionId: plan.sessionId,
         requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
-        nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
+        nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. Its live steps show above the editor; /waicc-dispatch --progress lists them all. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
       });
     },
   );
