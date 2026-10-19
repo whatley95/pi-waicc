@@ -381,3 +381,37 @@ test("planning saves the user's request before prompting; chats keep separate se
   assert.ok(turn.message.content.includes("account-scoped"));
   assert.ok(!turn.message.content.includes("Billing"));
 });
+
+test("tools accept nested arguments sent as JSON text, which some models do", async (t) => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-extension-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "source.txt"), "source");
+  const tools = new Map<string, any>(), commands = new Map<string, any>(), entries: any[] = [];
+  waicc({
+    registerCommand: (n: string, c: any) => commands.set(n, c), registerTool: (tool: any) => tools.set(tool.name, tool), on() {},
+    appendEntry: (customType: string, data: any) => entries.push({ type: "custom", customType, data }),
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage() {},
+  } as unknown as ExtensionAPI);
+  const ctx = {
+    cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => "json-text-chat", getBranch: () => entries }, ui: { notify() {} },
+  } as unknown as ExtensionToolContext;
+  const session = createSession(root, "Add search");
+  await commands.get("waicc-use").handler(session.id, ctx);
+  const contract = {
+    title: "Search", requirements: [{ id: "REQ-001", text: "Add search", sourceQuote: "Add search" }],
+    exclusions: [], assumptions: [], questions: [], risks: [], skills: ["wai-node"],
+    tasks: [{ id: "SEARCH", title: "Add search", requirementIds: ["REQ-001"], dependsOn: [], allowedPaths: ["source.txt"],
+      acceptance: [{ id: "AC-001", text: "Search returns expected results", requirementIds: ["REQ-001"], verification: "Exercise known search cases" }] }],
+  };
+  // The contract arrives as JSON text, as in the reported "Contract must be an object" retry loop.
+  const prepared = await tools.get("waicc_prepare").execute("x", {
+    sessionId: session.id, expectedVersion: 0, mode: "planning", focus: "Plan search", contract: JSON.stringify(contract),
+  }, undefined, undefined, ctx);
+  assert.match(prepared.content[0].text, /WAITING_FOR_REPLY/);
+  // Plain-text arguments stay text, even when they look like JSON.
+  const { decodeJsonArguments } = await import("../src/validation.ts");
+  assert.deepEqual(decodeJsonArguments({ focus: "{not decoded}", contract: "{\"a\":1}", note: "plain" },
+    { properties: { focus: { type: "string" }, contract: {}, note: {} } }), { focus: "{not decoded}", contract: { a: 1 }, note: "plain" });
+  assert.equal(decodeJsonArguments({ contract: "{broken" }, { properties: { contract: {} } }).contract, "{broken");
+});

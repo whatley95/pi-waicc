@@ -39,7 +39,13 @@ export interface DispatchOptions {
   implement?: boolean;
   /** Exact commands the human pre-approves; the agent can run only these, through WAICC. */
   checks?: CheckCommand[];
+  /** Pi only: run the /waicc-continue step when a valid reply arrives (false: --no-continue). */
+  continue?: boolean;
+  /** Pi only: review → fix → re-review cycles for a code review, at most this many. */
+  loop?: number;
 }
+/** Default and largest number of automatic review cycles. */
+export const loopCycles = { default: 3, max: 8 };
 export interface AgentResult {
   stdout: string; stderr: string; code: number; killed: boolean;
 }
@@ -84,9 +90,18 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   }
   for (let i = first; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
-    if (flag === "--implement") {
-      options.implement = true;
+    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue") {
+      if (flag === "--implement") options.implement = true;
+      else options.continue = flag !== "--no-continue"; // -c is short for --continue.
       i -= 1; // A switch takes no value.
+      continue;
+    }
+    if (flag === "--loop") {
+      // An optional cycle count follows; otherwise the default.
+      const count = /^\d+$/.test(value ?? "") ? Number(value) : undefined;
+      ensure(count === undefined || (count >= 1 && count <= loopCycles.max), `--loop takes 1–${loopCycles.max} review cycles`);
+      options.loop = count ?? loopCycles.default;
+      if (count === undefined) i -= 1;
       continue;
     }
     ensure(value !== undefined, `${flag} requires a value`);
@@ -112,7 +127,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
 /** Explicit settings only: --via is required and no agent profile is consulted. */
 export function dispatchOptions(input: string | string[]): DispatchOptions {
   const { profile, options } = parseDispatchArgs(input);
-  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]]`);
   return options as DispatchOptions;
 }
 
