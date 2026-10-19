@@ -653,7 +653,7 @@ export default function waicc(
   );
   command(
     "waicc-dispatch",
-    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --profiles | --stop",
+    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] | --profiles | --stop",
     async (args, ctx) => {
       if (args === "--profiles") {
         show(ctx, profilesView(ctx.cwd));
@@ -690,7 +690,7 @@ export default function waicc(
         .finally(() => dispatches.delete(id));
       dispatches.set(id, { controller, done });
       show(ctx, {
-        dispatching: true, profile: resolved.profile, via: plan.via, model: plan.model ?? "agent default", sessionId: plan.sessionId,
+        dispatching: true, profile: resolved.profile, via: plan.via, model: plan.model ?? "agent default", effort: plan.effort ?? "agent default", sessionId: plan.sessionId,
         requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
         nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. You will be notified when it finishes; then run /waicc-continue. /waicc-dispatch --stop ends it. Dispatch never assesses, accepts or advances the contract.`,
       });
