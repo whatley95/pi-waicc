@@ -11,6 +11,7 @@ import { roundDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure } from "./validation.ts";
 import { applyIsolatedChanges, createIsolation, isolatedChanges, removeIsolation, type Isolation } from "./worktree.ts";
+import { progressParser, type ProgressEvent } from "./progress.ts";
 import type { Mode, RecipientPin } from "./types.ts";
 
 export const agents = ["claude", "codex", "pi", "agy"] as const;
@@ -44,6 +45,8 @@ export interface AgentResult {
 }
 export type AgentRunner = (program: string, args: string[], options: {
   cwd: string; timeout: number; signal?: AbortSignal; env?: Record<string, string>;
+  /** Each complete stdout line as it arrives, for live progress. */
+  onLine?: (line: string) => void;
 }) => Promise<AgentResult>;
 /** Set by dispatch only: the Pi extension pins this request read-only at startup. */
 export const dispatchPinVariable = "WAICC_DISPATCH_PIN";
@@ -208,7 +211,8 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
       return {
         program: "claude",
         args: [
-          "-p", plan.prompt, "--output-format", "json",
+          // Streamed events give live progress; the last line is still the final result.
+          "-p", plan.prompt, "--output-format", "stream-json", "--verbose",
           "--mcp-config", config, "--strict-mcp-config",
           // Coding: edits auto-accepted only inside the worktree it runs in; still no shell.
           ...(isolated
@@ -225,7 +229,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
         program: "codex",
         args: [
           // The OS sandbox limits writes to the directory it runs in: the project read-only, or the worktree.
-          "exec", "--sandbox", isolated ? "workspace-write" : "read-only", "--skip-git-repo-check", "-C", plan.cwd,
+          "exec", "--json", "--sandbox", isolated ? "workspace-write" : "read-only", "--skip-git-repo-check", "-C", plan.cwd,
           "-c", `mcp_servers.waicc.command=${JSON.stringify(server.command)}`,
           "-c", `mcp_servers.waicc.args=${JSON.stringify(server.args)}`,
           // Headless exec rejects unapproved MCP calls; approve only the four recipient tools.
@@ -242,7 +246,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
       return {
         program: "agy",
         args: [
-          "-p", plan.prompt, "--output-format", "json", "--sandbox",
+          "-p", plan.prompt, "--output-format", "stream-json", "--sandbox",
           "--print-timeout", `${Math.ceil(plan.timeoutMs / 60_000)}m`,
           ...(model ? ["--model", model] : []),
           ...(effort ? ["--effort", effort] : []),
@@ -262,7 +266,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
       return {
         program: "pi",
         args: [
-          "-p", "--no-session", "-ne", "-e", extensionEntry(), "-a",
+          "-p", "--mode", "json", "--no-session", "-ne", "-e", extensionEntry(), "-a",
           ...(model ? ["--model", model] : []),
           ...(effort ? ["--thinking", effort] : []),
           `You are a dispatched WAICC ${plan.mode} recipient, not the coordinator. Your request is already pinned: call waicc_status to read the assignment, then ${work} Check your draft with waicc_reply and validateOnly true, fix every reported problem, submit exactly once with waicc_reply, then stop. If WAICC refuses, stop and explain why.`,
@@ -377,11 +381,20 @@ function settleIsolation(plan: DispatchPlan, replySubmitted: boolean) {
 
 const tail = (text: string, limit = 24_000): string => (text.length > limit ? text.slice(-limit) : text);
 
-export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgent, signal?: AbortSignal) {
+export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgent, signal?: AbortSignal, onProgress?: (event: ProgressEvent) => void) {
   const startedAt = Date.now();
+  const parse = progressParser(plan.via, plan.cwd, startedAt);
+  const progress: ProgressEvent[] = [];
+  const onLine = (line: string) => {
+    for (const event of parse(line)) {
+      progress.push(event);
+      if (progress.length > 400) progress.splice(0, progress.length - 400);
+      onProgress?.(event);
+    }
+  };
   let result: AgentResult;
   try {
-    result = await run(plan.program, plan.args, { cwd: plan.cwd, timeout: plan.timeoutMs, signal, env: plan.env });
+    result = await run(plan.program, plan.args, { cwd: plan.cwd, timeout: plan.timeoutMs, signal, env: plan.env, onLine });
   } catch (error) {
     result = { stdout: "", stderr: error instanceof Error ? error.message : String(error), code: 1, killed: Boolean(signal?.aborted) };
   } finally {
@@ -393,6 +406,8 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
     schemaVersion: 1, dispatchId: plan.dispatchId, sessionId: plan.sessionId, requestId: plan.requestId,
     mode: plan.mode, via: plan.via, model: plan.model, effort: plan.effort, finishedAt: now(), durationMs: Date.now() - startedAt,
     code: result.code, killed: result.killed, replySubmitted, isolation,
+    // What the agent did, step by step, and the last thing it said.
+    progress, lastMessage: progress.findLast((event) => event.kind === "note")?.text ?? null,
     stdout: tail(result.stdout), stderr: tail(result.stderr),
     outputTruncated: result.stdout.length > 24_000 || result.stderr.length > 24_000,
   };
@@ -406,7 +421,7 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   return {
     dispatched: true, via: plan.via, model: plan.model, effort: plan.effort, sessionId: plan.sessionId, requestId: plan.requestId,
     replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs,
-    isolation,
+    isolation, lastMessage: report.lastMessage, steps: progress.length,
     log: saved ? join(plan.root, sessionRelative(plan.sessionId), logPath) : null,
     nextAction: isolation && !isolation.applied && replySubmitted
       ? `A reply was submitted but its code was NOT applied: ${isolation.reason} The agent's copy is kept at ${isolation.worktree}. Inspect it, then /waicc-cancel this handoff (the reply describes changes that are not in your checkout) or apply in-scope work yourself.`
@@ -463,7 +478,15 @@ export const runAgent: AgentRunner = (program, args, options) =>
     });
     let stdout = "", stderr = "", killed = false;
     // Keep more than the report stores so truncation stays detectable.
-    child.stdout.on("data", (chunk) => { stdout = tail(stdout + chunk, 48_000); });
+    let pending = "";
+    child.stdout.on("data", (chunk) => {
+      stdout = tail(stdout + chunk, 48_000);
+      if (!options.onLine) return;
+      pending += chunk;
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) options.onLine(line);
+    });
     child.stderr.on("data", (chunk) => { stderr = tail(stderr + chunk, 48_000); });
     const stop = () => { killed = true; killTree(child.pid); };
     const timer = setTimeout(stop, options.timeout);
@@ -471,6 +494,7 @@ export const runAgent: AgentRunner = (program, args, options) =>
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (options.onLine && pending.trim()) options.onLine(pending);
       options.signal?.removeEventListener("abort", stop);
       resolve({ stdout, stderr, code: code ?? 1, killed });
     });

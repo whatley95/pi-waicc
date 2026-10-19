@@ -30,7 +30,8 @@ import {
 } from "./workflow.ts";
 import { advisorInput, ensure } from "./validation.ts";
 import { checkCommand } from "./checks.ts";
-import { commandText, dispatch, maxCheckMs } from "./dispatch.ts";
+import { commandText, maxCheckMs, prepareDispatch, runAgent, runDispatch } from "./dispatch.ts";
+import { elapsed } from "./progress.ts";
 import { initAgentConfig, profilesView, resolveDispatch } from "./profiles.ts";
 import { serveMcp } from "./mcp.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
@@ -91,7 +92,9 @@ try {
         !resolved.confirmChecks || rest.includes("--confirm-checks"),
         `These checks come from the project's agent config: ${resolved.options.checks?.map(commandText).join("; ")}. Review them, then add --confirm-checks to run them.`,
       );
-      output = await dispatch(cwd, id, resolved.options);
+      // Live steps go to stderr; stdout keeps the one JSON result.
+      output = await runDispatch(prepareDispatch(cwd, id, resolved.options), runAgent, undefined, (event) =>
+        process.stderr.write(`[${elapsed(event.at)}] ${event.kind === "rejected" ? "✗ " : event.kind === "note" ? "says: " : ""}${event.text}\n`));
       break;
     }
     case "profiles":
