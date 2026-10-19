@@ -772,7 +772,7 @@ vary with project size, models and pricing.
 |                  | Pi with a fast model (for example DeepSeek Flash) | Cheap and quick for small in-place changes (53 s), edits confined to task paths, no shell |
 |                  | Claude | Good for small changes in a worktree; it has no shell, so give it `--check` commands |
 | `testing`        | Claude (Sonnet or Haiku) with `checks` | The tester mainly runs approved checks and reads their output (Sonnet: 52 s, about $0.19) |
-| `advisor`        | A cheaper model through Pi (for example DeepSeek) | Focused questions rarely need the strongest model |
+| `advisor`        | Sonnet, or a cheaper model through Pi (for example DeepSeek) | Focused questions rarely need the strongest model; the main agent also asks it when stuck |
 
 Model names change. Claude accepts aliases (`opus`, `sonnet`, `haiku`, always the latest)
 or exact IDs such as `claude-opus-5-5`; Codex lists its models and their effort levels in
@@ -1221,8 +1221,10 @@ settle from the code. You can also just tell it "ask the advisor".
   file cannot set this.
 
 ```json
-{ "autoAdvisor": { "maxPerChat": 5 } }     // or false to turn it off
+{ "autoAdvisor": { "maxPerChat": 5 } }
 ```
+
+Use `"autoAdvisor": false` to turn it off.
 
 This is separate from `/waicc-advisor` below, which asks a formal question about the
 saved contract and goes through a handoff.
