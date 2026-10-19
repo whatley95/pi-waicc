@@ -772,7 +772,7 @@ vary with project size, models and pricing.
 |                  | Pi with a fast model (for example DeepSeek Flash) | Cheap and quick for small in-place changes (53 s), edits confined to task paths, no shell |
 |                  | Claude | Good for small changes in a worktree; it has no shell, so give it `--check` commands |
 | `testing`        | Claude (Sonnet or Haiku) with `checks` | The tester mainly runs approved checks and reads their output (Sonnet: 52 s, about $0.19) |
-| `advisor`        | A cheaper model through Pi (for example DeepSeek) | Focused questions rarely need the strongest model |
+| `advisor`        | Sonnet, or a cheaper model through Pi (for example DeepSeek) | Focused questions rarely need the strongest model; the main agent also asks it when stuck |
 
 Model names change. Claude accepts aliases (`opus`, `sonnet`, `haiku`, always the latest)
 or exact IDs such as `claude-opus-5-5`; Codex lists its models and their effort levels in
@@ -870,6 +870,9 @@ Safety rules:
   decisions for you; see [Fewer decisions to answer](#fewer-decisions-to-answer-standing-policies-and-low-risk-auto-accept).
 - **`"autoContinue": true`** (user file only) runs the continue step after every dispatch
   that returns a valid reply; a project file that sets it is rejected.
+- **`"autoAdvisor"`** (user file only) caps how often the main agent may ask the advisor
+  on its own: 3 per chat by default, `{ "maxPerChat": n }` (0–20), or `false` for off; see
+  [When the main agent is stuck](#when-the-main-agent-is-stuck-it-asks-the-advisor).
 - **A config can never authorize coding.** There is no `implement` field; type
   `--implement` on each coding dispatch.
 - **Checks from the project file are confirmed before they run.** Anyone who can change
@@ -1195,6 +1198,36 @@ permission boundary against an agent with shell/filesystem access.
 The CLI equivalents are `close <session-id> <reason>` and `reopen <session-id> <reason>`
 with `--root <project>`. Older `READY_FOR_HANDOFF` records are preserved, not silently
 upgraded to PASS; request a fresh review to use closure.
+
+## When the main agent is stuck: it asks the advisor
+
+While it works, with or without a WAICC session, the main agent can ask your advisor (the
+`advisor` role's profile, Sonnet in the default template) for a second opinion by itself.
+It does this when it is genuinely stuck: the same check still fails after two real fix
+attempts, it cannot find a bug's cause, or it must choose between risky designs it cannot
+settle from the code. You can also just tell it "ask the advisor".
+
+- The advisor reads the project **read-only**: Claude gets only Read/Grep/Glob, Codex runs
+  in its read-only sandbox, Pi gets only read/grep/find/ls. It gets the question, what was
+  already tried, the exact errors and the files to start from, then answers with a
+  diagnosis (with file:line evidence), a recommended next step, a fallback and how to
+  confirm.
+- **The answer is advice, not an instruction.** The main agent verifies it against the code
+  before acting. It creates no handoff and changes no contract, decision or authorization.
+- You see each question: a notice, a live panel while the advisor works, and the tool
+  call with its answer in the chat. The brief and answer are kept in
+  `.pi/pi-waicc/consults/`.
+- **At most 3 questions per Pi chat by default.** Change it in your user file. A project
+  file cannot set this.
+
+```json
+{ "autoAdvisor": { "maxPerChat": 5 } }
+```
+
+Use `"autoAdvisor": false` to turn it off.
+
+This is separate from `/waicc-advisor` below, which asks a formal question about the
+saved contract and goes through a handoff.
 
 ## Ask a contract advisor
 

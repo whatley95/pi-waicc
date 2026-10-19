@@ -518,6 +518,18 @@ is resolved with its recommendation, `recordedBy: auto-low-risk`. A pending hand
 the pass until the next one. Both are announced to the human; `/waicc-decide auto` runs
 the pass on demand and reports why each remaining decision still needs the human.
 
+`waicc_ask_advisor {question, tried, evidence?, paths?}` (coordinator only, trusted project)
+is a consult, not a round: it needs no session, issues no handoff, and changes no contract,
+decision or authorization. It runs the advisor role's profile in the project root read-only
+(Claude: Read/Grep/Glob only, no MCP; Codex: `--sandbox read-only`; Pi: `-ne --no-mcp
+--tools read,grep,find,ls`) with a one-line prompt pointing to `.pi/pi-waicc/consults/<id>/brief.md`,
+and returns the agent's final text; `result.json` beside it keeps the answer and progress.
+When the chat is bound as coordinator, the brief includes the session status and a
+requirements preview. The user file's `autoAdvisor` (`true` = 3, `false` = off, or
+`{ "maxPerChat": 0–20 }`; default 3; a project file setting it is rejected) caps consults per
+Pi chat, counted by `waicc-advisor-consult` entries on the chat branch, appended before the
+run so failed or stopped consults count. One consult runs at a time per chat.
+
 Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
 ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
 dropped from the change list, and removal unlinks each folder (removing only the link)
