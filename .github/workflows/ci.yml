@@ -22,6 +22,10 @@ jobs:
       - name: Install Subversion (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y subversion bubblewrap
+      # Ubuntu 24.04 forbids unprivileged user namespaces by default; allow them so the real bwrap test runs.
+      - name: Allow bubblewrap (Linux)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Install Subversion (macOS)
         if: runner.os == 'macOS'
         run: brew install subversion
