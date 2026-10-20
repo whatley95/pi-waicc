@@ -127,12 +127,12 @@ test("the page renders cards, the needs-you list and details, and never runs tex
 });
 
 /** Renders the page's script on these projects, on one tab; returns the app's markup. */
-function renderPage(projects: unknown[], tab = "overview"): string {
+function renderPage(projects: unknown[], tab = "overview", tokens = "today"): string {
   const elements: Record<string, { innerHTML: string; textContent: string }> = { app: { innerHTML: "", textContent: "" }, updated: { innerHTML: "", textContent: "" } };
   const window: Record<string, any> = {};
   const script = /<script>([\s\S]*)<\/script>/.exec(readFileSync(new URL("../templates/tracker.html", import.meta.url), "utf8"))![1];
   runInNewContext(script, {
-    window, location: { hash: "" }, history: { replaceState() {} }, localStorage: { getItem: (k: string) => (k === "waicc-tab" ? tab : null), setItem() {} },
+    window, location: { hash: "" }, history: { replaceState() {} }, localStorage: { getItem: (k: string) => (k === "waicc-tab" ? tab : k === "waicc-tokens" ? tokens : null), setItem() {} },
     setInterval() {}, document: {
       getElementById: (name: string) => elements[name] ?? { addEventListener() {} },
       addEventListener() {}, querySelectorAll: () => [], createElement: () => ({ remove() {} }), body: { appendChild() {} },
@@ -190,8 +190,10 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   assert.match(overview, /Pi chat chat-b/);
   assert.match(overview, /also claude-sonnet-5-5/);
   assert.match(overview, /Main agent \$1\.15/, "the summary strip says who used today's spend");
-  assert.match(overview, /Tokens today<\/div><div class="value">7k<\/div>/);
-  assert.match(overview, /in 6k \(2k cached\) · out 800/, "input (cached included) and output are shown apart");
+  assert.match(overview, /<span>Tokens<\/span><span class="seg"><button type="button" data-tokrange="today" class="on">Today<\/button>[\s\S]*?<div class="value">7k<\/div>/);
+  const everything = renderPage([status], "overview", "all");
+  assert.match(everything, /data-tokrange="all" class="on">All<\/button>[\s\S]*?<div class="value">7k<\/div>/, "All counts everything recorded");
+  assert.match(everything, /since \d+ \w+ \d{4} · \$1\.15/);
   assert.match(overview, /input 4k<\/span><span><b class="cached"><\/b>cached 2k<\/span><span><b class="out"><\/b>output 800/, "and today's fresh input, cached input and output are labelled");
   assert.match(overview, /class="tokbar"/);
   assert.match(overview, /<div class="sub">main agent 7k<\/div>/, "and who used them");
@@ -213,6 +215,20 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   await handlers.get("session_shutdown")({}, first);
   assert.notEqual(savedAt(), before);
   assert.equal(projectStatus(root).runs.filter((r) => r.kind === "main").reduce((n, r) => n + r.messages!, 0), 5);
+
+  // The page's run list keeps the latest 2,000 figures; the all-time totals count every one.
+  const long = Array.from({ length: 2100 }, (_, i) => ({
+    type: "message", id: `h${i}`, parentId: null, timestamp: new Date(hour.getTime() - i * 3_600_000).toISOString(),
+    message: { role: "assistant", provider: "anthropic", model: "claude-opus-5-5", usage: { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 11, cost: { total: 0.01 } } },
+  }));
+  await handlers.get("session_shutdown")({}, chat("chat-long", "Long chat", "claude-opus-5-5", long));
+  const big = projectStatus(root);
+  assert.equal(big.runs.length, 2000);
+  assert.equal(big.allTime.byKind.main.messages, 2105);
+  assert.equal(big.allTime.byKind.main.inputTokens, 2100 * 10 + 7500);
+  assert.equal(big.allTime.byKind.dispatch.runs, 0);
+  assert.ok(Date.parse(big.allTime.since!) <= hour.getTime() - 2099 * 3_600_000);
+  assert.match(renderPage([JSON.parse(JSON.stringify(big))], "overview", "all"), /<div class="value">32k<\/div>/, "31.6k tokens from 2,105 messages, beyond the run list");
 });
 
 test("/waicc-tracker opens the page; off stops every update, on resumes; dispatched agents never write it", async (t) => {

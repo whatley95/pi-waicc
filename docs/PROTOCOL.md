@@ -582,7 +582,10 @@ final `result` line gives its totals and `total_cost_usd`; Codex's `turn.complet
 give tokens, summed, with `costUsd: null`; Pi's assistant `message_end` events give tokens
 and `cost.total`, summed. Unrecognised output yields null, never a failed run. The tracker
 lists every run's usage per project (at most 2,000, closed sessions included) for the page to
-total by day, agent, model, step and session, plus per-round and per-session totals.
+total by day, agent, model, step and session, plus per-round and per-session totals. Before
+that list is cut, `allTime: {since, byKind: {main, dispatch, advisor}}` totals every recorded
+figure (tokens, cached tokens, output, cost, runs, unpriced runs, main-agent messages), so
+the page's All figures are exact; a project file without it falls back to its run list.
 
 The main agent is counted per Pi chat. Before each tracker write (also after each assistant
 `message_end` and `model_select`), a coordinator chat whose entry count or model changed sums

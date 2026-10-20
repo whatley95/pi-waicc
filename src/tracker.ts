@@ -266,11 +266,20 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
   const asked = consults(root);
   const talked = chats(root);
   // Every run's figures, closed sessions included, so the page can total any period itself.
-  const runs: SpendRun[] = [
+  const everyRun: SpendRun[] = [
     ...all.flatMap((s) => s.runs),
     ...asked.flatMap((c) => (c.usage ? [{ at: c.finishedAt, kind: "advisor" as const, mode: "advisor", via: c.via, model: c.model, sessionId: null, usage: c.usage }] : [])),
     ...talked.flatMap((c) => c.hours.map((h) => ({ at: h.at, kind: "main" as const, mode: "main agent", via: "main agent", model: h.model, sessionId: null, usage: h.usage, chatId: c.chatId, messages: h.messages }))),
-  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 2_000);
+  ].sort((a, b) => b.at.localeCompare(a.at));
+  const runs = everyRun.slice(0, 2_000);
+  // Exact totals over everything recorded, before the list above is cut, by who used it.
+  const allTime = {
+    since: everyRun.at(-1)?.at ?? null,
+    byKind: Object.fromEntries((["main", "dispatch", "advisor"] as const).map((kind) => {
+      const mine = everyRun.filter((run) => run.kind === kind);
+      return [kind, { ...totalUsage(mine.map((run) => run.usage)), messages: mine.reduce((n, run) => n + (run.messages ?? 0), 0) }];
+    })) as Record<SpendRun["kind"], ReturnType<typeof totalUsage> & { messages: number }>,
+  };
   return {
     schemaVersion: 1 as const,
     key: projectKey(root),
@@ -287,6 +296,7 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     consults: asked.slice(0, 10),
     chats: talked.slice(0, 10).map(({ chatId, name, model, updatedAt }) => ({ chatId, name, model, updatedAt })),
     runs,
+    allTime,
     needsYou: [
       ...(extension?.outdated
         ? [{ sessionId: null, text: "pi-waicc was updated: a Pi chat here still runs the copy it loaded", detail: "Type /reload in that chat to load the new version", command: "/reload" }]
