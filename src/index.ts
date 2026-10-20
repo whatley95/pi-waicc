@@ -26,7 +26,7 @@ import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, p
 import { consultSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { consultAdvisor } from "./consult.ts";
 import { learnPattern, recurringFindings } from "./learning.ts";
-import { openPage, projectStatus, publish, sessionSpend, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
+import { openPage, projectStatus, publish, recordChat, sessionSpend, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
 import { usageText } from "./usage.ts";
 import { autoDecidable } from "./decisions.ts";
 import { elapsed, type ProgressEvent } from "./progress.ts";
@@ -162,6 +162,19 @@ export default function waicc(
   /** Recent run outcomes per project, for the tracker page. */
   const notices = new Map<string, Notice[]>();
   const trackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Per chat: the entry count and model last saved, so an unchanged chat is not summarised again.
+  const chatsRecorded = new Map<string, string>();
+  function recordMainAgent(ctx: ExtensionContext, root: string): void {
+    try {
+      const chatId = ctx.sessionManager.getSessionId();
+      const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null;
+      const entries = ctx.sessionManager.getEntries();
+      const stamp = `${entries.length}\0${model}`;
+      if (chatsRecorded.get(`${root}\0${chatId}`) === stamp) return;
+      recordChat(root, chatId, ctx.sessionManager.getSessionName() ?? null, model, entries);
+      chatsRecorded.set(`${root}\0${chatId}`, stamp);
+    } catch { /* the page then shows this chat's main agent as it was last saved */ }
+  }
   const doing: Record<string, string> = { planning: "planning", review: "reviewing", advisor: "advising", implementation: "coding", testing: "testing" };
   const mark = (event: ProgressEvent) => (event.kind === "rejected" ? "✗" : event.kind === "waicc" ? "◆" : event.kind === "note" ? "·" : "›");
   const stepLine = (event: ProgressEvent) => `${elapsed(event.at).padStart(7)}  ${mark(event)} ${event.text}`;
@@ -195,6 +208,7 @@ export default function waicc(
       const run = () => {
         trackTimers.delete(root);
         try {
+          recordMainAgent(ctx, root);
           publish(trackerStatus(ctx, root, live));
         } catch { /* the page is a convenience; WAICC carries on */ }
       };
@@ -1696,6 +1710,9 @@ export default function waicc(
     advanceLoop(ctx);
     track(ctx);
   });
+  // The main agent's own use and model, as it works.
+  pi.on("message_end", async (event, ctx) => { if (event.message.role === "assistant") track(ctx); });
+  pi.on("model_select", async (_event, ctx) => { track(ctx); });
   // Pi is closing this chat: its agents stop with it, so the page shows the project idle.
   pi.on("session_shutdown", async (_event, ctx) => { track(ctx, true, false); });
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
