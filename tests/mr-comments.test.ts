@@ -9,6 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import waicc from "../src/index.ts";
 import { gitlabClient, gitlabProject, reviewComments, summaryNote, type GitLabCall } from "../src/gitlab.ts";
 import { addGitlabHost, gitlabHost, loadAgentConfig, profilesView } from "../src/profiles.ts";
+import { forgetSessionTokens } from "../src/pi/merge-requests.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { resolveRevision } from "../src/revision.ts";
 import { assess, createRevisionReview, ingest, postedComments, prepare } from "../src/workflow.ts";
@@ -120,13 +121,15 @@ test("findings become comments on their lines or in the summary; disputed findin
 });
 
 /** The extension with a fake GitLab that records every call, and a Pi screen that answers as told. */
-async function run(t: TestContext, answers: { select: (options: string[]) => string; confirm?: boolean[]; hasUI?: boolean }, gitlab: Partial<Record<string, (body: any) => any>> = {}) {
+async function run(t: TestContext, answers: { select: (options: string[]) => string; confirm?: boolean[]; input?: string[]; hasUI?: boolean }, gitlab: Partial<Record<string, (body: any) => any>> = {}) {
+  forgetSessionTokens();
   const review = assessedReview(t);
-  const calls: [string, string, any][] = [], notices: string[] = [];
+  const calls: [string, string, any][] = [], notices: string[] = [], opened: string[] = [], saved: [string, string][] = [];
   const fake = (): GitLabCall => async (method, path, body) => {
     calls.push([method, path, body]);
     const handler = gitlab[`${method} ${path}`];
     if (handler) return handler(body);
+    if (path === "/user") return { username: "whatley" };
     if (method === "GET") return { title: "Add sync", description: "Adds sync()", web_url: "https://gitlab.example.com/team/app/-/merge_requests/7", state: "opened", diff_refs: { base_sha: review.start, start_sha: review.start, head_sha: review.head } };
     return path.endsWith("/discussions") ? { id: "d1", notes: [{ id: 11 }] } : { id: 99 };
   };
@@ -134,17 +137,22 @@ async function run(t: TestContext, answers: { select: (options: string[]) => str
   waicc({
     registerCommand: (name: string, c: any) => commands.set(name, c), registerTool() {}, on() {}, appendEntry() {},
     getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage() {},
-  } as unknown as ExtensionAPI, { gitlab: fake });
-  const confirms = [...(answers.confirm ?? [])];
+  } as unknown as ExtensionAPI, {
+    gitlab: fake, openPage: (url) => (opened.push(url), true), saveUserVariable: (name, value) => (saved.push([name, value]), true),
+  });
+  const confirms = [...(answers.confirm ?? [])], inputs = [...(answers.input ?? [])];
   const ctx = {
     cwd: review.root, mode: "tui", hasUI: answers.hasUI ?? true, isIdle: () => true, isProjectTrusted: () => true,
     sessionManager: { getSessionId: () => "mr-chat", getBranch: () => [] },
-    ui: { notify: (m: string) => notices.push(m), select: async (_title: string, options: string[]) => answers.select(options), confirm: async () => confirms.shift() ?? true },
+    ui: {
+      notify: (m: string) => notices.push(m), select: async (_title: string, options: string[]) => answers.select(options),
+      confirm: async () => confirms.shift() ?? true, input: async () => inputs.shift(),
+    },
   } as unknown as ExtensionCommandContext;
   await commands.get("waicc-use").handler(review.s.id, ctx);
   writeFileSync(join(review.agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-secret-1" } } }));
   const post = () => commands.get("waicc-mr-comments").handler("", ctx).catch((e: Error) => notices.push(`error: ${e.message}`));
-  return { ...review, calls, notices, post };
+  return { ...review, calls, notices, opened, saved, post };
 }
 
 test("after you pick and confirm, findings go on their lines and the rest into one summary, and nothing is posted twice", async (t) => {
@@ -203,31 +211,59 @@ test("nothing is posted for a changed merge request, an unlisted host or without
   assert.equal(headless.calls.length, 0);
 });
 
-test("an unlisted host can be added to your user file, with your yes: the variable's name, never a token", async (t) => {
+test("guided setup: list the host, open the token page, check the pasted token with GitLab, keep it, then post in the same run", async (t) => {
   delete process.env.GITLAB_TOKEN;
-  const h = await run(t, { select: (options) => options[0], confirm: [true] });
+  // Answers: add the host, open the page, keep the token, then post all and confirm.
+  const h = await run(t, { select: (options) => options[0], confirm: [true, true, true, true], input: ["glpat-pasted-12345"] });
   const file = join(h.agentDir, "waicc-agents.json");
   writeFileSync(file, JSON.stringify({ roles: { review: "sol" }, profiles: { sol: { via: "codex", model: "gpt-6.1-sol" } } }));
   await h.post();
-  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), {
-    roles: { review: "sol" }, profiles: { sol: { via: "codex", model: "gpt-6.1-sol" } }, gitlab: { "gitlab.example.com": { tokenEnv: "GITLAB_TOKEN" } },
-  }, "everything else in the file is kept");
-  assert.match(h.notices.at(-1)!, /^Added gitlab\.example\.com to .*waicc-agents\.json\. Now create a GitLab personal access token with the "api" scope[\s\S]*setx GITLAB_TOKEN "glpat-\.\.\."/);
-  assert.equal(h.calls.length, 0, "nothing is sent before the token is set");
-
-  // Once the variable is set, the same command posts.
-  process.env.GITLAB_TOKEN = "glpat-from-env";
-  t.after(() => { delete process.env.GITLAB_TOKEN; });
-  await h.post();
-  assert.equal(h.calls.filter(([method]) => method === "POST").length, 2);
+  assert.deepEqual(h.opened, ["https://gitlab.example.com/-/user_settings/personal_access_tokens?name=WAICC%20reviews&scopes=api"], "the page comes filled in");
+  assert.equal(h.calls[0][1], "/user", "the token is checked with GitLab before anything else");
+  const config = JSON.parse(readFileSync(file, "utf8"));
+  assert.deepEqual(config.roles, { review: "sol" }, "everything else in the file is kept");
+  if (process.platform === "win32") {
+    assert.deepEqual(h.saved, [["GITLAB_TOKEN", "glpat-pasted-12345"]], "kept as a Windows user variable");
+    assert.deepEqual(config.gitlab, { "gitlab.example.com": { tokenEnv: "GITLAB_TOKEN" } }, "the file names the variable, not the token");
+  } else assert.deepEqual(config.gitlab, { "gitlab.example.com": { token: "glpat-pasted-12345" } }, "kept in the user file, readable only by you");
+  assert.equal(process.env.GITLAB_TOKEN, undefined, "never put in Pi's own environment, which dispatched agents inherit");
+  assert.equal(h.calls.filter(([method]) => method === "POST").length, 2, "and the review is posted in the same run");
+  assert.ok(h.notices.some((n) => /^Added gitlab\.example\.com to /.test(n)));
+  assert.ok(!h.notices.join("\n").includes("glpat-pasted"), "the token is never shown");
 
   assert.throws(() => addGitlabHost("GitLab.Example.com"), /already under "gitlab"/, "a host there is never replaced");
   const added = addGitlabHost("10.0.0.5", { allowHttp: true });
   assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).gitlab["10.0.0.5"], { tokenEnv: "GITLAB_TOKEN", allowHttp: true });
-  assert.equal(added.tokenSet, true);
+  assert.equal(added.tokenSet, false, "GITLAB_TOKEN is not set here");
   writeFileSync(file, "{ not json");
   assert.throws(() => addGitlabHost("other.example.com"), /is not valid JSON, so it was left unchanged/);
   assert.equal(readFileSync(file, "utf8"), "{ not json");
+});
+
+test("guided setup: a token GitLab refuses saves nothing; one kept only for this session still posts", async (t) => {
+  delete process.env.GITLAB_TOKEN;
+  const refused = await run(t, { select: (options) => options[0], confirm: [true, false], input: ["glpat-wrong-12345"] }, {
+    "GET /user": () => { throw Object.assign(new Error("GitLab GET /user failed (HTTP 401): 401 Unauthorized"), { status: 401 }); },
+  });
+  writeFileSync(join(refused.agentDir, "waicc-agents.json"), "{}");
+  await refused.post();
+  assert.match(refused.notices.at(-1)!, /^GitLab did not accept that token \(GitLab GET \/user failed \(HTTP 401\)[\s\S]*nothing was saved or posted/);
+  assert.equal(readFileSync(join(refused.agentDir, "waicc-agents.json"), "utf8"), "{}");
+  assert.deepEqual(refused.opened, [], "you said no to opening the page");
+
+  // Kept for this session only: the file names the variable, and posting still works now.
+  const once = await run(t, { select: (options) => options[0], confirm: [true, false, false, true], input: ["glpat-session-1234"] });
+  writeFileSync(join(once.agentDir, "waicc-agents.json"), "{}");
+  await once.post();
+  assert.deepEqual(once.saved, []);
+  assert.deepEqual(JSON.parse(readFileSync(join(once.agentDir, "waicc-agents.json"), "utf8")).gitlab, { "gitlab.example.com": { tokenEnv: "GITLAB_TOKEN" } });
+  assert.ok(once.notices.some((n) => /The token works for this Pi session only/.test(n)));
+  assert.equal(once.calls.filter(([method]) => method === "POST").length, 2);
+
+  const empty = await run(t, { select: (options) => options[0], confirm: [true, false], input: [""] });
+  writeFileSync(join(empty.agentDir, "waicc-agents.json"), "{}");
+  await empty.post();
+  assert.match(empty.notices.at(-1)!, /^Nothing was posted\. When you have the token, run \/waicc-mr-comments again/);
 });
 
 test("the API client sends the token only as a header, reads GitLab's errors, and refuses plain http unless allowed", async (t) => {
