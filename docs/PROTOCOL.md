@@ -973,6 +973,27 @@ grouped at the first depth (1–4) where they split, and up to 30 groups get
 listed in `review.revision.parts`. Revision-review handoffs ask for `path:line` at the start of
 each finding's evidence.
 
+The user file's `gitlab` (a project file setting it is rejected) maps at most 10 hosts
+(`^[A-Za-z0-9.-]+(:\d{1,5})?$`, case-insensitive) to `{token? | tokenEnv?, allowHttp?}`. The API
+origin and project path come from the recorded remote URL (https, http, `git@host:path` or
+`ssh://`, whose port is ignored); a token is sent only to a listed host, only as the
+`PRIVATE-TOKEN` header, never over http unless `allowHttp`, with the system and bundled CA
+certificates trusted. When the host has a token, `--mr` reads `GET /projects/:path/merge_requests/:n`
+and gives the main agent its title and description as data. `/waicc-mr-comments` is a human
+command that requires Pi's UI. It takes the session's last ASSESSED code-review round, reads the
+merge request, and refuses unless `diff_refs.head_sha` equals the reviewed head and its state is
+`opened`. Candidates are the reply's findings that are not disputed and not `info`; a finding is
+placed on a line when its evidence starts with `path:line` for a path in
+`revision.changedPaths` (prefixed with `git rev-parse --show-prefix`). Each candidate's key is its
+location and normalized description; keys already in the session's `mr-comments/*.json` are not
+offered again. After a `select` (all, one by one with `confirm`, summary only, cancel) and a final
+`confirm`, line findings are posted with `POST …/discussions` and a text position
+(`base_sha`, `start_sha`, `head_sha`, `new_path`, `new_line`); an HTTP 400 moves that finding into
+the summary, any other failure stops. One `POST …/notes` summary follows, listing the outcome,
+counts, set-aside findings and the remaining findings by severity. Whatever was posted is recorded
+in `mr-comments/<time>-<id>.json` (`requestId`, `headSha`, `webUrl`, each finding's id, key,
+`inline` and note id, and the summary note id), even when a later post failed.
+
 The reviewer checks the entire implementation, requirements/acceptance, integration,
 regressions, check evidence and all prior fixes, returning one consolidated reply.
 Main-agent assessment precedes source edits so the original review remains assessable.

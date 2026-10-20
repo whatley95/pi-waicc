@@ -222,6 +222,41 @@ keeps its own files in `.pi/pi-waicc`, which is ignored by Git, so nothing appea
 repository's changes. Running the same command again in that session fetches the author's new
 commits; the next review then covers them, with every earlier finding marked fixed or disputed.
 
+**Post the review to GitLab, after you confirm.** Once the main agent has assessed the review:
+
+```text
+/waicc-mr-comments
+```
+
+shows how many findings there are to post and lets you choose: post them all, choose one by
+one, post only a summary, or cancel. A last confirmation names the merge request before
+anything is sent. Each finding whose evidence starts with a changed file's `path:line` becomes a
+comment on that line; the rest, and any line GitLab will not accept a comment on, go into one
+summary comment with the review's outcome, worst first. Findings the main agent disputed and
+mere notes are never posted. WAICC records what it posted in the session, so after the author
+pushes fixes and you review again, only new findings are offered. It refuses when the merge
+request has new commits since the review (fetch and review again first), when it is no longer
+open, or without Pi's interactive screen. Only you can post: it is a command, never a tool the
+main agent can call.
+
+It needs a GitLab personal access token with the `api` scope, set per host in your user file
+(a project file setting `gitlab` is rejected, so a repository cannot point your token at its own
+server):
+
+```json
+"gitlab": {
+  "gitlab.example.com": { "tokenEnv": "GITLAB_TOKEN" },
+  "10.0.0.5": { "token": "glpat-…", "allowHttp": true }
+}
+```
+
+`tokenEnv` names an environment variable that holds the token; `token` holds it in the file
+itself. A host reached over plain `http://` needs `"allowHttp": true`, because the token would
+travel unencrypted. WAICC trusts the system's certificates as well as Node's, so an internal
+GitLab that git and your browser trust works. With the host set up, `/waicc-review --mr` also
+reads the merge request's title and description, so the main agent knows what it is meant to
+do. `/waicc-dispatch --profiles` shows whether each host has a token, never the token.
+
 For specification-only work, explicitly use `/waicc-review --contract <focus>`.
 That review may retain future execution gates and its PASS is not code approval.
 `reviewApproval.kind` distinguishes `code` from `contract`; legacy unmarked reviews
@@ -1179,6 +1214,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-review <focus>`                          | Prepare ONE full code-change review after ALL work/fixes/checks; without a selection, capture supplied review requirements |
 | `/waicc-review --rev <commit\|a..b\|a...b\|r1234[:r1250]> [focus]` | Review an existing Git or SVN change in its own session; the reviewer gets its patch and commit messages |
 | `/waicc-review --mr <n> [--remote r] [--into branch] [focus]` | Review a GitLab merge request or GitHub pull request, fetched with plain git; again later to pick up new commits |
+| `/waicc-mr-comments`                             | Post the assessed merge request review to GitLab: line comments and a summary, after you choose and confirm |
 | `/waicc-review --contract <focus>`               | Explicit specification-only review, not code-change approval |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
