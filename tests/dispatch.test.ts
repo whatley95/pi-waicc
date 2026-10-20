@@ -293,8 +293,40 @@ test("a malformed proposedContract names its location and shows a valid example 
   proposed.tasks[0].allowedPaths = ["source.txt"];
   assert.equal(validateRecipientReply(root, assignment.pin, { ...body(), outcome: "planned", proposedContract: proposed }).valid, true);
   const guessed = { ...proposed, tasks: [{ id: "T1", title: "x", dependencies: [], acceptanceCriteria: ["works"] }] };
+  // Every independent mistake comes back at once, each with its location, then the example.
   assert.throws(
     () => validateRecipientReply(root, assignment.pin, { ...body(), outcome: "planned", proposedContract: guessed }),
-    (error: Error) => /^proposedContract: .*unsupported fields/.test(error.message) && error.message.includes('"acceptance":[{"id":"AC-001"'),
+    (error: Error) => {
+      const lines = error.message.split("\n");
+      assert.equal(lines[0], "5 problems; fix all of them:");
+      assert.match(lines[1], /^1\. proposedContract\.tasks\[0\]: Task contains unsupported fields: "dependencies", "acceptanceCriteria"/);
+      assert.deepEqual(lines.slice(2, 6).map((line) => line.split(":")[0]), [
+        "2. proposedContract.tasks[0].requirementIds", "3. proposedContract.tasks[0].dependsOn",
+        "4. proposedContract.tasks[0].allowedPaths", "5. proposedContract.tasks[0].acceptance"]);
+      assert.ok(lines[6].includes('"acceptance":[{"id":"AC-001"'), "the valid example follows");
+      return true;
+    },
   );
+  // One mistake reads as before, with its location.
+  const oneWrong = structuredClone(proposed);
+  oneWrong.tasks[0].acceptance[0].verification = "";
+  assert.throws(() => validateRecipientReply(root, assignment.pin, { ...body(), outcome: "planned", proposedContract: oneWrong }),
+    (error: Error) => /^proposedContract\.tasks\[0\]\.acceptance\[0\]\.verification: Planned verification must be nonempty text/.test(error.message));
+});
+
+test("a reply with mistakes in several sections gets all of them in one validation", (t) => {
+  const { root, id } = fixture(t);
+  const assignment = receiveHandoff(root, id);
+  const draft = {
+    ...body(), summary: "",
+    findings: [{ id: "F1", severity: "major", description: "Menu overlaps", evidence: "" }, { id: "F 2", severity: "low", description: "x", evidence: "y" }],
+    checks: [{ description: "Ran tests", outcome: "maybe", evidence: "ok" }],
+  };
+  assert.throws(() => validateRecipientReply(root, assignment.pin, draft), (error: Error) => {
+    const located = error.message.split("\n").slice(1).map((line) => line.replace(/^\d+\. /, "").split(": ")[0]);
+    assert.deepEqual(located, ["summary", "findings[0].evidence", "findings[0].severity", "findings[1].id", "checks[0]"]);
+    assert.match(error.message, /^5 problems; fix all of them:/);
+    assert.match(error.message, /checks\[0\]: Invalid check outcome at checks\[0\]\.outcome: expected passed, failed or not_run; received "maybe"/);
+    return true;
+  });
 });
