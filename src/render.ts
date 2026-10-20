@@ -227,6 +227,11 @@ export function handoff(
       : join(dir, roundDirectory(r), "code-review.json");
     focus += `\n\n## Whole-change code review\n\nRead ${report}. It contains the ORIGINAL baseline file hashes/revision, all changed paths since that baseline, the main agent's completion/check claims for every task and the fix/dispute evidence for ALL earlier actionable code-review findings. These are claims to verify, not approval. Review the entire implementation and all prior fixes, not just one task, a batch or the last delta. Source at issue is pinned; do not modify it. Hash inventories are not old source contents or a diff: inspect available Git/SVN history and current/untracked files, and report missing baseline/evidence access honestly. Changes outside planned paths also need investigation; never omit them from review. Return one consolidated reply.\n`;
   }
+  if (r.review?.kind === "code" && r.review.revision) {
+    const rev = r.review.revision;
+    const beside = (name: string) => (portable ? `${name} beside this file` : join(dir, roundDirectory(r), name));
+    focus += `\n\n## The change under review: ${rev.label}\n\nThis reviews an existing ${rev.vcs === "git" ? "Git" : "SVN"} change, not only work done in this session. WAICC ran the diff for you: read ${beside("changes.patch")} (${rev.vcs === "git" ? `git diff ${rev.from} ${rev.to}` : `svn diff -r ${rev.from}:${rev.to}`}, limited to this project) and ${beside("commits.txt")} (its commit messages). Its ${rev.changedPaths.length} changed file${rev.changedPaths.length === 1 ? "" : "s"} are listed in code-review.json under revision.changedPaths; other changedPaths are fixes made in this session since. ${rev.truncated ? `The patch was cut at the size limit (full size ${rev.patchBytes} characters): review the remaining listed files from the checkout or history and say which parts you could not see. ` : ""}${rev.checkout && rev.vcs === "git" && rev.checkout !== rev.to ? `The checkout is at ${rev.checkout}, not at ${rev.to}: read the patch for the change itself, and the checkout for its surroundings and later fixes. ` : ""}Review the whole change: correctness, regressions, requirement coverage and tests. Findings must cite a file and the lines from the patch or the checkout.\n`;
+  }
   if (r.mode === "advisor") {
     const memory = portable
       ? "memory.json beside this file"
