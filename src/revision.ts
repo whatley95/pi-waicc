@@ -97,6 +97,35 @@ export function repositoryPrefix(root: string): string {
 export const safeRemoteUrl = (url: string): string => url.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1");
 const branchName = /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/;
 
+const noPrompt = { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
+/** The remote merge requests come from: the one named, the only one, or origin; GitHub by its URL. */
+export function chooseRemote(root: string, wanted?: string): { remote: string; url: string | null; provider: "gitlab" | "github" } {
+  const remotes = run("git", ["remote"], root, 15_000);
+  ensure(remotes.ok, "This project is not a Git repository, so there is no merge request to fetch");
+  const names = remotes.out.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+  ensure(names.length > 0, "This repository has no remote to fetch the merge request from");
+  const remote = wanted ?? (names.length === 1 ? names[0] : names.includes("origin") ? "origin" : undefined);
+  ensure(remote, `This repository has several remotes; pick one with --remote <name>: ${names.join(", ")}`);
+  ensure(names.includes(remote), `No remote named ${JSON.stringify(remote)}; remotes here: ${names.join(", ")}`);
+  const url = run("git", ["remote", "get-url", remote], root, 15_000);
+  const remoteUrl = url.ok ? safeRemoteUrl(url.out) : null;
+  return { remote, url: remoteUrl, provider: remoteUrl && /github\.com[:/]/i.test(remoteUrl) ? "github" : "gitlab" };
+}
+/**
+ * The merge requests a remote publishes, newest number first, from plain git (no token). Git
+ * cannot tell open from merged or closed ones: GitLab keeps every merge request's ref.
+ */
+export async function remoteMergeRequests(root: string, wanted?: string, limit = 30): Promise<{ number: number; head: string }[]> {
+  const { remote, provider } = chooseRemote(root, wanted);
+  const pattern = provider === "github" ? "refs/pull/*/head" : "refs/merge-requests/*/head";
+  const listed = await runAsync("git", ["ls-remote", "--end-of-options", remote, pattern], root, 60_000, noPrompt);
+  ensure(listed.ok, `git ls-remote ${remote} failed: ${listed.ok ? "" : listed.error}`);
+  return listed.out.split(/\r?\n/).flatMap((line) => {
+    const m = /^([0-9a-f]{40,64})\s+refs\/(?:merge-requests|pull)\/(\d+)\/head$/.exec(line.trim());
+    return m ? [{ number: Number(m[2]), head: m[1] }] : [];
+  }).sort((a, b) => b.number - a.number).slice(0, limit);
+}
+
 /**
  * Fetches a merge request (GitLab) or pull request (GitHub) and its target branch with plain
  * git, into WAICC's own refs (refs/waicc/mr/<n>/…): your branches and working folder are not
@@ -107,17 +136,7 @@ export async function fetchMergeRequest(root: string, input: string, options: { 
   const m = /^[!#]?(\d{1,9})$/.exec(input.trim());
   ensure(m && Number(m[1]) > 0, `A merge request is its number, like 123 or !123, not ${JSON.stringify(input)}`);
   const number = Number(m[1]);
-  const remotes = run("git", ["remote"], root, 15_000);
-  ensure(remotes.ok, "This project is not a Git repository, so there is no merge request to fetch");
-  const names = remotes.out.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
-  ensure(names.length > 0, "This repository has no remote to fetch the merge request from");
-  const remote = options.remote ?? (names.length === 1 ? names[0] : names.includes("origin") ? "origin" : undefined);
-  ensure(remote, `This repository has several remotes; pick one with --remote <name>: ${names.join(", ")}`);
-  ensure(names.includes(remote), `No remote named ${JSON.stringify(remote)}; remotes here: ${names.join(", ")}`);
-  const url = run("git", ["remote", "get-url", remote], root, 15_000);
-  const remoteUrl = url.ok ? safeRemoteUrl(url.out) : null;
-  const provider = remoteUrl && /github\.com[:/]/i.test(remoteUrl) ? "github" as const : "gitlab" as const;
-  const noPrompt = { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
+  const { remote, url: remoteUrl, provider } = chooseRemote(root, options.remote);
   let target = options.into;
   if (!target) {
     const local = run("git", ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`], root, 15_000);
