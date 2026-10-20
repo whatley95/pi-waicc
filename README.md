@@ -916,6 +916,16 @@ Safety rules:
   `--auto` does not start its review. You can always dispatch the next step yourself. Only
   reported dollars count, so Codex's token-only runs do not. The tracker shows each
   session's spend against it.
+- **`"alerts": { "quietMinutes": 10, "desktop": false }`** (user file only; these are the
+  defaults). When a dispatched agent shows no new step for `quietMinutes` (0 turns this
+  off, at most 240), Pi says so once, the dispatch panel shows "no new step for 12m", and
+  the tracker turns its card amber and lists it under Needs you. Nothing is stopped: a long
+  build or test run also shows no step until it ends; `/waicc-dispatch --stop` ends it and
+  `/waicc-dispatch` starts it again. With `"desktop": true`, each new Needs you item (a
+  review passed, a plan ready, a reply to assess, a decision, a quiet agent) raises a
+  desktop notification: a Windows toast, macOS Notification Center, or `notify-send` on
+  Linux. They come from the tracker's updates, so they need the tracker on; one item is
+  notified once, even with several chats open in the project.
 - **`"autoAdvisor"`** (user file only) caps how often the main agent may ask the advisor
   on its own: 3 per chat by default, `{ "maxPerChat": n }` (0–20), or `false` for off; see
   [When the main agent is stuck](#when-the-main-agent-is-stuck-it-asks-the-advisor).

@@ -23,11 +23,12 @@ import {
 import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
-import { consultSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { alertSettings, consultSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { consultAdvisor } from "./consult.ts";
 import { learnPattern, recurringFindings } from "./learning.ts";
 import { buildOutdated, loadedBuild } from "./build.ts";
-import { openPage, projectStatus, publish, recordChat, sessionSpend, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
+import { newNeeds, openPage, projectStatus, publish, quietMinutes, recordChat, sessionSpend, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice, type ProjectStatus } from "./tracker.ts";
+import { notifyDesktop } from "./alerts.ts";
 import { usageText } from "./usage.ts";
 import { autoDecidable } from "./decisions.ts";
 import { elapsed, type ProgressEvent } from "./progress.ts";
@@ -138,7 +139,8 @@ For useful discoveries, waicc_memory propose saves candidates. /waicc-memory con
 
 export default function waicc(
   pi: ExtensionAPI,
-  services: { copyText?: ClipboardWriter; runCheck?: CheckRunner; runAgent?: AgentRunner; openPage?: (path: string) => boolean } = {},
+  services: { copyText?: ClipboardWriter; runCheck?: CheckRunner; runAgent?: AgentRunner; openPage?: (path: string) => boolean;
+    notifyDesktop?: (title: string, body: string) => boolean; } = {},
 ): void {
   const bindings = new Map<string, ChatBinding>();
   const copied = new Map<string, string>();
@@ -156,13 +158,20 @@ export default function waicc(
     } });
   const dispatches = new Map<string, {
     controller: AbortController; done: Promise<unknown>;
-    label: string; startedAt: number; events: ProgressEvent[]; root: string;
+    label: string; startedAt: number; events: ProgressEvent[]; root: string; lastActivityAt: number; quietAfterMs: number;
   }>();
   /** The main agent's advisor questions in progress, by chat. */
   const advising = new Map<string, LiveRun & { root: string }>();
   /** Recent run outcomes per project, for the tracker page. */
   const notices = new Map<string, Notice[]>();
   const trackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** One notification per new needs-you item, or one for several; only with "alerts.desktop" on. */
+  function alertDesktop(status: ProjectStatus): void {
+    const fresh = newNeeds(status);
+    if (!fresh.length) return;
+    if (fresh.length === 1) (services.notifyDesktop ?? notifyDesktop)(`WAICC · ${status.name}`, `${fresh[0].text} · ${fresh[0].command}`);
+    else (services.notifyDesktop ?? notifyDesktop)(`WAICC · ${status.name}: ${fresh.length} things need you`, fresh.slice(0, 3).map((n) => n.text).join(" · "));
+  }
   // Said once per loaded copy: after pi update, an open chat keeps the code it started with.
   let outdatedWarned = false;
   function warnOutdated(ctx: ExtensionContext): void {
@@ -199,7 +208,8 @@ export default function waicc(
   function trackerStatus(ctx: ExtensionContext, root: string, live = true) {
     const runs = live
       ? [
-          ...[...dispatches].filter(([, run]) => samePath(run.root, root)).map(([id, run]) => toLive("dispatch", id, run.label, run.startedAt, run.events)),
+          ...[...dispatches].filter(([, run]) => samePath(run.root, root))
+            .map(([id, run]) => ({ ...toLive("dispatch", id, run.label, run.startedAt, run.events), lastActivityAt: run.lastActivityAt, quietAfterMs: run.quietAfterMs })),
           ...[...advising.values()].filter((run) => samePath(run.root, root)),
         ]
       : [];
@@ -220,7 +230,9 @@ export default function waicc(
         trackTimers.delete(root);
         try {
           recordMainAgent(ctx, root);
-          publish(trackerStatus(ctx, root, live));
+          const status = trackerStatus(ctx, root, live);
+          publish(status);
+          if (alertSettings(ctx.cwd).desktop) alertDesktop(status);
         } catch { /* the page is a convenience; WAICC carries on */ }
       };
       if (immediately) return run();
@@ -912,13 +924,22 @@ export default function waicc(
     const loop = loops.get(id);
     const controller = new AbortController();
     const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
-    const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root };
+    const { quietMs } = alertSettings(ctx.cwd);
+    const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root, lastActivityAt: Date.now(), quietAfterMs: quietMs };
+    let quietWarned = false;
     // A live panel above the editor and a footer status, refreshed on each step and every few seconds.
     const render = () => {
       const recent = state.events.filter((event) => event.kind !== "note").slice(-5);
       const said = state.events.findLast((event) => event.kind === "note");
+      const quiet = quietMinutes({ ...toLive("dispatch", id, label, state.startedAt, []), lastActivityAt: state.lastActivityAt, quietAfterMs: quietMs });
+      // Quiet is not stuck: a long build or test shows no step until it ends. Say so once, stop nothing.
+      if (quiet !== null && !quietWarned) {
+        quietWarned = true;
+        const last = state.events.findLast((event) => event.kind !== "note");
+        ctx.ui.notify(`${plan.via} has shown no new step for ${quiet} minutes${last ? ` (last: ${last.text})` : ""}. It may still be working; /waicc-dispatch --progress shows its steps, --stop ends it.`, "warning");
+      }
       ctx.ui.setWidget?.("waicc-dispatch", [
-        `${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps   (/waicc-dispatch --progress, --stop)`,
+        `${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps${quiet !== null ? ` · no new step for ${quiet}m` : ""}   (/waicc-dispatch --progress, --stop)`,
         ...(recent.length ? recent.map(stepLine) : ["        starting the agent…"]),
         ...(said ? [`         says: ${said.text}`] : []),
       ]);
@@ -938,6 +959,8 @@ export default function waicc(
     // Runs in the background so this chat stays usable; the result arrives as a message.
     const done = runDispatch(plan, services.runAgent, controller.signal, (event) => {
       state.events.push(event);
+      state.lastActivityAt = Date.now();
+      quietWarned = false;
       if (state.events.length > 400) state.events.splice(0, state.events.length - 400);
       render();
     })
