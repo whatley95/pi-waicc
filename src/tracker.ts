@@ -7,7 +7,10 @@ import { artifact, atomicWrite, digest, json, loadSession, runtimePath, safePath
 import { dispatchPinVariable } from "./dispatch.ts";
 import { roundDirectory, versionDirectory } from "./render.ts";
 import { sessionPhase } from "./state.ts";
-import type { Contract, ContractVersion, Round, Session } from "./types.ts";
+import type { Contract, ContractVersion, RevisionReview, Round, Session } from "./types.ts";
+import { gitlabProject, reviewComments } from "./gitlab.ts";
+import { repositoryPrefix } from "./revision.ts";
+import type { PostedComments } from "./workflow.ts";
 import { chatUsage, totalUsage, type ChatHour, type Usage } from "./usage.ts";
 import { pendingLessons } from "./memory.ts";
 
@@ -18,7 +21,7 @@ import { pendingLessons } from "./memory.ts";
 
 /** An agent at work right now, from the chat that started it. */
 export interface LiveRun {
-  kind: "dispatch" | "advisor";
+  kind: "dispatch" | "advisor" | "main";
   sessionId: string | null;
   label: string;
   startedAt: number;
@@ -108,6 +111,54 @@ function chats(root: string): ChatRecord[] {
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 100);
 }
 
+/** The merge request's web page, from the remote it was fetched from; null when that cannot be told. */
+export function mergeRequestUrl(m: NonNullable<RevisionReview["mergeRequest"]>): string | null {
+  if (!m.url) return null;
+  if (m.provider === "github") {
+    const repo = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(m.url)?.[1];
+    return repo ? `https://github.com/${repo}/pull/${m.number}` : null;
+  }
+  try {
+    const project = gitlabProject(m.url);
+    return `${project.origin}/${project.path}/-/merge_requests/${m.number}`;
+  } catch {
+    return null;
+  }
+}
+
+/** A review of an existing change: what it covers, what was posted to its merge request, and what is left to post. */
+function changeView(root: string, s: Session) {
+  const rev = s.revisionReview;
+  if (!rev) return null;
+  const m = rev.mergeRequest;
+  const posts = Object.keys(s.artifacts).filter((path) => /^mr-comments\/[^/]+\.json$/.test(path)).sort().flatMap((path) => {
+    try {
+      return [JSON.parse(artifact(root, s, path)) as PostedComments];
+    } catch {
+      return [];
+    }
+  });
+  const round = s.rounds.findLast((r) => r.review?.kind === "code" && r.status === "ASSESSED" && r.reply);
+  let toPost: number | null = null;
+  if (m?.provider === "gitlab" && round && s.status !== "CLOSED")
+    try {
+      const done = new Set(posts.flatMap((p) => p.comments.map((c) => c.key)));
+      toPost = reviewComments(s, round, repositoryPrefix(root), null).filter((c) => !done.has(c.key)).length;
+    } catch { /* counted as unknown */ }
+  return {
+    label: rev.label, range: rev.range, vcs: rev.vcs, from: rev.from.slice(0, 10), to: rev.to.slice(0, 10),
+    mergeRequest: m ? { number: m.number, provider: m.provider, target: m.target, webUrl: mergeRequestUrl(m) } : null,
+    posted: posts.length ? {
+      lineComments: posts.reduce((n, p) => n + p.comments.filter((c) => c.inline).length, 0),
+      summaries: posts.filter((p) => p.summaryNoteId !== null).length,
+      lastAt: posts.at(-1)!.postedAt,
+    } : null,
+    // An assessed review of a GitLab merge request that has not been posted yet.
+    awaitingPost: Boolean(m?.provider === "gitlab" && round && s.status !== "CLOSED" && !posts.some((p) => p.requestId === round.id)),
+    toPost,
+  };
+}
+
 function sessionView(root: string, s: Session) {
   let c: Contract | null = null;
   if (s.contractVersion > 0)
@@ -131,6 +182,8 @@ function sessionView(root: string, s: Session) {
       findingCount: r.reply?.findings.length ?? 0,
       checks: (r.reply?.checks ?? []).slice(0, 20).map((check) => ({ description: clip(check.description, 200), outcome: check.outcome })),
       dispatch: dispatches.at(-1) ?? null,
+      // Which commit a review of an existing change saw.
+      reviewedAt: r.review?.kind === "code" && r.review.revision ? r.review.revision.to.slice(0, 10) : null,
       attempts: dispatches.length,
       usage: dispatches.some((d) => d.usage) ? totalUsage(dispatches.map((d) => d.usage)) : null,
     };
@@ -154,6 +207,7 @@ function sessionView(root: string, s: Session) {
     rounds,
     spend: totalUsage(runs.map((run) => run.usage)),
     runs,
+    change: changeView(root, s),
     closedAt: s.closure?.closedAt ?? null,
   };
 }
@@ -235,7 +289,14 @@ function needsYou(views: SessionView[], live: LiveRun[]) {
       WAITING_FOR_REPLY: ["A handoff is waiting for an agent", "/waicc-dispatch"],
     };
     const next = step[s.status];
-    return next ? [...items, { sessionId: s.id, text: next[0], detail: s.title, command: next[1] }] : items;
+    // An assessed merge request review comes first: posting it is what the author is waiting for.
+    const mr = s.change?.awaitingPost ? s.change.mergeRequest : null;
+    const post = mr ? [{
+      sessionId: s.id,
+      text: `Review of merge request !${mr.number} is ready to post to GitLab${s.change!.toPost === null ? "" : s.change!.toPost ? `: ${s.change!.toPost} finding${s.change!.toPost === 1 ? "" : "s"}` : ": no issues found"}`,
+      detail: s.title, command: "/waicc-mr-comments",
+    }] : [];
+    return [...items, ...post, ...(next ? [{ sessionId: s.id, text: next[0], detail: s.title, command: next[1] }] : [])];
   })];
 }
 
