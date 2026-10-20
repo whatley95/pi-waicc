@@ -206,10 +206,10 @@
     const done = lead?.tasks.length ? lead.tasks.filter((t) => t.reported).length : 0;
     const progress = lead?.tasks.length ? `<div><div class="tiny muted" style="display:flex;justify-content:space-between"><span>tasks reported done</span><span>${done}/${lead.tasks.length}</span></div><div class="bar"><i style="width:${Math.round(100 * done / lead.tasks.length)}%"></i></div></div>` : "";
     return `<button type="button" class="card glass${p.key === selected ? " selected" : ""}${p.live.length && !stale(p) ? " live" : ""}" data-key="${esc(p.key)}">
-      <div class="head"><span class="name">${esc(p.name)}</span></div><div class="path" title="${esc(p.root)}">${esc(p.root)}</div>
+      <div class="head"><span class="name">${esc(p.name)}</span></div><div class="path" title="${esc(p.root)}${p.extension ? ` · pi-waicc ${esc(p.extension.version ?? "")} build ${esc(p.extension.build)}` : ""}">${esc(p.root)}</div>
       ${mainModels(p).length ? `<div class="tiny muted" title="${esc(mainModels(p).join(", "))}">main agent · ${esc(mainModels(p).slice(0, 3).map(modelName).join(", "))}</div>` : ""}
       ${state}${progress}
-      <div class="chips"><span class="chip">${openCount} open</span>${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
+      <div class="chips"><span class="chip">${openCount} open</span>${p.extension?.outdated ? `<span class="chip attn" title="pi-waicc was updated on disk; this project's Pi chat still runs the copy it loaded (${esc(p.extension.build)}). Type /reload in it.">updated · type /reload</span>` : ""}${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
     </button>`;
   }
 
@@ -364,7 +364,7 @@
   // A Pi started before an update still writes its project in the older shape: fill what it lacks.
   const noSpend = { costUsd: null, inputTokens: 0, outputTokens: 0, runs: 0, unpricedRuns: 0 };
   const upgrade = (p) => ({
-    live: [], notices: [], consults: [], chats: [], needsYou: [], budgetUsd: null, ...p,
+    live: [], notices: [], consults: [], chats: [], needsYou: [], budgetUsd: null, extension: null, ...p,
     runs: p.runs ?? [], olderVersion: !Array.isArray(p.runs),
     sessions: (p.sessions ?? []).map((s) => ({ tasks: [], decisions: [], rounds: [], requirements: [], ...s, spend: s.spend ?? noSpend })),
   });

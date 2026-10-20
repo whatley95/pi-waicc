@@ -47,7 +47,10 @@ pi update git:github.com/whatley95/pi-waicc
 Pi keeps its own copy of the package (see `pi list`); new commands such as
 `/waicc-dispatch` appear only after that copy is updated. **A running Pi keeps the code it
 loaded at start:** after `pi update`, run `/reload` in each open Pi chat (or restart Pi),
-otherwise you keep seeing the old behaviour and messages.
+otherwise you keep seeing the old behaviour and messages. An open chat notices when the
+files on disk changed: after its next turn it says once "pi-waicc was updated since this chat
+loaded it. Type /reload to use the new version.", and the tracker shows that project's card
+as **updated · type /reload**, with `/reload` under Needs you.
 
 WAICC is independent of pi-yoowai. If both packages are enabled, select one copy
 of each shared WAI skill in Pi's resource configuration to avoid duplicate names.
