@@ -23,7 +23,7 @@ import {
 import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
-import { alertSettings, consultSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { alertSettings, consultSettings, sandboxSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { consultAdvisor } from "./consult.ts";
 import { learnPattern, recurringFindings } from "./learning.ts";
 import { buildOutdated, loadedBuild } from "./build.ts";
@@ -1662,7 +1662,7 @@ export default function waicc(
       if (preApproved) {
         assertRecipientCurrent(ctx.cwd, binding.pin);
         // WAICC's runner, which also starts Windows .cmd shims such as npm.
-        return result(await runRecipientCheck(ctx.cwd, binding.pin, preApproved, snapshot(projectRoot(ctx.cwd)).fingerprint, services.runCheck ?? runAgent, signal, { maxTimeoutMs: maxCheckMs }));
+        return result(await runRecipientCheck(ctx.cwd, binding.pin, preApproved, snapshot(projectRoot(ctx.cwd)).fingerprint, services.runCheck ?? runAgent, signal, { maxTimeoutMs: maxCheckMs, sandbox: sandboxSettings(ctx.cwd) }));
       }
       ensure(binding.runChecks, binding.approvedChecks?.length
         ? `Only the pre-approved checks can run: ${binding.approvedChecks.map((check) => JSON.stringify({ program: check.program, args: check.args })).join(", ")}. Report any other check not_run.`
@@ -1674,7 +1674,7 @@ export default function waicc(
       ensure(approved, "Check not run: human declined command approval");
       trusted(ctx);
       ensure(bindings.get(key(ctx)) === binding && binding.runChecks, "Recipient assignment/permissions changed during confirmation");
-      return result(await runRecipientCheck(ctx.cwd, binding.pin, command, source, run, signal));
+      return result(await runRecipientCheck(ctx.cwd, binding.pin, command, source, run, signal, { sandbox: sandboxSettings(ctx.cwd) }));
     },
   });
   registerTool({
