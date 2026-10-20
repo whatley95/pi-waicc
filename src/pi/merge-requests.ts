@@ -1,7 +1,7 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { listSessions, loadSession } from "../files.ts";
 import { gitlabClient, gitlabProject, mergeRequestInfo, openMergeRequests, reviewComments, summaryNote, type GitLabProject, type ReviewComment } from "../gitlab.ts";
-import { gitlabHost, userConfigPath } from "../profiles.ts";
+import { addGitlabHost, gitlabHost, userConfigPath } from "../profiles.ts";
 import { chooseRemote, remoteMergeRequests, repositoryPrefix } from "../revision.ts";
 import { projectRoot } from "../source.ts";
 import { postedComments, recordPostedComments, type PostedComments } from "../workflow.ts";
@@ -89,8 +89,20 @@ export function registerMergeRequestCommands(app: App): void {
         "No assessed review to post yet: /waicc-dispatch the review, then /waicc-continue so the main agent checks its findings");
       ensure(mr.url, "The merge request's remote URL was not recorded; fetch it again with /waicc-review --mr");
       const project = gitlabProject(mr.url);
-      const host = gitlabHost(ctx.cwd, project.host);
-      ensure(host, `WAICC posts only to GitLab hosts listed in your user file. Add this to ${userConfigPath()}:\n"gitlab": { "${project.host}": { "tokenEnv": "GITLAB_TOKEN"${project.secure ? "" : `, "allowHttp": true`} } }\nthen set GITLAB_TOKEN to a personal access token with the "api" scope (or use "token": "<the token>").`);
+      let host = gitlabHost(ctx.cwd, project.host);
+      const tokenSteps = `create a GitLab personal access token with the "api" scope (avatar → Preferences → Access tokens) and set it: in PowerShell, setx GITLAB_TOKEN "glpat-...", then close and reopen the terminal and start Pi again. Then run /waicc-mr-comments`;
+      if (!host) {
+        // Only with your yes: the host goes into your user file, the token never does.
+        const manual = `WAICC posts only to GitLab hosts listed in your user file. Add this to ${userConfigPath()}:\n"gitlab": { "${project.host}": { "tokenEnv": "GITLAB_TOKEN"${project.secure ? "" : `, "allowHttp": true`} } }\nthen ${tokenSteps}.`;
+        if (!(await ctx.ui.confirm(`Set up ${project.host} for posting?`,
+          `WAICC posts only to GitLab hosts in your user file (${userConfigPath()}). Add ${project.host} there, with its token read from the GITLAB_TOKEN environment variable? No token is written to the file.`)))
+          return ctx.ui.notify(`Nothing was posted. ${manual}`, "info");
+        const allowHttp = !project.secure && await ctx.ui.confirm("Send the token over plain http?",
+          `${project.host} is reached over http, so your token would travel unencrypted. Allow that for this host? Say no unless the network is trusted; nothing will be posted to it then.`);
+        const added = addGitlabHost(project.host, { allowHttp });
+        if (!added.tokenSet) return ctx.ui.notify(`Added ${added.host} to ${added.path}. Now ${tokenSteps}.`, "info");
+        host = gitlabHost(ctx.cwd, project.host)!;
+      }
       const call = (services.gitlab ?? gitlabClient)(project, host);
       const info = await mergeRequestInfo(call, mr.number);
       const reviewed = round.review.revision.to;
