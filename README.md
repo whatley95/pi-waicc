@@ -1421,6 +1421,23 @@ mislead all later work. It is quick:
 A wrong or missing ID lists the candidates instead of failing. Stale candidates, whose
 source file changed, are not offered: propose a fresh one from the current source.
 
+**Lessons from mistakes that keep coming back.** When the main agent assesses a review
+with findings, WAICC shows it earlier sessions' findings that look similar, ranked by
+shared words. If one is genuinely the same kind of problem (for example "no test for empty
+input" in an order search and again in a customer filter), the main agent proposes one
+lesson for future plans with `waicc_learn_pattern`, such as "Plan a test for empty input on
+every new search or filter":
+
+- It must cite findings from **at least two sessions**. Each must be an assessed review
+  finding the main agent did not dispute.
+- **Each finding backs one lesson at most**, so the same pattern is never proposed twice. A
+  pattern whose lesson you revoked is not proposed again.
+- It is a **candidate** until you confirm it. It appears under "Needs you" on the tracker
+  and in `/waicc-memory`, where its source reads "review findings: 2 in 2 sessions".
+- Once confirmed, it goes into **every** future planning handoff in the project, not only
+  those that share its words, so planners plan for it up front. Changing or deleting a
+  finding it rests on makes it stale.
+
 All WAI skills and their linked domain/design references are packaged. They load
 on demand; external handoffs carry selected copies and do not require WAI tools.
 The collection covers API contracts, debugging, delivery, dependency upgrades,

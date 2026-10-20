@@ -244,4 +244,11 @@ export interface MemoryEntry {
   createdAt: string;
   confirmedAt: string | null;
   revoked: boolean;
+  /** A lesson learned from review findings that recur across sessions: the findings it rests on. */
+  evidence?: FindingRef[];
+}
+export interface FindingRef {
+  sessionId: string;
+  requestId: string;
+  findingId: string;
 }
