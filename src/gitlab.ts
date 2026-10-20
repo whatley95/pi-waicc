@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import * as tls from "node:tls";
@@ -54,7 +55,8 @@ export function gitlabClient(project: GitLabProject, settings: GitLabHost): GitL
   ensure(project.secure || settings.allowHttp, `${project.host} is reached over plain http, which would send your token unencrypted. Add "allowHttp": true for it under "gitlab" in your user file if that network is trusted.`);
   const base = `${project.origin}/api/v4/projects/${encodeURIComponent(project.path)}`;
   return (method, path, body) => new Promise((resolve, reject) => {
-    const target = new URL(`${base}${path}`);
+    // "/user" is the signed-in account, outside the project.
+    const target = new URL(path === "/user" ? `${project.origin}/api/v4/user` : `${base}${path}`);
     const data = body === undefined ? undefined : JSON.stringify(body);
     const send = target.protocol === "https:" ? httpsRequest : httpRequest;
     const req = send(target, {
@@ -83,6 +85,25 @@ export function gitlabClient(project: GitLabProject, settings: GitLabHost): GitL
     req.end();
   });
 }
+
+/**
+ * Saves a variable in the Windows user settings, as setx does, for programs started later. The
+ * value goes to PowerShell through its environment, never on a command line others could see.
+ */
+export function saveWindowsUserVariable(name: string, value: string): boolean {
+  if (process.platform !== "win32" || !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) return false;
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `[Environment]::SetEnvironmentVariable('${name}', $env:WAICC_SAVE_VALUE, 'User')`],
+      { env: { ...process.env, WAICC_SAVE_VALUE: value }, windowsHide: true, timeout: 30_000, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** GitLab's page for a new personal access token, filled in with a name and the api scope. */
+export const tokenPageUrl = (project: GitLabProject): string =>
+  `${project.origin}/-/user_settings/personal_access_tokens?name=${encodeURIComponent("WAICC reviews")}&scopes=api`;
 
 export interface MergeRequestInfo {
   title: string; description: string; webUrl: string; state: string;
