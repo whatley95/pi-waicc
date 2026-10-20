@@ -1,7 +1,8 @@
-import { loadSession } from "../files.ts";
-import { gitlabClient, gitlabProject, mergeRequestInfo, reviewComments, summaryNote, type ReviewComment } from "../gitlab.ts";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { listSessions, loadSession } from "../files.ts";
+import { gitlabClient, gitlabProject, mergeRequestInfo, openMergeRequests, reviewComments, summaryNote, type GitLabProject, type ReviewComment } from "../gitlab.ts";
 import { gitlabHost, userConfigPath } from "../profiles.ts";
-import { repositoryPrefix } from "../revision.ts";
+import { chooseRemote, remoteMergeRequests, repositoryPrefix } from "../revision.ts";
 import { projectRoot } from "../source.ts";
 import { postedComments, recordPostedComments, type PostedComments } from "../workflow.ts";
 import { ensure } from "../validation.ts";
@@ -12,6 +13,58 @@ const oneLine = (text: string, max = 110) => {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 };
+
+const ago = (iso: string) => {
+  const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+  return Number.isNaN(minutes) ? "" : minutes < 60 ? `${minutes}m ago` : minutes < 2880 ? `${Math.round(minutes / 60)}h ago` : `${Math.round(minutes / 1440)}d ago`;
+};
+
+/**
+ * /waicc-review --mr --list: the merge requests to pick one to review from. With the GitLab host
+ * set up, the open ones with title, author and branches; without a token, git can only list the
+ * newest numbers, open or not. Each is marked when a WAICC session here already reviews it.
+ * Returns the chosen number, or null.
+ */
+export async function pickMergeRequest(app: App, ctx: ExtensionCommandContext, wanted?: string): Promise<string | null> {
+  const { pi, services } = app;
+  const root = projectRoot(ctx.cwd);
+  const { remote, url, provider } = chooseRemote(root, wanted);
+  const reviewed = new Map<number, string>();
+  for (const summary of listSessions(root))
+    try {
+      const s = loadSession(root, summary.id);
+      const m = s.revisionReview?.mergeRequest;
+      if (m && m.remote === remote) reviewed.set(m.number, s.status === "CLOSED" ? "reviewed, closed" : `in review: ${s.status.toLowerCase().replaceAll("_", " ")}`);
+    } catch { /* an unreadable session is skipped */ }
+  const mark = (n: number) => (reviewed.has(n) ? ` · ${reviewed.get(n)}` : "");
+  const sign = provider === "github" ? "#" : "!";
+  let project: GitLabProject | null = null;
+  try {
+    project = provider === "gitlab" && url ? gitlabProject(url) : null;
+  } catch { /* an unusual remote URL: list with git only */ }
+  const host = project ? gitlabHost(ctx.cwd, project.host) : null;
+  let rows: { number: number; label: string }[], title: string;
+  ctx.ui.notify(`Listing merge requests on ${remote}…`, "info");
+  if (project && host?.token) {
+    const open = await openMergeRequests((services.gitlab ?? gitlabClient)(project, host));
+    rows = open.map((mr) => ({
+      number: mr.number,
+      label: `!${mr.number} ${mr.draft ? "[draft] " : ""}${oneLine(mr.title, 60)} · ${mr.author} · ${mr.source} → ${mr.target} · ${ago(mr.updatedAt)}${mark(mr.number)}`,
+    }));
+    title = `${open.length} open merge request${open.length === 1 ? "" : "s"} on ${project.path}: pick one to review`;
+  } else {
+    const refs = await remoteMergeRequests(root, remote);
+    rows = refs.map((r) => ({ number: r.number, label: `${sign}${r.number} · head ${short(r.head)}${mark(r.number)}` }));
+    title = `The newest ${refs.length} merge request numbers on ${remote}. Without a GitLab token git cannot tell open from merged ones or show titles; set up "gitlab" in your user file for that`;
+  }
+  ensure(rows.length, `${remote} has no ${provider === "github" ? "open pull" : "open merge"} requests`);
+  if (!ctx.hasUI) {
+    pi.sendMessage({ customType: "waicc-merge-requests", content: [title, ...rows.map((r) => `- ${r.label}`)].join("\n"), display: true }, { triggerTurn: false });
+    return null;
+  }
+  const picked = await ctx.ui.select(title, [...rows.map((r) => r.label), "Cancel"]);
+  return rows.find((r) => r.label === picked)?.number.toString() ?? null;
+}
 
 /**
  * /waicc-mr-comments: posts the assessed merge request review to GitLab, as comments on the

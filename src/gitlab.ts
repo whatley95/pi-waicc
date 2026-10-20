@@ -96,6 +96,17 @@ export async function mergeRequestInfo(call: GitLabCall, number: number): Promis
   };
 }
 
+export interface OpenMergeRequest { number: number; title: string; author: string; source: string; target: string; updatedAt: string; draft: boolean; webUrl: string }
+/** The project's open merge requests, most recently updated first. */
+export async function openMergeRequests(call: GitLabCall, limit = 50): Promise<OpenMergeRequest[]> {
+  const list = await call("GET", `/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=${limit}`);
+  return (Array.isArray(list) ? list : []).map((mr: any) => ({
+    number: Number(mr.iid), title: String(mr.title ?? ""), author: String(mr.author?.username ?? mr.author?.name ?? ""),
+    source: String(mr.source_branch ?? ""), target: String(mr.target_branch ?? ""), updatedAt: String(mr.updated_at ?? ""),
+    draft: Boolean(mr.draft ?? mr.work_in_progress), webUrl: String(mr.web_url ?? ""),
+  })).filter((mr) => Number.isSafeInteger(mr.number) && mr.number > 0);
+}
+
 type Finding = Reply["findings"][number];
 export interface ReviewComment {
   finding: Finding;

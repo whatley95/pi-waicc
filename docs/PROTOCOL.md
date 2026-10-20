@@ -973,6 +973,13 @@ grouped at the first depth (1–4) where they split, and up to 30 groups get
 listed in `review.revision.parts`. Revision-review handoffs ask for `path:line` at the start of
 each finding's evidence.
 
+`/waicc-review --mr --list [--remote r]` (or `--mr list`) picks the remote as above. With a
+GitLab host token it reads `GET …/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50`;
+otherwise `git ls-remote --end-of-options <remote> refs/merge-requests/*/head` (`refs/pull/*/head`
+on GitHub), newest 30 numbers. Each row is marked when a session in this project has
+`revisionReview.mergeRequest` with that remote and number. With UI, a `select` choice continues as
+`--mr <number> [--remote r]`; without it, the list is shown as a message.
+
 The user file's `gitlab` (a project file setting it is rejected) maps at most 10 hosts
 (`^[A-Za-z0-9.-]+(:\d{1,5})?$`, case-insensitive) to `{token? | tokenEnv?, allowHttp?}`. The API
 origin and project path come from the recorded remote URL (https, http, `git@host:path` or
