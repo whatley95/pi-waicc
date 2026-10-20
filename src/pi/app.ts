@@ -57,6 +57,8 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   }>();
   /** The main agent's advisor questions in progress, by chat. */
   const advising = new Map<string, LiveRun & { root: string }>();
+  /** The main agent's turn in progress, by chat: what it is doing, for the tracker. */
+  const mainTurns = new Map<string, { root: string; label: string; startedAt: number; events: ProgressEvent[]; read: (line: string) => ProgressEvent[]; ticker: ReturnType<typeof setInterval> }>();
   /** Recent run outcomes per project, for the tracker page. */
   const notices = new Map<string, Notice[]>();
   const trackTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -105,6 +107,8 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
           ...[...dispatches].filter(([, run]) => samePath(run.root, root))
             .map(([id, run]) => ({ ...toLive("dispatch", id, run.label, run.startedAt, run.events), lastActivityAt: run.lastActivityAt, quietAfterMs: run.quietAfterMs })),
           ...[...advising.values()].filter((run) => samePath(run.root, root)),
+          ...[...mainTurns.entries()].filter(([chat, turn]) => chat === key(ctx) && samePath(turn.root, root))
+            .map(([, turn]) => toLive("main", bindings.get(key(ctx))?.role === "coordinator" ? bindings.get(key(ctx))!.sessionId : null, turn.label, turn.startedAt, turn.events)),
         ]
       : [];
     const binding = bindings.get(key(ctx));
@@ -389,7 +393,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, compactedRuns, automaticRequests, registerTool, dispatches, advising, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt };
+  return { pi, services, bindings, copied, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;
