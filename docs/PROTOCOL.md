@@ -470,6 +470,20 @@ source fail. Pi receives them as `WAICC_DISPATCH_CHECKS`, and `waicc_check` runs
 match without a dialog; any other command still needs `--run-checks` and per-command
 confirmation, which a headless run cannot give. Antigravity cannot receive checks.
 
+Every recipient check (pre-approved or confirmed, Pi or MCP) reads the user file's `sandbox`
+(a project file setting it is rejected): `checks` `off` (default), `auto` or `required`;
+`network` (default false); `allowWrite`, at most 20 absolute or `~/` folders. Off runs the
+exact command as before. Otherwise the writable folders are the check's working folder,
+`os.tmpdir()` and `allowWrite`, each also by its resolved path. macOS runs
+`/usr/bin/sandbox-exec -p <profile> <program> <args>`; the profile allows everything except
+file writes outside those folders and standard devices, and without `network` denies IP
+traffic in and out. Linux runs `bwrap --die-with-parent --new-session --ro-bind / / --dev /dev
+--proc /proc --bind <folder> <folder>… [--unshare-net] --chdir <cwd> -- <program> <args>`,
+used only when a probe run of bwrap succeeds. Elsewhere, or when the probe fails, `auto` runs
+the check unsandboxed with `sandboxNote` in its result and next action, and `required` refuses
+before `start.json` is written. `start.json` and `result.json` record
+`sandbox: {backend, network, writable} | null`.
+
 Agent profiles are read from `$PI_CODING_AGENT_DIR/waicc-agents.json` (default
 `~/.pi/agent`) and then `<project>/.pi/waicc-agents.json`, which wins for any profile or role
 both define. The only keys are `profiles` (`name → {via, model?, effort?, timeoutMinutes?}`, effort mapped to Claude `--effort`, Codex `model_reasoning_effort`, Pi `--thinking` or Antigravity `--effort` and checked against that agent's levels) and
