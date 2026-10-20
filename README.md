@@ -612,8 +612,10 @@ Pi `--mode json`); Antigravity's stream is not verified, so it may show fewer st
 **Watch every project on one page.** Run `/waicc-tracker` and your browser opens one page
 that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
 
-- **At the top:** agents working now, how many things need you, and what you spent today
-  and in the last 7 days, across all projects.
+- **At the top,** across all projects: agents working now and how many things need you (one
+  box), what you spent today and in the last 7 days, and today's tokens split into fresh
+  input, cached input and output, with who used them (main agent, dispatched agents, advisor)
+  and the 7-day total. The Spend tab shows the same split for today, 7 days and all time.
 - **Needs you:** every decision waiting for your answer and each session's next step for you
   (review passed, plan ready, a reply to assess), with the command to type.
 - **A card per project:** the main agent's model, the agent at work (agent, model, effort,
