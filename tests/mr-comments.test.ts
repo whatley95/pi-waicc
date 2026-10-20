@@ -1,14 +1,14 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 import { gitlabClient, gitlabProject, reviewComments, summaryNote, type GitLabCall } from "../src/gitlab.ts";
-import { gitlabHost, loadAgentConfig, profilesView } from "../src/profiles.ts";
+import { addGitlabHost, gitlabHost, loadAgentConfig, profilesView } from "../src/profiles.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { resolveRevision } from "../src/revision.ts";
 import { assess, createRevisionReview, ingest, postedComments, prepare } from "../src/workflow.ts";
@@ -190,16 +190,44 @@ test("nothing is posted for a changed merge request, an unlisted host or without
   assert.match(moved.notices.at(-1)!, /has changed since this review \(it is at ffffffffff, the review saw [0-9a-f]{10}\)\. Run \/waicc-review --mr 7/);
   assert.equal(moved.calls.filter(([method]) => method === "POST").length, 0);
 
-  const unlisted = await run(t, { select: (options) => options[0] });
+  const unlisted = await run(t, { select: (options) => options[0], confirm: [false] });
   writeFileSync(join(unlisted.agentDir, "waicc-agents.json"), "{}");
   await unlisted.post();
-  assert.match(unlisted.notices.at(-1)!, /posts only to GitLab hosts listed in your user file[\s\S]*"gitlab": \{ "gitlab\.example\.com": \{ "tokenEnv": "GITLAB_TOKEN" \} \}/);
+  assert.match(unlisted.notices.at(-1)!, /^Nothing was posted\. WAICC posts only to GitLab hosts listed in your user file[\s\S]*"gitlab": \{ "gitlab\.example\.com": \{ "tokenEnv": "GITLAB_TOKEN" \} \}/);
   assert.equal(unlisted.calls.length, 0, "not even a read");
+  assert.equal(readFileSync(join(unlisted.agentDir, "waicc-agents.json"), "utf8"), "{}", "you said no: the file is unchanged");
 
   const headless = await run(t, { select: (options) => options[0], hasUI: false });
   await headless.post();
   assert.match(headless.notices.at(-1)!, /needs your confirmation in Pi's interactive screen/);
   assert.equal(headless.calls.length, 0);
+});
+
+test("an unlisted host can be added to your user file, with your yes: the variable's name, never a token", async (t) => {
+  delete process.env.GITLAB_TOKEN;
+  const h = await run(t, { select: (options) => options[0], confirm: [true] });
+  const file = join(h.agentDir, "waicc-agents.json");
+  writeFileSync(file, JSON.stringify({ roles: { review: "sol" }, profiles: { sol: { via: "codex", model: "gpt-6.1-sol" } } }));
+  await h.post();
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), {
+    roles: { review: "sol" }, profiles: { sol: { via: "codex", model: "gpt-6.1-sol" } }, gitlab: { "gitlab.example.com": { tokenEnv: "GITLAB_TOKEN" } },
+  }, "everything else in the file is kept");
+  assert.match(h.notices.at(-1)!, /^Added gitlab\.example\.com to .*waicc-agents\.json\. Now create a GitLab personal access token with the "api" scope[\s\S]*setx GITLAB_TOKEN "glpat-\.\.\."/);
+  assert.equal(h.calls.length, 0, "nothing is sent before the token is set");
+
+  // Once the variable is set, the same command posts.
+  process.env.GITLAB_TOKEN = "glpat-from-env";
+  t.after(() => { delete process.env.GITLAB_TOKEN; });
+  await h.post();
+  assert.equal(h.calls.filter(([method]) => method === "POST").length, 2);
+
+  assert.throws(() => addGitlabHost("GitLab.Example.com"), /already under "gitlab"/, "a host there is never replaced");
+  const added = addGitlabHost("10.0.0.5", { allowHttp: true });
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).gitlab["10.0.0.5"], { tokenEnv: "GITLAB_TOKEN", allowHttp: true });
+  assert.equal(added.tokenSet, true);
+  writeFileSync(file, "{ not json");
+  assert.throws(() => addGitlabHost("other.example.com"), /is not valid JSON, so it was left unchanged/);
+  assert.equal(readFileSync(file, "utf8"), "{ not json");
 });
 
 test("the API client sends the token only as a header, reads GitLab's errors, and refuses plain http unless allowed", async (t) => {
