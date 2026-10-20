@@ -23,9 +23,10 @@ import {
 import { configureSvnIgnore } from "./ignore.ts";
 import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } from "./checks.ts";
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
-import { consultSettings, decisionSettings, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
+import { consultSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { consultAdvisor } from "./consult.ts";
-import { openPage, projectStatus, publish, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
+import { openPage, projectStatus, publish, sessionSpend, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
+import { usageText } from "./usage.ts";
 import { autoDecidable } from "./decisions.ts";
 import { elapsed, type ProgressEvent } from "./progress.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
@@ -179,7 +180,11 @@ export default function waicc(
         ]
       : [];
     const binding = bindings.get(key(ctx));
-    return projectStatus(root, runs, notices.get(root) ?? [], binding?.role === "coordinator" ? binding.sessionId : null);
+    let budget: number | null = null;
+    try {
+      budget = sessionBudget(ctx.cwd);
+    } catch { /* a broken config is reported where it is used */ }
+    return projectStatus(root, runs, notices.get(root) ?? [], binding?.role === "coordinator" ? binding.sessionId : null, budget);
   }
   /** Refreshes this project on the tracker page, at most every 2 s, off WAICC's own path; never fails WAICC. */
   function track(ctx: ExtensionContext, immediately = false, live = true): void {
@@ -916,9 +921,10 @@ export default function waicc(
         release();
         const continuing = outcome.replySubmitted && options.continue;
         ctx.ui.notify(outcome.replySubmitted
-          ? `${plan.via} submitted a reply.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
+          ? `${plan.via} submitted a reply${usageText(outcome.usage) ? ` (${usageText(outcome.usage)})` : ""}.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
           : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
-        notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}.`);
+        const cost = usageText(outcome.usage);
+        notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}${cost ? `, ${cost}` : ""}.`);
         pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
         const current = loops.get(id);
         if (current && !outcome.replySubmitted) return endLoop(ctx, id, `${loopName(current)} stopped at cycle ${current.cycle}/${current.max}: ${plan.via} submitted no reply. See the dispatch log.`, "warning");
@@ -958,6 +964,18 @@ export default function waicc(
     });
   }
   /** After the main agent's turn: dispatch the next review it requested, or end the loop. */
+  /** Why an automatic run must stop for your budget, or null. Only reported costs count. */
+  function overBudget(ctx: ExtensionContext, id: string): string | null {
+    try {
+      const budget = sessionBudget(ctx.cwd);
+      if (budget === null) return null;
+      const spent = sessionSpend(projectRoot(ctx.cwd), id).costUsd ?? 0;
+      return spent < budget ? null
+        : `this session's agents have reported $${spent.toFixed(2)}, reaching your $${budget} budget ("budget.perSessionUsd" in your user file). Dispatch the next step yourself to go on.`;
+    } catch {
+      return null;
+    }
+  }
   function advanceLoop(ctx: ExtensionContext): void {
     const id = bindings.get(key(ctx))?.sessionId;
     const loop = id ? loops.get(id) : undefined;
@@ -983,6 +1001,8 @@ export default function waicc(
       return endLoop(ctx, id, `${loopName(loop)} stopped after cycle ${loop.cycle}/${loop.max}: the main agent did not ask for ${asked}, so something needs you (a decision, blocker or disputed finding). See its last message.`, "warning");
     if (loop.cycle >= loop.max)
       return endLoop(ctx, id, `${loopName(loop)} reached its limit of ${loop.max} cycles. ${loop.mode === "planning" ? "A revised planning handoff" : "A fresh review"} is waiting: dispatch it yourself if you want another round.`, "warning");
+    const over = overBudget(ctx, id);
+    if (over) return endLoop(ctx, id, `${loopName(loop)} stopped after cycle ${loop.cycle}/${loop.max}: ${over}`, "warning");
     loop.cycle += 1;
     loop.phase = "reviewing";
     try {
@@ -1024,6 +1044,8 @@ export default function waicc(
       const authorization = authorizationState(s, readContract(ctx.cwd, id).contract);
       ensure(authorization.authorized, authorization.reason);
       ensure((s.implementationOwner ?? "main") === "main", "Implementation is delegated in this session.");
+      const over = overBudget(ctx, id);
+      if (over) return endLoop(ctx, id, `Run stopped before the review: ${over}`, "warning");
       Object.assign(loop, { options: resolved.options, profile: resolved.profile, cycle: 1, mode: "review", develop: false, phase: "reviewing", requestId: "", findings: null, review: undefined });
       launch(ctx, id, resolved.options, resolved.profile);
     } catch (error) {
