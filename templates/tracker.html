@@ -164,18 +164,29 @@
 
   // Spend is totalled here, in the browser, so "today" is always your today.
   const startOfDay = (offset = 0) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - offset); return d.getTime(); };
+  // The main agent's figures are one model's hour of one chat: they count messages, not runs.
   function sum(runs, from = 0, to = Infinity) {
-    const t = { usd: null, tokens: 0, runs: 0, unpriced: 0 };
+    const t = { usd: null, tokens: 0, runs: 0, unpriced: 0, messages: 0 };
     for (const r of runs) {
       const at = Date.parse(r.at);
       if (at < from || at >= to) continue;
-      t.runs++; t.tokens += r.usage.inputTokens + r.usage.outputTokens;
-      if (r.usage.costUsd === null) t.unpriced++; else t.usd = (t.usd ?? 0) + r.usage.costUsd;
+      t.tokens += r.usage.inputTokens + r.usage.outputTokens;
+      if (r.kind === "main") t.messages += r.messages ?? 0; else t.runs++;
+      if (r.usage.costUsd !== null) t.usd = (t.usd ?? 0) + r.usage.costUsd;
+      else if (r.kind !== "main") t.unpriced++;
     }
     return t;
   }
-  const spendText = (t) => (!t.runs ? "$0.00" : t.usd !== null ? money(t.usd) : `${tok(t.tokens)} tok`);
-  const spendSub = (t) => (t.runs ? `${tok(t.tokens)} tokens · ${t.runs} run${t.runs === 1 ? "" : "s"}${t.unpriced ? ` · ${t.unpriced} without a price` : ""}` : "no runs");
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const spendText = (t) => (!t.runs && !t.messages ? "$0.00" : t.usd !== null ? money(t.usd) : `${tok(t.tokens)} tok`);
+  const spendCount = (t) => [t.runs ? plural(t.runs, "run") : "", t.messages ? plural(t.messages, "message") : ""].filter(Boolean).join(" · ");
+  const spendSub = (t) => (t.runs || t.messages ? `${tok(t.tokens)} tokens · ${spendCount(t)}${t.unpriced ? ` · ${t.unpriced} without a price` : ""}` : "no runs");
+  const who = (r) => (r.kind === "main" ? "Main agent" : r.kind === "advisor" ? "Advisor" : "Agents WAICC sent work to");
+  const modelName = (model) => String(model ?? "").split("/").pop();
+  // The model each of this project's Pi chats uses now, the most recently active chat first.
+  const mainModels = (p) => [...new Set(p.chats.map((c) => c.model).filter(Boolean))];
+  // "Main agent $1.20 · Agents WAICC sent work to $0.75": who used it, for a figure's second line.
+  const split = (runs) => group(runs, who).filter((g) => g.total.runs || g.total.messages).map((g) => `${g.key} ${spendText(g.total)}`).join(" · ");
   const usageCost = (u) => (!u ? "" : u.costUsd !== null ? money(u.costUsd) : `${tok(u.inputTokens + u.outputTokens)} tok`);
 
   function card(p) {
@@ -196,6 +207,7 @@
     const progress = lead?.tasks.length ? `<div><div class="tiny muted" style="display:flex;justify-content:space-between"><span>tasks reported done</span><span>${done}/${lead.tasks.length}</span></div><div class="bar"><i style="width:${Math.round(100 * done / lead.tasks.length)}%"></i></div></div>` : "";
     return `<button type="button" class="card glass${p.key === selected ? " selected" : ""}${p.live.length && !stale(p) ? " live" : ""}" data-key="${esc(p.key)}">
       <div class="head"><span class="name">${esc(p.name)}</span></div><div class="path" title="${esc(p.root)}">${esc(p.root)}</div>
+      ${mainModels(p).length ? `<div class="tiny muted" title="${esc(mainModels(p).join(", "))}">main agent · ${esc(mainModels(p).slice(0, 3).map(modelName).join(", "))}</div>` : ""}
       ${state}${progress}
       <div class="chips"><span class="chip">${openCount} open</span>${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
     </button>`;
@@ -207,7 +219,7 @@
   };
   const checkMark = (o) => (o === "passed" ? `<span class="ok">passed</span>` : o === "failed" ? `<span class="no">failed</span>` : `<span class="na">not run</span>`);
   const agentOf = (d) => (d ? `${esc(d.via)}${d.model ? ` ${esc(d.model)}` : ""}${d.effort ? ` <span class="muted">${esc(d.effort)}</span>` : ""}` : `<span class="muted">manual</span>`);
-  const sessionSpend = (s) => ({ usd: s.spend.costUsd, tokens: s.spend.inputTokens + s.spend.outputTokens, runs: s.spend.runs, unpriced: s.spend.unpricedRuns });
+  const sessionSpend = (s) => ({ usd: s.spend.costUsd, tokens: s.spend.inputTokens + s.spend.outputTokens, runs: s.spend.runs, unpriced: s.spend.unpricedRuns, messages: 0 });
 
   function budgetBar(p, s) {
     if (!p.budgetUsd) return "";
@@ -230,7 +242,19 @@
       const requirements = s.requirements.length ? fold(`${s.id}:req`, `<span class="small">Requirements (${s.requirements.length})</span>`, `<ul class="small">${s.requirements.map((r) => `<li><b>${esc(r.id)}</b> ${esc(r.text)}</li>`).join("")}</ul>`, false) : "";
       return `<div class="glass section">${fold(`${p.key}:${s.id}`, sessionHead(p, s), `<div class="tiny muted" style="margin:6px 0">Session <code>${esc(s.id)}</code> · coding by ${esc(s.implementationOwner)}</div>${budgetBar(p, s)}${requirements}${tasks}`, s.status !== "CLOSED")}</div>`;
     }).join("");
-    return `${live}${notices}${sessions || `<p class="small muted">No WAICC sessions in this project yet.</p>`}`;
+    return `${live}${mainAgents(p)}${notices}${sessions || `<p class="small muted">No WAICC sessions in this project yet.</p>`}`;
+  }
+  // Each Pi chat in this project: the main agent's model now, and what it used today and in all.
+  function mainAgents(p) {
+    if (!p.chats.length) return "";
+    const rows = p.chats.map((c) => {
+      const mine = p.runs.filter((r) => r.chatId === c.chatId), today = sum(mine, startOfDay()), all = sum(mine);
+      const models = [...new Set(mine.map((r) => modelName(r.model)))].filter((m) => m !== modelName(c.model));
+      return `<tr><td>${esc(c.name ?? `Pi chat ${c.chatId.slice(0, 8)}`)}</td><td title="${esc(c.model ?? "")}">${c.model ? esc(modelName(c.model)) : `<span class="na">—</span>`}${models.length ? `<div class="tiny muted">also ${esc(models.join(", "))}</div>` : ""}</td>
+        <td class="num" title="${esc(spendSub(today))}">${spendText(today)}</td><td class="num" title="${esc(spendSub(all))}">${spendText(all)}<div class="tiny muted">${tok(all.tokens)} tok</div></td><td class="small muted">${ago(c.updatedAt)}</td></tr>`;
+    }).join("");
+    return `<div class="glass section"><h3>Main agent</h3><div class="scroll"><table><tr><th>Pi chat</th><th>Model</th><th>Today</th><th>All</th><th>Active</th></tr>${rows}</table></div>
+      <div class="tiny muted">Every message the main agent sent in Pi chats in this project, WAICC work or not.</div></div>`;
   }
 
   function timeline(p) {
@@ -274,7 +298,7 @@
       // Rows without a price are drawn by tokens, in a muted colour, so they are not read as dollars.
       const priced = top > 0 && r.total.usd !== null;
       const pct = priced ? (100 * r.total.usd) / top : (100 * r.total.tokens) / topTok;
-      return `<div class="rowbar"><span>${label(r.key)}</span><span class="small" style="font-variant-numeric:tabular-nums">${r.total.usd !== null ? `${money(r.total.usd)} <span class="muted">·</span> ` : `<span class="muted">tokens only ·</span> `}<span class="muted">${tok(r.total.tokens)} tok · ${r.total.runs} run${r.total.runs === 1 ? "" : "s"}</span></span><div class="bar${priced ? "" : " tokens"}"><i style="width:${Math.max(2, Math.round(pct))}%"></i></div></div>`;
+      return `<div class="rowbar"><span>${label(r.key)}</span><span class="small" style="font-variant-numeric:tabular-nums">${r.total.usd !== null ? `${money(r.total.usd)} <span class="muted">·</span> ` : `<span class="muted">tokens only ·</span> `}<span class="muted">${tok(r.total.tokens)} tok · ${spendCount(r.total)}</span></span><div class="bar${priced ? "" : " tokens"}"><i style="width:${Math.max(2, Math.round(pct))}%"></i></div></div>`;
     }).join("");
   }
   function spendTab(p) {
@@ -287,12 +311,13 @@
     const kpi = (label, t) => `<div class="glass kpi"><div class="label">${label}</div><div class="value">${spendText(t)}</div><div class="sub">${spendSub(t)}</div></div>`;
     return `<div class="kpis">${kpi("Today", sum(runs, startOfDay()))}${kpi("Last 7 days", sum(runs, startOfDay(6)))}${kpi("All time", sum(runs))}</div>
       <div class="glass section"><h3>Last 7 days</h3>${days}</div>
+      <div class="glass section"><h3>By who</h3>${bars(group(runs, who), esc)}</div>
       <div class="two">
-        <div class="glass section"><h3>By agent and model</h3>${bars(group(runs, (r) => `${r.via} ${r.model ?? "(default model)"}`), esc)}</div>
+        <div class="glass section"><h3>By agent and model</h3>${bars(group(runs, (r) => `${r.kind === "main" ? "main agent" : r.via} ${r.model ?? "(default model)"}`), esc)}</div>
         <div class="glass section"><h3>By step</h3>${bars(group(runs, (r) => r.mode), esc)}</div>
       </div>
       <div class="glass section"><h3>By session</h3>${bars(group(runs.filter((r) => r.sessionId), (r) => r.sessionId), (id) => esc(titles.get(id) ?? `older session ${id.slice(0, 8)}`))}</div>
-      <p class="tiny muted">Costs are what each agent reports. Claude and Pi report dollars (on a subscription this is the API-equivalent price); Codex reports tokens only. Failed runs count too.</p>`;
+      <p class="tiny muted">Costs are what each agent reports. The main agent is every message in this project's Pi chats; agents WAICC sent work to and the advisor are counted per run. Claude and Pi report dollars (on a subscription this is the API-equivalent price); Codex reports tokens only. Failed runs count too.</p>`;
   }
 
   function advisorTab(p) {
@@ -323,8 +348,8 @@
       <section class="kpis">
         <div class="glass kpi"><div class="label">Agents working</div><div class="value">${working}</div><div class="sub">across ${projects.length} project${projects.length === 1 ? "" : "s"}</div></div>
         <div class="glass kpi"><div class="label">Needs you</div><div class="value"${needs.length ? ` style="color:var(--warn)"` : ""}>${needs.length}</div><div class="sub">${needs.length ? "decisions and next steps" : "nothing waiting"}</div></div>
-        <div class="glass kpi"><div class="label">Spent today</div><div class="value">${spendText(today)}</div><div class="sub">${spendSub(today)}</div></div>
-        <div class="glass kpi"><div class="label">Last 7 days</div><div class="value">${spendText(week)}</div><div class="sub">${spendSub(week)}</div></div>
+        <div class="glass kpi"><div class="label">Spent today</div><div class="value">${spendText(today)}</div><div class="sub">${spendSub(today)}</div>${today.runs || today.messages ? `<div class="sub">${esc(split(runs.filter((r) => Date.parse(r.at) >= startOfDay())))}</div>` : ""}</div>
+        <div class="glass kpi"><div class="label">Last 7 days</div><div class="value">${spendText(week)}</div><div class="sub">${spendSub(week)}</div>${week.runs || week.messages ? `<div class="sub">${esc(split(runs.filter((r) => Date.parse(r.at) >= startOfDay(6))))}</div>` : ""}</div>
       </section>
       ${needs.length ? `<section class="needs"><h2>Needs you (${needs.length})</h2><ul>${needs.map((n) => `<li><b>${esc(n.project)}</b><span>${esc(n.text)}</span>${n.detail ? `<span class="small muted">${esc(n.detail)}</span>` : ""}<code>${esc(n.command)}</code></li>`).join("")}</ul></section>` : ""}
       <section class="grid">${projects.map(card).join("")}</section>
@@ -339,7 +364,7 @@
   // A Pi started before an update still writes its project in the older shape: fill what it lacks.
   const noSpend = { costUsd: null, inputTokens: 0, outputTokens: 0, runs: 0, unpricedRuns: 0 };
   const upgrade = (p) => ({
-    live: [], notices: [], consults: [], needsYou: [], budgetUsd: null, ...p,
+    live: [], notices: [], consults: [], chats: [], needsYou: [], budgetUsd: null, ...p,
     runs: p.runs ?? [], olderVersion: !Array.isArray(p.runs),
     sessions: (p.sessions ?? []).map((s) => ({ tasks: [], decisions: [], rounds: [], requirements: [], ...s, spend: s.spend ?? noSpend })),
   });
