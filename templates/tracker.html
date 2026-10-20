@@ -156,6 +156,9 @@
   const money = (usd) => (usd === null || usd === undefined ? "—" : usd > 0 && usd < 0.01 ? "<$0.01" : `$${usd.toFixed(2)}`);
   const tok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
   const stale = (p) => p.live.length && Date.now() - Date.parse(p.updatedAt) > 90_000;
+  // A running agent with no new step past your "alerts.quietMinutes": maybe a long build, maybe stuck.
+  const quietFor = (run) => (run.quietAfterMs && run.lastActivityAt && Date.now() - run.lastActivityAt >= run.quietAfterMs ? Date.now() - run.lastActivityAt : null);
+  const quietNote = (run) => (quietFor(run) === null ? "" : ` · <span style="color:var(--warn)">no new step for <span data-since="${run.lastActivityAt}">${dur(quietFor(run))}</span></span>`);
   const tone = (status) => /READY_TO_CLOSE|PASS|PLAN_READY|SPEC_APPROVED|ADVICE_READY|^ready$|^planned$|^noted$/i.test(status) ? "good"
     : /BLOCKED|NEEDS_CHANGES|STALE/i.test(status) ? "bad" : /NEEDS_|AWAITING|WAITING|followup|clarification/i.test(status) ? "warn" : "";
   const pill = (status) => `<span class="pill ${tone(status)}">${esc(String(status).replaceAll("_", " ").toLowerCase())}</span>`;
@@ -196,8 +199,8 @@
     const today = sum(p.runs, startOfDay());
     let state;
     if (p.live.length)
-      state = p.live.map((run) => `<div class="head"><span class="dot ${stale(p) ? "warn" : "live"}"></span><span class="doing">${short(run.label)}</span></div>
-        <div class="tiny muted">${since(run.startedAt)} · ${run.steps.length} steps</div>
+      state = p.live.map((run) => `<div class="head"><span class="dot ${stale(p) || quietFor(run) !== null ? "warn" : "live"}"></span><span class="doing">${short(run.label)}</span></div>
+        <div class="tiny muted">${since(run.startedAt)} · ${run.steps.length} steps${quietNote(run)}</div>
         <ul class="steps">${run.steps.slice(-2).map((s) => `<li>${mark(s.kind)} ${esc(s.text)}</li>`).join("")}</ul>`).join("")
         + (stale(p) ? `<div class="small" style="color:var(--warn)">No update for ${ago(p.updatedAt).replace(" ago", "")}: Pi may have closed.</div>` : "");
     else
@@ -231,7 +234,7 @@
   }
 
   function overview(p) {
-    const live = p.live.map((run) => `<div class="glass section"><div class="head" style="display:flex;gap:8px;align-items:center"><span class="dot ${stale(p) ? "warn" : "live"}"></span><b>${short(run.label)}</b><span class="small muted">· ${since(run.startedAt)} · ${run.steps.length} steps</span></div>
+    const live = p.live.map((run) => `<div class="glass section"><div class="head" style="display:flex;gap:8px;align-items:center"><span class="dot ${stale(p) || quietFor(run) !== null ? "warn" : "live"}"></span><b>${short(run.label)}</b><span class="small muted">· ${since(run.startedAt)} · ${run.steps.length} steps${quietNote(run)}</span></div>
       <ul class="steps" style="margin-top:8px">${run.steps.slice(-12).map((s) => `<li>${dur(s.at).padStart(7)} ${mark(s.kind)} ${esc(s.text)}</li>`).join("")}</ul>
       ${run.said ? `<div class="answer">${esc(run.said)}</div>` : ""}</div>`).join("");
     const notices = p.notices.length ? `<div class="glass section"><h3>Recent runs</h3>${p.notices.slice().reverse().map((n) => `<div class="small" style="padding:3px 0">${n.level === "info" ? "✓" : "⚠"} ${esc(n.text)} <span class="muted">${ago(n.at)}</span></div>`).join("")}</div>` : "";
