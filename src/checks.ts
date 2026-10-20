@@ -5,6 +5,7 @@ import { assertRecipientCurrent } from "./recipient.ts";
 import { roundDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure, list, record, text } from "./validation.ts";
+import { sandboxPlan, type SandboxSettings } from "./sandbox.ts";
 import type { RecipientPin } from "./types.ts";
 
 export interface CheckCommand {
@@ -36,11 +37,11 @@ export function checkCommand(value: unknown, maxTimeoutMs = 60_000): CheckComman
 
 /** Called only after explicit recipient opt-in AND confirmation of this exact command, or
  * when the human pre-approved this exact command when dispatching. `workdir` runs it in an
- * isolated worktree instead of the project. */
+ * isolated worktree instead of the project; `sandbox` is your user file's sandbox setting. */
 export async function runRecipientCheck(
   cwd: string, pin: RecipientPin, command: CheckCommand,
   approvedSource: string, run: CheckRunner, signal?: AbortSignal,
-  options: { maxTimeoutMs?: number; workdir?: string } = {},
+  options: { maxTimeoutMs?: number; workdir?: string; sandbox?: SandboxSettings; platform?: NodeJS.Platform } = {},
 ) {
   const root = projectRoot(cwd);
   command = checkCommand(command, options.maxTimeoutMs);
@@ -48,6 +49,9 @@ export async function runRecipientCheck(
   // Testers and reviewers are read-only: their source must stay exactly as handed off.
   const readOnly = pin.mode === "testing" || pin.mode === "review";
   signal?.throwIfAborted();
+  // A required sandbox that is missing refuses here, before anything is recorded or run.
+  const workdir = options.workdir ?? root;
+  const plan = sandboxPlan(command.program, command.args, workdir, options.sandbox ?? { mode: "off", network: false, allowWrite: [] }, options.platform);
   const id = randomUUID(), startedAt = now();
   const prefix = withLock(root, () => {
     assertRecipientCurrent(root, pin);
@@ -56,13 +60,13 @@ export async function runRecipientCheck(
     if (readOnly) ensure(approvedSource === pin.sourceFingerprint, `${pin.mode === "review" ? "Reviewed" : "Testing"} source changed; request a fresh handoff`);
     const path = `${roundDirectory(r)}/checks/${id}`;
     commit(root, s, "check.started-after-human-confirmation", {
-      [`${path}/start.json`]: json({ schemaVersion: 1, ...pin, command, startedAt, sourceBefore: approvedSource }),
+      [`${path}/start.json`]: json({ schemaVersion: 1, ...pin, command, startedAt, sourceBefore: approvedSource, sandbox: plan.sandbox }),
     });
     return path;
   });
   let result: CheckResult;
   try {
-    result = await run(command.program, command.args, { cwd: options.workdir ?? root, timeout: command.timeoutMs, signal });
+    result = await run(plan.program, plan.args, { cwd: workdir, timeout: command.timeoutMs, signal });
   } catch (error) {
     result = { stdout: "", stderr: error instanceof Error ? error.message : String(error), code: 1, killed: Boolean(signal?.aborted) };
   }
@@ -71,6 +75,7 @@ export async function runRecipientCheck(
   const report = {
     schemaVersion: 1, ...pin, command, startedAt, finishedAt: now(),
     ...(options.workdir ? { ranIn: "isolated worktree" } : {}),
+    sandbox: plan.sandbox, ...(plan.note ? { sandboxNote: plan.note } : {}),
     sourceBefore: approvedSource, sourceAfter, sourceChanged,
     outcome: result.code === 0 && !result.killed && !(readOnly && sourceChanged) ? "passed" : "failed",
     code: result.code, killed: result.killed,
@@ -90,7 +95,7 @@ export async function runRecipientCheck(
     artifactPath: saved ? artifactPath : null, ...report,
     nextAction: readOnly && sourceChanged
       ? "STOP: the check changed reviewed source. No changes were reverted. Return to the coordinator to inspect changes and issue a fresh handoff."
-      : saved ? "Inspect actual output and limits; cite this result in reply checks. A check exit code is not whole-work completion or review PASS."
+      : saved ? `Inspect actual output and limits; cite this result in reply checks. A check exit code is not whole-work completion or review PASS.${plan.sandbox ? ` It ran in a ${plan.sandbox.backend} sandbox${plan.sandbox.network ? "" : " without network"}: a failure writing outside its folders or reaching the network is the sandbox, not the code; say so in the check evidence.` : plan.note ? ` ${plan.note}` : ""}`
         : "Contract was closed while the check ran. Stop; no result was added to closed history.",
   };
 }

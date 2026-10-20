@@ -1,8 +1,9 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadSession } from "./files.ts";
+import type { SandboxMode, SandboxSettings } from "./sandbox.ts";
 import { agentEffort, agents, checkCommands, effortName, minutes, modelName, parseDispatchArgs, type Agent, type DispatchOptions } from "./dispatch.ts";
 import { projectRoot } from "./source.ts";
 import { ensure, record } from "./validation.ts";
@@ -37,6 +38,8 @@ export interface AgentConfig {
   budget: { perSessionUsd: number | null };
   /** User file only: when a running agent counts as quiet (0 never), and whether to raise desktop notifications. */
   alerts: { quietMinutes: number; desktop: boolean };
+  /** User file only: whether checks run in an OS sandbox, and what it lets them reach. */
+  sandbox: SandboxSettings;
   profiles: Record<string, AgentProfile & { source: Source }>;
   roles: Partial<Record<Mode, RoleChoice & { source: Source }>>;
   files: { user: string; project: string; found: Source[] };
@@ -77,9 +80,9 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget" and "alerts" are allowed'));
-  // Settings that let WAICC act for you, or reach you outside Pi, are yours alone: a repository must not grant them.
-  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts"])
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts" and "sandbox" are allowed'));
+  // Settings that let WAICC act for you, reach you outside Pi or loosen what checks may touch are yours alone: a repository must not set them.
+  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
   if (config.policies !== undefined) {
     ensure(Array.isArray(config.policies) && config.policies.length <= 20, at('"policies" must be a list of at most 20 rules'));
@@ -107,6 +110,21 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
       at('"alerts.quietMinutes" must be a whole number of minutes from 0 (never) to 240'));
     ensure(desktop === undefined || typeof desktop === "boolean", at('"alerts.desktop" must be true or false'));
     into.alerts = { quietMinutes: (quietMinutes as number | undefined) ?? into.alerts.quietMinutes, desktop: (desktop as boolean | undefined) ?? into.alerts.desktop };
+  }
+  if (config.sandbox !== undefined) {
+    const sandbox = record(config.sandbox, at('"sandbox"'));
+    ensure(Object.keys(sandbox).every((key) => ["checks", "network", "allowWrite"].includes(key)), at('"sandbox" takes only "checks", "network" and "allowWrite"'));
+    const { checks, network, allowWrite } = sandbox;
+    ensure(checks === undefined || ["off", "auto", "required"].includes(checks as string), at('"sandbox.checks" must be "off", "auto" or "required"'));
+    ensure(network === undefined || typeof network === "boolean", at('"sandbox.network" must be true or false'));
+    ensure(allowWrite === undefined || (Array.isArray(allowWrite) && allowWrite.length <= 20 && allowWrite.every((path) =>
+      typeof path === "string" && path.length <= 1000 && (isAbsolute(path) || path === "~" || path.startsWith("~/")))),
+    at('"sandbox.allowWrite" must be a list of at most 20 absolute folders (or ~/ folders)'));
+    into.sandbox = {
+      mode: (checks as SandboxMode | undefined) ?? into.sandbox.mode,
+      network: (network as boolean | undefined) ?? into.sandbox.network,
+      allowWrite: (allowWrite as string[] | undefined) ?? into.sandbox.allowWrite,
+    };
   }
   if (config.autoAdvisor !== undefined) {
     const value = config.autoAdvisor;
@@ -154,7 +172,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -217,6 +235,7 @@ export function profilesView(cwd: string) {
     autoDecide: config.autoDecide,
     budget: config.budget.perSessionUsd === null ? "none" : { perSessionUsd: config.budget.perSessionUsd },
     alerts: config.alerts,
+    sandbox: { checks: config.sandbox.mode, network: config.sandbox.network, allowWrite: config.sandbox.allowWrite },
     autoAdvisor: config.autoAdvisor ? { maxPerChat: config.autoAdvisor, profile: config.roles.advisor?.profile ?? "not set: no advisor role" } : "off",
     files: {
       user: { path: config.files.user, found: config.files.found.includes("user") },
@@ -265,6 +284,11 @@ export function consultSettings(cwd: string): { limit: number; profile: string |
 /** Your per-session dollar budget for automatic runs, or null for none. */
 export function sessionBudget(cwd: string): number | null {
   return loadAgentConfig(cwd).budget.perSessionUsd;
+}
+
+/** How checks are sandboxed. A broken config throws: a check must not silently lose a required sandbox. */
+export function sandboxSettings(cwd: string): SandboxSettings {
+  return loadAgentConfig(cwd).sandbox;
 }
 
 /** When a running agent counts as quiet, and whether to notify on the desktop; defaults if the config is broken. */
