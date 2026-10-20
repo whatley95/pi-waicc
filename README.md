@@ -731,9 +731,18 @@ What it does and does not do:
     changes the reviewed source fails, as a tester's does. Give your `review` role its checks
     so automatic reviews (`--review`, `--auto`) get them:
     `"review": { "profile": "sol", "checks": ["npm test"] }`.
-  - Checks run with your account's permissions and are not an OS sandbox: approve only
-    local, reviewed commands, never deployments, installs or anything using secrets.
-    Antigravity cannot receive pre-approved checks.
+  - By default checks run with your account's permissions: approve only local, reviewed
+    commands, never deployments, installs or anything using secrets. Antigravity cannot
+    receive pre-approved checks.
+  - **Optional OS sandbox** (user file only): `"sandbox": { "checks": "auto" }` runs every
+    check so it can write only to its working folder (the project or the isolated
+    worktree), the temp folder and any `"allowWrite"` folders (for example
+    `["~/.npm", "~/.gradle"]` for tool caches), with no network unless `"network": true`.
+    It uses `sandbox-exec` on macOS and bubblewrap (`bwrap`) on Linux. Windows has no
+    sandbox WAICC can use yet. Where none works, `"auto"` runs the check as before and the
+    result says so; `"required"` refuses to run it and the agent reports it `not_run`. Each
+    check result records the sandbox that ran it, its writable folders and whether network
+    was allowed.
 
   ```text
   /waicc-test
