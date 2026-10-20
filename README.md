@@ -262,6 +262,11 @@ server):
 }
 ```
 
+You do not have to write this yourself: when `/waicc-mr-comments` meets a host that is not
+listed, it offers to add it to your user file with `"tokenEnv": "GITLAB_TOKEN"` (asking
+separately before allowing plain http). It keeps everything else in the file, never replaces a
+host already there, and never writes a token; it then tells you how to set the variable.
+
 To create the token: in GitLab, your avatar → **Preferences** → **Access tokens** → **Add new
 token**, tick the **api** scope, and copy it. Then keep it in an environment variable rather than
 the file. On Windows, in PowerShell:
