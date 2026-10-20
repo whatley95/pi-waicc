@@ -1,0 +1,260 @@
+import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { json, loadSession, readText } from "../files.ts";
+import { join } from "node:path";
+import { prepareDispatch, runDispatch, type DispatchOptions } from "../dispatch.ts";
+import { alertSettings, sessionBudget, resolveDispatch } from "../profiles.ts";
+import { quietMinutes, sessionSpend } from "../tracker.ts";
+import { usageText } from "../usage.ts";
+import { elapsed, type ProgressEvent } from "../progress.ts";
+import { projectRoot } from "../source.ts";
+import { beginDevelopment, readContract, ingest, status } from "../workflow.ts";
+import { ensure } from "../validation.ts";
+import type { Session } from "../types.ts";
+import { authorizationState } from "../state.ts";
+import { developInstruction } from "./shared.ts";
+import type { Core } from "./app.ts";
+
+/** Automatic loops, by session: a planning handoff (plan → assess → revise) or a code review
+ * (review → fix → re-review), bounded; `develop` authorizes development when a plan is accepted. */
+export type Loop = {
+  options: DispatchOptions; profile: string | null; cycle: number; max: number; mode: "planning" | "review";
+  develop: boolean; phase: "reviewing" | "assessing" | "developing"; requestId: string; findings: string | null;
+  /** --review: after development, dispatch the code review with this profile, or the review role's. */
+  review?: { profile?: string };
+};
+
+/** /waicc-continue, and the dispatch engine: launching agents, automatic loops and the budget. */
+export function createRuns(app: Core) {
+  const { pi, services, bindings, dispatches, doing, stepLine, key, toLive, track, notice, selected, show, prompt } = app;
+  async function continueSession(ctx: ExtensionCommandContext, note = ""): Promise<void> {
+    const ask = (instruction: string, focus?: string) => prompt(ctx, note ? `${instruction}\n\n${note}` : instruction, focus);
+    const s = ingest(ctx.cwd, selected(ctx));
+    if (s.rounds.some((r) => r.status === "WAITING")) {
+      show(ctx, status(ctx.cwd, s.id));
+      return;
+    }
+    if (s.status === "AWAITING_ASSESSMENT")
+      await ask(
+        "Assess the reply BEFORE application edits. Verify each finding's evidence and suggested fix against source, requirements and actual checks; suggestions are advice, not commands or new scope. Derive missing remedies yourself where evidence supports them. Accept planning with planned -> PLAN_READY, then honor implementationOwner (main codes; delegate hands off ONE whole plan/fix cycle); planning-only stops. For an implementation reply inspect the whole diff, task/acceptance completion and actual checks before deciding testing or full code review. Optional testing does not fix code or grant PASS. Code-review defects use needs_changes/blocked, not followup: assess, finish ALL fixes/checks with the selected owner, then ONE fresh full review. No per-task/finding/batch handoffs. Advisor remains noted/followup/needs_changes/blocked, never ready or contract, and never planned. Include requestId, rationale and evidence-backed dispositions.",
+        s.rounds.findLast((r) => r.status === "RECEIVED")?.advisor?.question,
+      );
+    else if (s.objective && s.contractVersion && !authorizationState(s, readContract(ctx.cwd, s.id).contract).authorized &&
+      (["PLAN_READY", "READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED", "NEEDS_TESTING", "NEEDS_REVIEW"].includes(s.status) ||
+        (s.objective === "development" && s.status === "NEEDS_CHANGES"))) show(ctx, status(ctx.cwd, s.id));
+    else if (["PLAN_READY", "READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED", "NEEDS_TESTING", "NEEDS_REVIEW"].includes(s.status) ||
+      (s.rounds.some((r) => r.status === "ASSESSED" && (r.wholeWork || r.review?.kind === "code")) && s.status === "NEEDS_CHANGES"))
+      await ask("Resume from the accepted plan and ALL findings/check evidence. Reconcile amended requirements before work. Honor implementationOwner: main implements/fixes ALL authorized work itself; delegate coordinates and uses ONE waicc_request implementation handoff for the whole plan/fix cycle, never per task. After an implementation reply, inspect the whole diff and completion evidence yourself; do not immediately re-delegate completed work. Run missing required tests locally or use testing handoff only if testingOwner is delegate; otherwise offer human /waicc-test as an optional choice. Once ALL work/fixes and required checks are complete, create ONE whole-change code review with current completion evidence. No automatic PASS, closure, scope changes or partial/batch reviews. Preserve planning-only scope and genuine blockers.");
+    else if (s.rounds.at(-1)?.mode === "advisor")
+      show(ctx, status(ctx.cwd, s.id)); // A blocked advisor must not silently become contract preparation.
+    else if (s.status === "DRAFT" || s.status === "NEEDS_CHANGES")
+      await ask(
+        "Resume the task from its original requirements. Prepare a revised contract/handoff using waicc_prepare; preserve prior requirement IDs.",
+      );
+    else show(ctx, status(ctx.cwd, s.id));
+  }
+  const loops = new Map<string, Loop>();
+  const loopName = (loop: Loop) => (loop.mode === "planning" ? "Planning loop" : "Review loop");
+  const endLoop = (ctx: ExtensionContext, id: string, message: string, level: "info" | "warning" | "error" = "info") => {
+    loops.delete(id);
+    notice(ctx, level, message);
+    ctx.ui.notify(message, level);
+    pi.sendMessage({ customType: "waicc-review-loop", content: message, display: true }, { triggerTurn: false });
+  };
+  const loopNote = (loop: Loop) => loop.mode === "planning"
+    ? `AUTOMATIC PLANNING LOOP, cycle ${loop.cycle} of ${loop.max}, started by the human with /waicc-dispatch --loop${loop.develop ? " --develop" : ""}. Assess the plan against the source. If it is acceptable, accept it with decision planned${loop.develop ? "; development is then authorized automatically, as the human asked" : ""}. If the planner can fix what is missing or wrong (investigation, tasks, acceptance criteria, evidence), use decision followup with a rationale that says exactly what the next planning round must address: WAICC sends it to the planner automatically. If something only the human can decide blocks the plan, record it as a decision, explain what they must decide and stop. Do not implement anything.`
+    : `AUTOMATIC REVIEW LOOP, cycle ${loop.cycle} of ${loop.max}, started by the human with /waicc-dispatch --loop. After assessing: if the review found actionable defects inside the authorized scope, fix ALL of them, run the relevant checks, then in this same turn request ONE fresh whole-change code review with waicc_request (mode review, reviewKind code, complete completion evidence). WAICC dispatches it automatically. If any finding needs a human decision, is disputed, is out of scope or blocked, or authorization is missing, do NOT request a review: explain what the human must decide and stop. If the review passed, stop. Never close the contract, commit, push or deploy.`;
+  /** Every finding description in a review reply, order-free: the same set means no progress. */
+  const findingsOf = (root: string, sessionId: string, requestId: string): string | null => {
+    try {
+      const reply = JSON.parse(readText(join(root, ".pi", "pi-waicc", "sessions", sessionId, "rounds", requestId, "reply.json"))) as { findings?: { description?: string }[] };
+      const descriptions = (reply.findings ?? []).map((finding) => String(finding.description ?? "").trim().toLowerCase()).filter(Boolean).sort();
+      return descriptions.length ? JSON.stringify(descriptions) : null;
+    } catch {
+      return null;
+    }
+  };
+  function launch(ctx: ExtensionCommandContext, id: string, options: DispatchOptions, profile: string | null): void {
+    const plan = prepareDispatch(ctx.cwd, id, options);
+    const loop = loops.get(id);
+    const controller = new AbortController();
+    const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
+    const { quietMs } = alertSettings(ctx.cwd);
+    const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root, lastActivityAt: Date.now(), quietAfterMs: quietMs };
+    let quietWarned = false;
+    // A live panel above the editor and a footer status, refreshed on each step and every few seconds.
+    const render = () => {
+      const recent = state.events.filter((event) => event.kind !== "note").slice(-5);
+      const said = state.events.findLast((event) => event.kind === "note");
+      const quiet = quietMinutes({ ...toLive("dispatch", id, label, state.startedAt, []), lastActivityAt: state.lastActivityAt, quietAfterMs: quietMs });
+      // Quiet is not stuck: a long build or test shows no step until it ends. Say so once, stop nothing.
+      if (quiet !== null && !quietWarned) {
+        quietWarned = true;
+        const last = state.events.findLast((event) => event.kind !== "note");
+        ctx.ui.notify(`${plan.via} has shown no new step for ${quiet} minutes${last ? ` (last: ${last.text})` : ""}. It may still be working; /waicc-dispatch --progress shows its steps, --stop ends it.`, "warning");
+      }
+      ctx.ui.setWidget?.("waicc-dispatch", [
+        `${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps${quiet !== null ? ` · no new step for ${quiet}m` : ""}   (/waicc-dispatch --progress, --stop)`,
+        ...(recent.length ? recent.map(stepLine) : ["        starting the agent…"]),
+        ...(said ? [`         says: ${said.text}`] : []),
+      ]);
+      ctx.ui.setStatus?.("waicc-dispatch", `${plan.via} ${doing[plan.mode] ?? plan.mode}${loop ? ` ${loop.cycle}/${loop.max}` : ""} · ${elapsed(Date.now() - state.startedAt)}`);
+      track(ctx);
+    };
+    const ticker = setInterval(render, 5_000);
+    ticker.unref?.();
+    render();
+    const release = () => {
+      clearInterval(ticker);
+      ctx.ui.setWidget?.("waicc-dispatch", undefined);
+      ctx.ui.setStatus?.("waicc-dispatch", undefined);
+      if (dispatches.get(id) === state) dispatches.delete(id);
+      track(ctx);
+    };
+    // Runs in the background so this chat stays usable; the result arrives as a message.
+    const done = runDispatch(plan, services.runAgent, controller.signal, (event) => {
+      state.events.push(event);
+      state.lastActivityAt = Date.now();
+      quietWarned = false;
+      if (state.events.length > 400) state.events.splice(0, state.events.length - 400);
+      render();
+    })
+      .then(async (outcome) => {
+        // Release this run before continuing: the assessment can last the main agent's whole turn,
+        // and the loop's next dispatch must not see this run as still going.
+        release();
+        const continuing = outcome.replySubmitted && options.continue;
+        ctx.ui.notify(outcome.replySubmitted
+          ? `${plan.via} submitted a reply${usageText(outcome.usage) ? ` (${usageText(outcome.usage)})` : ""}.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
+          : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
+        const cost = usageText(outcome.usage);
+        notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}${cost ? `, ${cost}` : ""}.`);
+        pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
+        const current = loops.get(id);
+        if (current && !outcome.replySubmitted) return endLoop(ctx, id, `${loopName(current)} stopped at cycle ${current.cycle}/${current.max}: ${plan.via} submitted no reply. See the dispatch log.`, "warning");
+        if (!continuing) return;
+        let note = "";
+        if (current) {
+          const findings = findingsOf(projectRoot(ctx.cwd), id, plan.requestId);
+          if (findings && findings === current.findings)
+            // Assess this reply as usual, but without asking for yet another review.
+            endLoop(ctx, id, `${loopName(current)} stopped at cycle ${current.cycle}/${current.max}: the same findings came back after the fixes. The main agent will assess them; decide the next step yourself.`, "warning");
+          else {
+            Object.assign(current, { phase: "assessing", requestId: plan.requestId, findings });
+            note = loopNote(current);
+          }
+        }
+        // Not awaited: the main agent's turn runs on its own; agent_end advances a loop.
+        continueSession(ctx, note).catch((error) => {
+          if (loops.has(id)) endLoop(ctx, id, `${loopName(loops.get(id)!)} stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+          else ctx.ui.notify(`Continue failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+        });
+      })
+      .catch((error) => {
+        if (loops.has(id)) endLoop(ctx, id, `${loopName(loops.get(id)!)} stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+        else ctx.ui.notify(`Dispatch failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      })
+      .finally(release);
+    state.done = done;
+    dispatches.set(id, state);
+    show(ctx, {
+      dispatching: true, profile, via: plan.via, model: plan.model ?? "agent default", effort: plan.effort ?? "agent default", sessionId: plan.sessionId,
+      requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
+      ...(options.continue ? { continueAutomatically: true } : {}),
+      ...(loop ? { reviewLoop: { cycle: loop.cycle, max: loop.max } } : {}),
+      nextAction: `The recipient is working headless${plan.isolation ? " in an isolated worktree; only in-scope changes will be applied to your checkout" : plan.mode === "implementation" ? ", editing only the task's allowed paths" : " and read-only"}. Its live steps show above the editor; /waicc-dispatch --progress lists them all. ${loop ? loop.mode === "planning"
+        ? `Planning loop: when it replies the main agent assesses, and a revised plan is requested automatically when needed, at most ${loop.max} cycles${loop.develop ? `; when the plan is accepted, development starts as you asked with --develop${loop.review ? ", and the code review is dispatched with your review profile when the main agent requests it" : ""}` : ""}. It stops on a blocker, an open decision, repeated problems or --stop, and never closes the contract.`
+        : `Review loop: when it replies the main agent assesses and fixes, and a fresh review is dispatched automatically, at most ${loop.max} cycles; it stops on a pass, a blocker or decision, repeated findings or --stop, and never closes the contract.` : options.continue ? "When it replies, the continue step runs automatically." : "You will be notified when it finishes; then run /waicc-continue."} /waicc-dispatch --stop ends it. Dispatch never accepts, closes or authorizes anything.`,
+    });
+  }
+  /** After the main agent's turn: dispatch the next review it requested, or end the loop. */
+  /** Why an automatic run must stop for your budget, or null. Only reported costs count. */
+  function overBudget(ctx: ExtensionContext, id: string): string | null {
+    try {
+      const budget = sessionBudget(ctx.cwd);
+      if (budget === null) return null;
+      const spent = sessionSpend(projectRoot(ctx.cwd), id).costUsd ?? 0;
+      return spent < budget ? null
+        : `this session's agents have reported $${spent.toFixed(2)}, reaching your $${budget} budget ("budget.perSessionUsd" in your user file). Dispatch the next step yourself to go on.`;
+    } catch {
+      return null;
+    }
+  }
+  function advanceLoop(ctx: ExtensionContext): void {
+    const id = bindings.get(key(ctx))?.sessionId;
+    const loop = id ? loops.get(id) : undefined;
+    if (!id || !loop || loop.phase === "reviewing" || dispatches.has(id)) return;
+    let s: Session;
+    try {
+      s = loadSession(projectRoot(ctx.cwd), id);
+    } catch (error) {
+      return endLoop(ctx, id, `${loopName(loop)} stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+    if (loop.phase === "developing") return startReview(ctx as ExtensionCommandContext, id, loop, s);
+    if (s.status === "AWAITING_ASSESSMENT") return; // Another turn ended first; the assessment is still queued.
+    const cycles = `${loop.cycle} cycle${loop.cycle === 1 ? "" : "s"}`;
+    if (loop.mode === "planning" && s.status === "PLAN_READY") {
+      if (!loop.develop) return endLoop(ctx, id, `Plan accepted after ${cycles} (PLAN_READY). Run /waicc-develop to start coding.`);
+      return void startDevelopment(ctx as ExtensionCommandContext, id, cycles);
+    }
+    if (loop.mode === "review" && (s.status === "READY_TO_CLOSE" || s.contractReview === "PASS"))
+      return endLoop(ctx, id, `Review passed after ${cycles}. Nothing was closed: run /waicc-close when you are satisfied.`);
+    const next = s.rounds.find((round) => round.status === "WAITING");
+    const asked = loop.mode === "planning" ? "a revised plan" : "a fresh review";
+    if (!next || next.mode !== loop.mode || next.id === loop.requestId)
+      return endLoop(ctx, id, `${loopName(loop)} stopped after cycle ${loop.cycle}/${loop.max}: the main agent did not ask for ${asked}, so something needs you (a decision, blocker or disputed finding). See its last message.`, "warning");
+    if (loop.cycle >= loop.max)
+      return endLoop(ctx, id, `${loopName(loop)} reached its limit of ${loop.max} cycles. ${loop.mode === "planning" ? "A revised planning handoff" : "A fresh review"} is waiting: dispatch it yourself if you want another round.`, "warning");
+    const over = overBudget(ctx, id);
+    if (over) return endLoop(ctx, id, `${loopName(loop)} stopped after cycle ${loop.cycle}/${loop.max}: ${over}`, "warning");
+    loop.cycle += 1;
+    loop.phase = "reviewing";
+    try {
+      launch(ctx as ExtensionCommandContext, id, loop.options, loop.profile);
+    } catch (error) {
+      endLoop(ctx, id, `${loopName(loop)} stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
+  /** --develop: the plan was accepted, so authorize development as the human asked, unless a decision is open. */
+  async function startDevelopment(ctx: ExtensionCommandContext, id: string, cycles: string): Promise<void> {
+    try {
+      const open = (readContract(ctx.cwd, id).contract.decisions ?? []).filter((d) => d.status !== "resolved");
+      if (open.length)
+        return endLoop(ctx, id, `Plan accepted after ${cycles}, but development was not started: ${open.map((d) => `${d.id} (${d.question})`).join("; ")} still ${open.length === 1 ? "needs" : "need"} your answer. Answer with /waicc-decide, then run /waicc-develop.`, "warning");
+      beginDevelopment(ctx.cwd, id, undefined, "human-dispatch-develop");
+      const loop = loops.get(id);
+      if (loop?.review) {
+        // The run continues: the main agent codes, then requests the code review, which advanceLoop dispatches.
+        Object.assign(loop, { phase: "developing" });
+        const message = `Plan accepted after ${cycles}. Development authorized automatically, as you asked with --develop; the main agent is starting. When it requests the whole-change code review, it is dispatched with ${loop.review.profile ? `your ${loop.review.profile} profile` : "your review profile"}.`;
+        ctx.ui.notify(message, "info");
+        pi.sendMessage({ customType: "waicc-review-loop", content: message, display: true }, { triggerTurn: false });
+      } else endLoop(ctx, id, `Plan accepted after ${cycles}. Development authorized automatically, as you asked with --develop; the main agent is starting. /waicc-status shows the authorization.`);
+      await prompt(ctx, developInstruction);
+    } catch (error) {
+      endLoop(ctx, id, `Plan accepted after ${cycles}, but development could not start: ${error instanceof Error ? error.message : String(error)} Run /waicc-develop yourself.`, "error");
+    }
+  }
+  /** --review: once the main agent requests the code review, dispatch it as a review loop with the chosen profile. */
+  function startReview(ctx: ExtensionCommandContext, id: string, loop: Loop, s: Session): void {
+    const waiting = s.rounds.find((round) => round.status === "WAITING");
+    if (!waiting) return; // Still coding: wait for the main agent to request the review. /waicc-dispatch --stop ends the run.
+    if (waiting.mode !== "review" || waiting.review?.kind !== "code")
+      return endLoop(ctx, id, `Run stopped before the review: the main agent created a ${waiting.mode} handoff instead of the code review. Dispatch it yourself (coding handoffs need --implement).`, "warning");
+    try {
+      const resolved = resolveDispatch(ctx.cwd, id, [...(loop.review?.profile ? [loop.review.profile] : []), "--loop", String(loop.max)]);
+      if (resolved.confirmChecks)
+        return endLoop(ctx, id, "Run stopped before the review: your review role's checks come from the project's agent config and need your confirmation. Dispatch the review yourself.", "warning");
+      const authorization = authorizationState(s, readContract(ctx.cwd, id).contract);
+      ensure(authorization.authorized, authorization.reason);
+      ensure((s.implementationOwner ?? "main") === "main", "Implementation is delegated in this session.");
+      const over = overBudget(ctx, id);
+      if (over) return endLoop(ctx, id, `Run stopped before the review: ${over}`, "warning");
+      Object.assign(loop, { options: resolved.options, profile: resolved.profile, cycle: 1, mode: "review", develop: false, phase: "reviewing", requestId: "", findings: null, review: undefined });
+      launch(ctx, id, resolved.options, resolved.profile);
+    } catch (error) {
+      endLoop(ctx, id, `Run stopped before the review: ${error instanceof Error ? error.message : String(error)} Dispatch the review yourself.`, "error");
+    }
+  }
+  return { continueSession, loops, loopName, endLoop, loopNote, findingsOf, launch, overBudget, advanceLoop, startDevelopment, startReview };
+}
+export type Runs = ReturnType<typeof createRuns>;
