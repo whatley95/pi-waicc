@@ -7,13 +7,14 @@ import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { acceptedPlanCurrent, acceptedPlanRequestId, authorizationState, defaultRoundLimits, decisionSummary, requirementsText, scopeDigest } from "../state.ts";
 import { ensure, identifier, text, validateContract, readyContract, readyPlan } from "../validation.ts";
-import type { Contract, Session, Objective } from "../types.ts";
+import type { Contract, Session, Objective, RevisionReview } from "../types.ts";
+import { resolveRevision, revisionChanges } from "../revision.ts";
 import { requireOpen, resetReview, approvalIsCurrent, contract, contractFiles, nextRound } from "./shared.ts";
 
 /** Starting a session, saving its context, authorising development, decisions and who does the work. */
 
 function newSession(root: string, requirements: string, implementationOwner?: "main" | "delegate", objective?: Objective,
-  automatic?: { id: string; origin: NonNullable<Session["autoPlanning"]> }): Session {
+  automatic?: { id: string; origin: NonNullable<Session["autoPlanning"]> }, revisionReview?: RevisionReview): Session {
   const timestamp = now();
   const s: Session = {
     schemaVersion: 1,
@@ -33,6 +34,7 @@ function newSession(root: string, requirements: string, implementationOwner?: "m
     contractReview: "NOT_REVIEWED",
     planApproval: null,
     ...(implementationOwner ? { implementationOwner } : {}),
+    ...(revisionReview ? { revisionReview } : {}),
     deliveryVerified: false,
     verified: false,
   };
@@ -46,6 +48,17 @@ export function createSession(cwd: string, requirements: string, implementationO
   ensure(implementationOwner === undefined || ["main", "delegate"].includes(implementationOwner), "Invalid implementation owner");
   ensure(objective === undefined || ["planning", "development", "review"].includes(objective), "Invalid objective");
   return withLock(root, () => newSession(root, requirements, implementationOwner, objective));
+}
+/**
+ * A review session for an existing change (/waicc-review --rev). The range is checked against
+ * the repository first, so a typo or an empty range makes no session.
+ */
+export function createRevisionReview(cwd: string, input: string, focus: string): Session {
+  const root = projectRoot(cwd);
+  const revisionReview = resolveRevision(root, input, snapshot(root).vcs);
+  revisionChanges(root, revisionReview);
+  const requirements = `Review the code change ${revisionReview.label}${focus.trim() ? `: ${focus.trim()}` : ""}`;
+  return withLock(root, () => newSession(root, requirements, undefined, "review", undefined, revisionReview));
 }
 /** One atomic planning-only start per captured Pi input, including retry after an interrupted bind. */
 export function createAutoPlanningSession(cwd: string, requirements: string, chatId: string, requestId: string): Session {

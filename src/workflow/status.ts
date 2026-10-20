@@ -271,6 +271,9 @@ export function exportHandoff(cwd: string, id: string): string {
       ...(r.review?.kind === "code"
         ? { [`${dir}/code-review.json`]: artifact(root, s, `${roundDirectory(r)}/code-review.json`) }
         : {}),
+      ...(r.review?.kind === "code" && r.review.revision
+        ? Object.fromEntries(["changes.patch", "commits.txt"].map((name) => [`${dir}/${name}`, artifact(root, s, `${roundDirectory(r)}/${name}`)]))
+        : {}),
       ...(r.contextVersion
         ? Object.fromEntries(["CONTEXT.md", "context.json", "memory.json"].map((name) =>
             [`${dir}/${name}`, artifact(root, s, `${roundDirectory(r)}/${name}`)]))
