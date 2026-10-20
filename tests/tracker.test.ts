@@ -116,6 +116,14 @@ test("the page renders cards, the needs-you list and details, and never runs tex
   assert.ok(!page.includes("<img"), "session text is shown as text, never as markup");
   assert.match(page, /Left or right side\?/);
   assert.match(elements.updated.textContent, /^1 project · updated/);
+
+  // A Pi started before an update writes its project without spend: the page still shows it.
+  const { runs: _runs, budgetUsd: _budget, ...older } = status;
+  const olderSessions = older.sessions.map(({ spend: _spend, rounds, ...s }) => ({ ...s, rounds: rounds.map(({ usage: _u, attempts: _a, ...r }) => r) }));
+  window.waiccTracker({ generatedAt: new Date(Date.now() + 1000).toISOString(), projects: [{ ...older, sessions: olderSessions }] });
+  assert.match(elements.app.innerHTML, /codex coding/);
+  assert.match(elements.app.innerHTML, /older version · restart Pi/);
+  assert.doesNotMatch(elements.app.innerHTML, /could not show/);
 });
 
 test("/waicc-tracker opens the page; off stops every update, on resumes; dispatched agents never write it", async (t) => {
