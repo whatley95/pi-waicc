@@ -934,6 +934,25 @@ Git/SVN diffs/history, untracked/current files and report missing baseline acces
 For standalone review, the session may start after changes already exist; its inventory
 alone cannot recover earlier changes. Review the available VCS diff and full scope too.
 
+`/waicc-review --rev <range> [focus]` names that change. Git accepts one commit (compared
+with its first parent, or the empty tree for a root commit), `a..b`, or `a...b` (from their
+merge base to `b`); each side must match `^[A-Za-z0-9_][A-Za-z0-9._/~^@{}+-]*$` and resolve with
+`git rev-parse --verify --end-of-options <name>^{commit}`. SVN accepts `rN` or `rN:rM`
+(N ≥ 1, M ≥ N), meaning the changes made in revisions N through M (`-r N-1:M`). The range is
+resolved and its changes computed before any session is created; an unknown or empty range
+creates none. The new session (objective review, requirement
+`Review the code change <label>[: focus]`) stores
+`revisionReview: {vcs, range, from, to, label}`, and the main agent is asked to prepare a code
+review (`waicc_prepare` mode review, reviewKind code) without editing or judging the change.
+Every code-review round in such a session runs, with `cwd` the project root,
+`git diff --no-color --no-ext-diff --no-textconv --relative -M <from> <to>` and its
+`--name-only` list (or `svn diff -r F:T` and `--summarize`) plus the commit log, and writes
+`changes.patch` (cut at 400,000 characters with a closing note) and `commits.txt` into the
+round. `review.revision` records the range, its `changedPaths`, `truncated`, `patchBytes` and
+the checkout's revision; `review.changedPaths` is the union of the range's paths and the usual
+baseline comparison, so re-reviews also cover fixes. The handoff names both files and says when
+the checkout is not at the range's end. Exports include both files.
+
 The reviewer checks the entire implementation, requirements/acceptance, integration,
 regressions, check evidence and all prior fixes, returning one consolidated reply.
 Main-agent assessment precedes source edits so the original review remains assessable.

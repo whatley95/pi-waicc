@@ -171,6 +171,30 @@ Code-review completion reports are evidence-backed coordinator claims, not proof
 the reviewer independently verifies them. Unavailable checks stay `not_run` with
 limits; missing required evidence is a blocker, not a fabricated pass.
 
+### Review an existing change: a commit, a range or SVN revisions
+
+To review code that was not built in a WAICC session, name the change:
+
+```text
+/waicc-review --rev abc123 Check the paging fix          # one Git commit
+/waicc-review --rev main..feature/search                 # every commit on feature/search not on main
+/waicc-review --rev main...feature/search                # what the branch added since it split off (as a pull request shows it)
+/waicc-review --rev r1234:r1250 Check the export         # SVN: the changes made in r1234 through r1250
+/waicc-dispatch                                          # then review as usual
+/waicc-continue
+```
+
+WAICC checks the range against the repository (a typo or an empty range starts nothing), starts
+its own review session, and asks the main agent to describe what the change is meant to do; the
+main agent does not edit or judge it. Every code review in that session then carries the change
+itself: WAICC runs `git diff` or `svn diff` and puts `changes.patch` and `commits.txt` (the commit
+messages) beside the handoff, so any reviewer sees exactly what changed, including Claude and Pi
+reviewers that cannot run commands. In a monorepo sub-project only that project's files are
+included. A patch over 400,000 characters is cut, and the reviewer is told to read the remaining
+files from the checkout. If the reviewer finds problems, the fixes and re-reviews work as usual,
+and each re-review carries the original change plus the fixes. `/waicc-export` includes both
+files.
+
 For specification-only work, explicitly use `/waicc-review --contract <focus>`.
 That review may retain future execution gates and its PASS is not code approval.
 `reviewApproval.kind` distinguishes `code` from `contract`; legacy unmarked reviews
@@ -1122,6 +1146,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-help-develop --main [focus]`              | Return coding to the main contract owner; no handoff |
 | `/waicc-test --main [focus]`                   | Return testing to the main contract owner; no handoff |
 | `/waicc-review <focus>`                          | Prepare ONE full code-change review after ALL work/fixes/checks; without a selection, capture supplied review requirements |
+| `/waicc-review --rev <commit\|a..b\|a...b\|r1234[:r1250]> [focus]` | Review an existing Git or SVN change in its own session; the reviewer gets its patch and commit messages |
 | `/waicc-review --contract <focus>`               | Explicit specification-only review, not code-change approval |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
