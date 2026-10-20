@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,7 +77,7 @@ export function initAgentConfig() {
  * agreed to it. Everything else in the file is kept, a host already there is never replaced, and
  * no token is ever written: you set the variable yourself.
  */
-export function addGitlabHost(host: string, options: { tokenEnv?: string; allowHttp?: boolean } = {}) {
+export function addGitlabHost(host: string, options: { tokenEnv?: string; token?: string; allowHttp?: boolean } = {}) {
   const path = userConfigPath();
   const name = host.toLowerCase(), tokenEnv = options.tokenEnv ?? "GITLAB_TOKEN";
   let config: Record<string, unknown> = {};
@@ -90,10 +90,12 @@ export function addGitlabHost(host: string, options: { tokenEnv?: string; allowH
   }
   const gitlab = config.gitlab === undefined ? {} : record(config.gitlab, `"gitlab" in ${path}`);
   ensure(!Object.keys(gitlab).some((key) => key.toLowerCase() === name), `${name} is already under "gitlab" in ${path}; it was left unchanged`);
-  config.gitlab = { ...gitlab, [name]: { tokenEnv, ...(options.allowHttp ? { allowHttp: true } : {}) } };
+  // A token goes into the file only when you chose that over an environment variable.
+  config.gitlab = { ...gitlab, [name]: { ...(options.token ? { token: options.token } : { tokenEnv }), ...(options.allowHttp ? { allowHttp: true } : {}) } };
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
-  return { path, host: name, tokenEnv, tokenSet: Boolean(process.env[tokenEnv]?.trim()) };
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, options.token ? { mode: 0o600 } : undefined);
+  if (options.token) try { chmodSync(path, 0o600); } catch { /* Windows keeps the file in your profile */ }
+  return { path, host: name, tokenEnv, tokenSet: Boolean(options.token ?? process.env[tokenEnv]?.trim()) };
 }
 
 function readConfig(path: string, source: Source, into: AgentConfig): void {

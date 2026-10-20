@@ -28,6 +28,8 @@ export interface Services {
   notifyDesktop?: (title: string, body: string) => boolean;
   /** GitLab's API client, replaceable in tests. */
   gitlab?: (project: GitLabProject, host: GitLabHost) => GitLabCall;
+  /** Saves a Windows user environment variable (what setx does), replaceable in tests. */
+  saveUserVariable?: (name: string, value: string) => boolean;
 }
 
 /**
