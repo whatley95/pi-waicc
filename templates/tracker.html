@@ -51,6 +51,10 @@
   .kpi .value { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .kpi .sub { font-size: 12px; color: var(--muted); }
   .kpi .pair { display: flex; gap: 28px; }
+  .kpihead { display: flex; justify-content: space-between; align-items: center; gap: 8px; position: relative; z-index: 1; }
+  .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--chip); }
+  .seg button { border: 0; background: transparent; color: var(--muted); font-size: 11px; padding: 2px 8px; border-radius: 6px; cursor: pointer; }
+  .seg button.on { background: var(--solid); color: var(--ink); box-shadow: var(--shadow); }
   .tokbar { display: flex; height: 6px; border-radius: 999px; overflow: hidden; background: var(--chip); margin: 6px 0 4px; }
   .tokbar i { display: block; height: 100%; min-width: 4px; }
   .fresh { background: var(--accent); }
@@ -148,6 +152,7 @@
   let data = null, shown = "", paused = false;
   let selected = decodeURIComponent(location.hash.slice(1)) || store.get("waicc-selected") || "";
   let tab = store.get("waicc-tab") || "overview";
+  let tokenRange = store.get("waicc-tokens") || "today";
   const open = new Set((() => { try { return JSON.parse(store.get("waicc-open") || "[]"); } catch { return []; } })());
   const theme = store.get("waicc-theme");
   if (theme) document.documentElement.dataset.theme = theme;
@@ -204,6 +209,39 @@
   const whoShort = { "Main agent": "main agent", "Agents WAICC sent work to": "dispatched", Advisor: "advisor" };
   const tokenWho = (runs) => group(runs, who).filter((g) => g.total.tokens).sort((a, b) => b.total.tokens - a.total.tokens)
     .map((g) => `${whoShort[g.key] ?? g.key} ${tok(g.total.tokens)}`).join(" · ");
+  // Everything recorded, exactly: each project sends totals made before its run list is cut.
+  // A project written by an older version has none, so its run list stands in.
+  const kindOf = { main: "Main agent", dispatch: "Agents WAICC sent work to", advisor: "Advisor" };
+  function allTime(projects) {
+    const t = { usd: null, tokens: 0, input: 0, cached: 0, output: 0, runs: 0, unpriced: 0, messages: 0 }, byWho = {};
+    let since = null;
+    for (const p of projects) {
+      const kinds = p.allTime?.byKind
+        ? Object.entries(p.allTime.byKind).map(([kind, u]) => [kind, { usd: u.costUsd, input: u.inputTokens, cached: u.cachedTokens, output: u.outputTokens, runs: kind === "main" ? 0 : u.runs, unpriced: kind === "main" ? 0 : u.unpricedRuns, messages: u.messages }])
+        : Object.keys(kindOf).map((kind) => [kind, sum(p.runs.filter((r) => r.kind === kind))]);
+      for (const [kind, u] of kinds) {
+        t.input += u.input; t.cached += u.cached; t.output += u.output; t.tokens += u.input + u.output;
+        t.runs += u.runs; t.unpriced += u.unpriced; t.messages += u.messages;
+        if (u.usd !== null) t.usd = (t.usd ?? 0) + u.usd;
+        byWho[kind] = (byWho[kind] ?? 0) + u.input + u.output;
+      }
+      const first = p.allTime?.since ?? p.runs.at(-1)?.at;
+      if (first && (!since || first < since)) since = first;
+    }
+    const who = Object.entries(byWho).filter(([, n]) => n).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${whoShort[kindOf[kind]]} ${tok(n)}`).join(" · ");
+    return { t, who, since };
+  }
+  // The top token box, for the period you pick: today, the last 7 days or everything recorded.
+  function tokenBox(projects, runs) {
+    const ranges = [["today", "Today"], ["week", "7 days"], ["all", "All"]];
+    const from = tokenRange === "week" ? startOfDay(6) : startOfDay();
+    const picked = tokenRange === "all" ? allTime(projects)
+      : { t: sum(runs, from), who: tokenWho(runs.filter((r) => Date.parse(r.at) >= from)), since: null };
+    const { t, who, since } = picked;
+    return `<div class="glass kpi"><div class="label kpihead"><span>Tokens</span><span class="seg">${ranges.map(([id, name]) => `<button type="button" data-tokrange="${id}"${tokenRange === id ? ' class="on"' : ""}>${name}</button>`).join("")}</span></div>
+      <div class="value">${tok(t.tokens)}</div>${tokenBar(t)}${t.tokens ? tokenLegend(t) : `<div class="sub">none yet</div>`}${who ? `<div class="sub">${esc(who)}</div>` : ""}
+      <div class="sub">${tokenRange === "all" ? (since ? `since ${new Date(since).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })} · ${spendText(t)}` : "") : `${spendText(t)} · ${spendCount(t) || "no runs"}`}</div></div>`;
+  }
   // Three labelled figures under the bar, in its colours.
   const tokenLegend = (t) => `<div class="toklegend"><span><b class="fresh"></b>input ${tok(t.input - t.cached)}</span><span><b class="cached"></b>cached ${tok(t.cached)}</span><span><b class="out"></b>output ${tok(t.output)}</span></div>`;
   const spendText = (t) => (!t.runs && !t.messages ? "$0.00" : t.usd !== null ? money(t.usd) : `${tok(t.tokens)} tok`);
@@ -337,7 +375,7 @@
       return `<div class="day" title="${esc(spendSub(d.t))}"><span>${d.t.runs ? spendText(d.t) : ""}</span><i style="height:${Math.max(2, Math.round(pct))}%"></i><span>${new Date(d.from).toLocaleDateString(undefined, { weekday: "short" })}</span></div>`; }).join("")}</div>`;
     const titles = new Map(p.sessions.map((s) => [s.id, s.title]));
     const kpi = (label, t) => `<div class="glass kpi"><div class="label">${label}</div><div class="value">${spendText(t)}</div><div class="sub">${spendSub(t)}</div>${tokenBar(t)}<div class="sub">${tokenSplit(t)}</div></div>`;
-    return `<div class="kpis">${kpi("Today", sum(runs, startOfDay()))}${kpi("Last 7 days", sum(runs, startOfDay(6)))}${kpi("All time", sum(runs))}</div>
+    return `<div class="kpis">${kpi("Today", sum(runs, startOfDay()))}${kpi("Last 7 days", sum(runs, startOfDay(6)))}${kpi("All time", allTime([p]).t)}</div>
       <div class="glass section"><h3>Last 7 days</h3>${days}</div>
       <div class="glass section"><h3>By who</h3>${bars(group(runs, who), esc)}</div>
       <div class="two">
@@ -380,7 +418,7 @@
         </div></div>
         <div class="glass kpi"><div class="label">Spent today</div><div class="value">${spendText(today)}</div><div class="sub">${spendSub(today)}</div>${today.runs || today.messages ? `<div class="sub">${esc(split(runs.filter((r) => Date.parse(r.at) >= startOfDay())))}</div>` : ""}</div>
         <div class="glass kpi"><div class="label">Last 7 days</div><div class="value">${spendText(week)}</div><div class="sub">${spendSub(week)}</div>${week.runs || week.messages ? `<div class="sub">${esc(split(runs.filter((r) => Date.parse(r.at) >= startOfDay(6))))}</div>` : ""}</div>
-        <div class="glass kpi"><div class="label">Tokens today</div><div class="value">${tok(today.tokens)}</div>${tokenBar(today)}${today.tokens ? tokenLegend(today) : `<div class="sub">none yet</div>`}${today.tokens ? `<div class="sub">${esc(tokenWho(runs.filter((r) => Date.parse(r.at) >= startOfDay())))}</div>` : ""}<div class="sub" title="${esc(`${tokenSplit(week)} · ${tokenWho(runs.filter((r) => Date.parse(r.at) >= startOfDay(6)))}`)}">7 days: ${tok(week.tokens)}</div></div>
+        ${tokenBox(projects, runs)}
       </section>
       ${needs.length ? `<section class="needs"><h2>Needs you (${needs.length})</h2><ul>${needs.map((n) => `<li><b>${esc(n.project)}</b><span>${esc(n.text)}</span>${n.detail ? `<span class="small muted">${esc(n.detail)}</span>` : ""}<code>${esc(n.command)}</code></li>`).join("")}</ul></section>` : ""}
       <section class="grid">${projects.map(card).join("")}</section>
@@ -395,7 +433,7 @@
   // A Pi started before an update still writes its project in the older shape: fill what it lacks.
   const noSpend = { costUsd: null, inputTokens: 0, outputTokens: 0, runs: 0, unpricedRuns: 0 };
   const upgrade = (p) => ({
-    live: [], notices: [], consults: [], chats: [], needsYou: [], budgetUsd: null, extension: null, ...p,
+    live: [], notices: [], consults: [], chats: [], needsYou: [], budgetUsd: null, extension: null, allTime: null, ...p,
     runs: p.runs ?? [], olderVersion: !Array.isArray(p.runs),
     sessions: (p.sessions ?? []).map((s) => ({ tasks: [], decisions: [], rounds: [], requirements: [], ...s, spend: s.spend ?? noSpend })),
   });
@@ -422,6 +460,8 @@
   }
 
   document.addEventListener("click", (event) => {
+    const rangeButton = event.target.closest?.("[data-tokrange]");
+    if (rangeButton) { tokenRange = rangeButton.dataset.tokrange; store.set("waicc-tokens", tokenRange); render(); return; }
     const tabButton = event.target.closest?.("[data-tab]");
     if (tabButton) { tab = tabButton.dataset.tab; store.set("waicc-tab", tab); render(); return; }
     const target = event.target.closest?.(".card");
