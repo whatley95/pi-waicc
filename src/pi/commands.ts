@@ -17,6 +17,7 @@ import { recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientGuidance, sessionCommandInput, developInstruction } from "./shared.ts";
 import type { App } from "./app.ts";
 import { fetchMergeRequest } from "../revision.ts";
+import { pickMergeRequest } from "./merge-requests.ts";
 import { gitlabClient, gitlabProject, mergeRequestInfo } from "../gitlab.ts";
 
 /** Contract commands: planning, development, decisions, review, continue, handoff and session management. */
@@ -227,9 +228,16 @@ export function registerCommands(app: App): void {
     "waicc-review",
     "Review ALL finished code changes; --rev <commit|from..to|r1234:r1250> reviews an existing change; --contract explicitly reviews only the specification",
     async (args, ctx) => {
+      // --mr --list: pick one of the remote's merge requests, then review it as --mr <number>.
+      const listing = /^--mr\s+(?:--list|list)(?:\s+--remote\s+(\S+))?\s*$/.exec(args.trim());
+      if (listing) {
+        const picked = await pickMergeRequest(app, ctx, listing[1]);
+        if (!picked) return;
+        args = `--mr ${picked}${listing[1] ? ` --remote ${listing[1]}` : ""}`;
+      }
       if (/^--mr(?:\s|$)/.test(args)) {
         const mr = /^--mr\s+(\S+)((?:\s+--(?:remote|into)\s+\S+)*)(?:\s+([\s\S]*))?$/.exec(args.trim());
-        ensure(mr, "Usage: /waicc-review --mr <number> [--remote <name>] [--into <target branch>] [focus]");
+        ensure(mr, "Usage: /waicc-review --mr <number> [--remote <name>] [--into <target branch>] [focus], or /waicc-review --mr --list [--remote <name>]");
         const flag = (name: string) => new RegExp(`--${name}\\s+(\\S+)`).exec(mr[2])?.[1];
         const focus = mr[3]?.trim() ?? "";
         const root = projectRoot(ctx.cwd);

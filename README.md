@@ -202,7 +202,19 @@ files.
 /waicc-dispatch                                  # the review role's profile reviews it
 /waicc-continue                                  # the main agent assesses each finding
 /waicc-review --mr 123                           # after the author pushes fixes: fetch again, re-review
+/waicc-review --mr --list                        # pick one from the list instead of typing its number
 ```
+
+`--mr --list` (or `--mr list`, with `--remote <name>` if needed) lists the merge requests to pick
+from; picking one starts its review as `--mr <number>` would. With your GitLab host set up (see
+the token below) it shows the open ones, most recently updated first, with title, author,
+branches and age. Without a token, git can only list the newest 30 numbers, which may include
+merged or closed ones. Either way, a merge request a WAICC session here already reviews is
+marked with that session's state.
+
+**GitHub:** pull requests are fetched and reviewed the same way (`--mr 45` reads
+`refs/pull/45/head` when the remote is on github.com). Listing them with titles and posting
+comments are GitLab only for now.
 
 WAICC fetches the merge request with plain `git fetch`, no token needed: GitLab publishes
 every merge request as `refs/merge-requests/<n>/head` (GitHub as `refs/pull/<n>/head`). It
@@ -249,6 +261,17 @@ server):
   "10.0.0.5": { "token": "glpat-…", "allowHttp": true }
 }
 ```
+
+To create the token: in GitLab, your avatar → **Preferences** → **Access tokens** → **Add new
+token**, tick the **api** scope, and copy it. Then keep it in an environment variable rather than
+the file. On Windows, in PowerShell:
+
+```powershell
+setx GITLAB_TOKEN "glpat-..."     # saved for new windows; close and reopen the terminal, then start Pi
+```
+
+On macOS or Linux, add `export GITLAB_TOKEN="glpat-..."` to your shell profile (`~/.zshrc` or
+`~/.bashrc`). `/waicc-dispatch --profiles` then shows `from GITLAB_TOKEN` for the host.
 
 `tokenEnv` names an environment variable that holds the token; `token` holds it in the file
 itself. A host reached over plain `http://` needs `"allowHttp": true`, because the token would
@@ -1214,6 +1237,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-review <focus>`                          | Prepare ONE full code-change review after ALL work/fixes/checks; without a selection, capture supplied review requirements |
 | `/waicc-review --rev <commit\|a..b\|a...b\|r1234[:r1250]> [focus]` | Review an existing Git or SVN change in its own session; the reviewer gets its patch and commit messages |
 | `/waicc-review --mr <n> [--remote r] [--into branch] [focus]` | Review a GitLab merge request or GitHub pull request, fetched with plain git; again later to pick up new commits |
+| `/waicc-review --mr --list [--remote r]`         | Pick a merge request to review from a list (open ones with titles when your GitLab host is set up) |
 | `/waicc-mr-comments`                             | Post the assessed merge request review to GitLab: line comments and a summary, after you choose and confirm |
 | `/waicc-review --contract <focus>`               | Explicit specification-only review, not code-change approval |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
