@@ -7,6 +7,7 @@ import { contractMarkdown, conversation, handoff, replyTemplate, roundDirectory,
 import { projectRoot, snapshot } from "../source.ts";
 import { recall } from "../memory.ts";
 import { decisionBrief } from "../decisions.ts";
+import { revisionChanges } from "../revision.ts";
 import { reviewContext, type ReviewRequest } from "../review.ts";
 import { contextPacket } from "../context.ts";
 import { requirementsText, roundPhase } from "../state.ts";
@@ -194,7 +195,7 @@ export function nextRound(
         ? contract(s.projectRoot, s, 1).source
         : v.source
     : v.source;
-  const reviewData = mode === "review"
+  let reviewData = mode === "review"
     ? reviewContext(
         s,
         v.contract,
@@ -204,6 +205,14 @@ export function nextRound(
         taskId,
       )
     : undefined;
+  // A review of an existing change carries that change, and any fixes made since, every round.
+  const revision = reviewData?.kind === "code" && s.revisionReview ? revisionChanges(s.projectRoot, s.revisionReview) : undefined;
+  if (revision && reviewData?.kind === "code")
+    reviewData = {
+      ...reviewData,
+      changedPaths: [...new Set([...revision.changedPaths, ...reviewData.changedPaths])].sort(),
+      revision: { ...s.revisionReview!, changedPaths: revision.changedPaths, truncated: revision.truncated, patchBytes: revision.patchBytes, checkout: source.revision },
+    };
   resetReview(s);
   if (mode === "review") s.contractReview = "PENDING";
   const round: Round = {
@@ -245,6 +254,7 @@ export function nextRound(
       ...(reviewData?.kind === "code"
         ? { [`${dir}/code-review.json`]: json(reviewData) }
         : {}),
+      ...(revision ? { [`${dir}/changes.patch`]: revision.patch, [`${dir}/commits.txt`]: revision.commits } : {}),
       ...skillFiles([...v.contract.skills, ...(["implementation", "testing"].includes(mode) ? ["wai-testing"] : [])], dir),
     },
   };
