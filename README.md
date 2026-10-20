@@ -745,8 +745,10 @@ What it does and does not do:
 - **Replies are validated before they are written.** Agents check drafts with
   `waicc_validate_reply` (Pi: `waicc_reply` with `validateOnly`) and fix every reported
   problem before the single submission, so `/waicc-continue` receives a valid reply.
-  Planning and review assignments include a valid `proposedContractExample`, and an
-  invalid proposal's error names the failing part and shows that example.
+  Planning and review assignments include a valid `proposedContractExample`. Validation
+  reports every independent problem at once, each with where it is (such as
+  `proposedContract.tasks[0].acceptance[1].verification`), so an agent fixes a draft in one
+  pass instead of one problem per try; an invalid proposal also shows that example.
 - **Audit log.** Each run records the agent, model, exact arguments, exit code and
   output tail under the round's `dispatch/<id>/` folder.
 - **Never assesses, accepts, closes or retries.** A failed run leaves the handoff
