@@ -100,7 +100,7 @@ test("the page renders cards, the needs-you list and details, and never runs tex
   const html = readFileSync(new URL("../templates/tracker.html", import.meta.url), "utf8");
   const script = /<script>([\s\S]*)<\/script>/.exec(html)![1];
   runInNewContext(script, {
-    window, location: { hash: "" }, history: { replaceState() {} }, sessionStorage: { getItem: () => null, setItem() {} },
+    window, location: { hash: "" }, history: { replaceState() {} }, localStorage: { getItem: () => null, setItem() {} },
     setInterval() {}, document: {
       getElementById: (name: string) => elements[name] ?? { addEventListener() {} },
       addEventListener() {}, querySelectorAll: () => [], createElement: () => ({ remove() {} }), body: { appendChild() {} },

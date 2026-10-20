@@ -553,15 +553,28 @@ Pi `--mode json`); Antigravity's stream is not verified, so it may show fewer st
 **Watch every project on one page.** Run `/waicc-tracker` and your browser opens one page
 that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
 
+- **At the top:** agents working now, how many things need you, and what you spent today
+  and in the last 7 days, across all projects.
 - **Needs you:** every decision waiting for your answer and each session's next step for you
   (review passed, plan ready, a reply to assess), with the command to type.
 - **A card per project:** the agent at work (agent, model, effort, loop cycle, elapsed
-  time, its last steps), or the session's status when idle. Projects at work come first.
-- **Click a card** for its details: what the agent is doing step by step and its latest
-  message, then each session's requirements, tasks (marked when the coder reports them
-  done), decisions with recommendations and answers, the round timeline (plan, review, fixes
-  and re-reviews, with agent, result, findings, checks and time), and the main agent's
-  advisor questions with their answers.
+  time, its last steps), or the session's status when idle, its task progress and today's
+  spend. Projects at work come first.
+- **Click a card** for its tabs:
+  - **Overview:** what the agent is doing step by step and its latest message, recent run
+    results, and each session's requirements, tasks (marked when the coder reports them
+    done) and budget bar.
+  - **Timeline:** every round (plan, review, fixes, re-reviews) with agent, result,
+    findings, checks, time and cost.
+  - **Decisions:** open ones first, with recommendations and the command to accept them.
+  - **Spend:** today, 7 days and all time; a 7-day chart; and totals by agent and model, by
+    step (planning, code review, testing…) and by session.
+  - **Advisor:** the main agent's questions when it was stuck, and the answers.
+
+Costs are what each agent reports about its own run: Claude and Pi report dollars (on a
+subscription, Claude's figure is the API-equivalent price), Codex reports tokens only, shown
+as "tokens only". Failed runs count too. The same figure appears in Pi when a run finishes,
+for example `codex submitted a reply ($0.75 · 443k tokens)`.
 
 The page is `~/.pi/agent/waicc-tracker/index.html` (beside your profiles). It refreshes itself
 every 3 s and needs no server: each Pi chat writes its project's status into that folder.
@@ -891,6 +904,11 @@ Safety rules:
   decisions for you; see [Fewer decisions to answer](#fewer-decisions-to-answer-standing-policies-and-low-risk-auto-accept).
 - **`"autoContinue": true`** (user file only) runs the continue step after every dispatch
   that returns a valid reply; a project file that sets it is rejected.
+- **`"budget": { "perSessionUsd": 5 }`** (user file only) stops automatic runs once a
+  session's agents have reported that much: a `--loop` does not start its next cycle and
+  `--auto` does not start its review. You can always dispatch the next step yourself. Only
+  reported dollars count, so Codex's token-only runs do not. The tracker shows each
+  session's spend against it.
 - **`"autoAdvisor"`** (user file only) caps how often the main agent may ask the advisor
   on its own: 3 per chat by default, `{ "maxPerChat": n }` (0–20), or `false` for off; see
   [When the main agent is stuck](#when-the-main-agent-is-stuck-it-asks-the-advisor).

@@ -8,6 +8,7 @@ import { dispatchPinVariable } from "./dispatch.ts";
 import { roundDirectory, versionDirectory } from "./render.ts";
 import { sessionPhase } from "./state.ts";
 import type { Contract, ContractVersion, Round, Session } from "./types.ts";
+import { totalUsage, type Usage } from "./usage.ts";
 
 /**
  * One page for every project: each Pi chat writes its project's status file, then rebuilds the
@@ -47,15 +48,22 @@ export function setTrackerEnabled(on: boolean): void {
   else atomicWrite(offMarker(), "The WAICC tracker is off. /waicc-tracker on turns it back on.\n");
 }
 
-function lastDispatch(root: string, s: Session, r: Round) {
-  const path = Object.keys(s.artifacts).filter((p) => p.startsWith(`${roundDirectory(r)}/dispatch/`) && p.endsWith("/result.json")).at(-1);
-  if (!path) return null;
-  try {
-    const d = JSON.parse(artifact(root, s, path)) as { via: string; model: string | null; effort: string | null; durationMs: number; replySubmitted: boolean; finishedAt: string };
-    return { via: d.via, model: d.model, effort: d.effort, durationMs: d.durationMs, replySubmitted: d.replySubmitted, finishedAt: d.finishedAt };
-  } catch {
-    return null;
-  }
+interface DispatchRecord { via: string; model: string | null; effort: string | null; durationMs: number; replySubmitted: boolean; finishedAt: string; usage?: Usage | null }
+/** Every finished dispatch of a round, oldest first: failed runs cost money too. */
+function dispatchRuns(root: string, s: Session, r: Round) {
+  return Object.keys(s.artifacts).filter((p) => p.startsWith(`${roundDirectory(r)}/dispatch/`) && p.endsWith("/result.json")).flatMap((path) => {
+    try {
+      const d = JSON.parse(artifact(root, s, path)) as DispatchRecord;
+      return [{ via: d.via, model: d.model, effort: d.effort, durationMs: d.durationMs, replySubmitted: d.replySubmitted, finishedAt: d.finishedAt, usage: d.usage ?? null }];
+    } catch {
+      return [];
+    }
+  }).sort((a, b) => a.finishedAt.localeCompare(b.finishedAt));
+}
+
+/** One agent run with what it used, for the page's spend figures. */
+export interface SpendRun {
+  at: string; kind: "dispatch" | "advisor"; mode: string; via: string; model: string | null; sessionId: string | null; usage: Usage;
 }
 
 function sessionView(root: string, s: Session) {
@@ -68,6 +76,23 @@ function sessionView(root: string, s: Session) {
   const report = s.rounds.findLast((r) => r.reply?.completion || r.review?.kind === "code");
   const completion = report?.reply?.completion ?? (report?.review?.kind === "code" ? report.review.completion : undefined);
   const reported = new Set(completion?.tasks.map((t) => t.taskId) ?? []);
+  const runs: SpendRun[] = [];
+  const rounds = s.rounds.map((r, i) => {
+    const dispatches = dispatchRuns(root, s, r);
+    for (const d of dispatches)
+      if (d.usage) runs.push({ at: d.finishedAt, kind: "dispatch", mode: r.review?.kind === "code" ? "code review" : r.mode, via: d.via, model: d.model, sessionId: s.id, usage: d.usage });
+    return {
+      n: i + 1, id: r.id, mode: r.mode, kind: r.review?.kind ?? null, status: r.status,
+      outcome: r.reply?.outcome ?? null, decision: r.decision ?? null,
+      summary: clip(r.reply?.summary), rationale: clip(r.rationale, 300), question: clip(r.advisor?.question, 300),
+      findings: (r.reply?.findings ?? []).slice(0, 10).map((f) => ({ severity: f.severity, description: clip(f.description, 240) })),
+      findingCount: r.reply?.findings.length ?? 0,
+      checks: (r.reply?.checks ?? []).slice(0, 20).map((check) => ({ description: clip(check.description, 200), outcome: check.outcome })),
+      dispatch: dispatches.at(-1) ?? null,
+      attempts: dispatches.length,
+      usage: dispatches.some((d) => d.usage) ? totalUsage(dispatches.map((d) => d.usage)) : null,
+    };
+  });
   return {
     id: s.id,
     title: clip(c?.title, 160) ?? clip(s.requirements[0]?.split("\n")[0], 160) ?? "Untitled",
@@ -84,15 +109,9 @@ function sessionView(root: string, s: Session) {
       id: d.id, question: clip(d.question, 300), owner: d.owner, status: d.status,
       recommendation: clip(d.recommendation, 300), answer: clip(d.answer, 300), risk: d.risk ?? null,
     })),
-    rounds: s.rounds.map((r, i) => ({
-      n: i + 1, id: r.id, mode: r.mode, kind: r.review?.kind ?? null, status: r.status,
-      outcome: r.reply?.outcome ?? null, decision: r.decision ?? null,
-      summary: clip(r.reply?.summary), rationale: clip(r.rationale, 300), question: clip(r.advisor?.question, 300),
-      findings: (r.reply?.findings ?? []).slice(0, 10).map((f) => ({ severity: f.severity, description: clip(f.description, 240) })),
-      findingCount: r.reply?.findings.length ?? 0,
-      checks: (r.reply?.checks ?? []).slice(0, 20).map((check) => ({ description: clip(check.description, 200), outcome: check.outcome })),
-      dispatch: lastDispatch(root, s, r),
-    })),
+    rounds,
+    spend: totalUsage(runs.map((run) => run.usage)),
+    runs,
     closedAt: s.closure?.closedAt ?? null,
   };
 }
@@ -118,25 +137,36 @@ function sessions(root: string): SessionView[] {
       found.push(cached.view);
     } catch { /* an unreadable session is left out, not fatal */ }
   }
-  // Open sessions first, newest first; only the five most recent closed ones.
-  const open = found.filter((s) => s.status !== "CLOSED").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const closed = found.filter((s) => s.status === "CLOSED").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
-  return [...open, ...closed];
+  return found;
 }
 
+/** What one session's dispatches have cost so far, as the agents reported it. */
+export function sessionSpend(root: string, id: string): Usage & { runs: number; unpricedRuns: number } {
+  const s = loadSession(root, id);
+  return totalUsage(s.rounds.flatMap((r) => dispatchRuns(root, s, r).map((d) => d.usage)));
+}
+
+function readConsult(folder: string, id: string) {
+  try {
+    const result = JSON.parse(readFileSync(join(folder, id, "result.json"), "utf8")) as { via: string; model: string | null; finishedAt: string; durationMs: number; answer: string | null; usage?: Usage | null };
+    const brief = readFileSync(join(folder, id, "brief.md"), "utf8");
+    return { id, question: clip(/## Question\n\n([\s\S]*?)\n\n(?:## |$)/.exec(brief)?.[1], 400), via: result.via, model: result.model,
+      finishedAt: result.finishedAt, durationMs: result.durationMs, answer: clip(result.answer, 4_000), usage: result.usage ?? null };
+  } catch {
+    return null;
+  }
+}
+// A finished consult never changes, so each is read once.
+const consultCache = new Map<string, ReturnType<typeof readConsult>>();
 function consults(root: string) {
   const folder = safePath(root, `${runtimePath}/consults`);
   if (!existsSync(folder)) return [];
   return readdirSync(folder).flatMap((id) => {
-    try {
-      const result = JSON.parse(readFileSync(join(folder, id, "result.json"), "utf8")) as { via: string; model: string | null; finishedAt: string; durationMs: number; answer: string | null };
-      const brief = readFileSync(join(folder, id, "brief.md"), "utf8");
-      return [{ id, question: clip(/## Question\n\n([\s\S]*?)\n\n(?:## |$)/.exec(brief)?.[1], 400), via: result.via, model: result.model,
-        finishedAt: result.finishedAt, durationMs: result.durationMs, answer: clip(result.answer, 4_000) }];
-    } catch {
-      return [];
-    }
-  }).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt)).slice(0, 10);
+    const cacheKey = join(folder, id);
+    if (!consultCache.has(cacheKey) && existsSync(join(folder, id, "result.json"))) consultCache.set(cacheKey, readConsult(folder, id));
+    const consult = consultCache.get(cacheKey);
+    return consult ? [consult] : [];
+  }).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt));
 }
 
 /** What needs the human, in this project: their decisions, and each session's next human step. */
@@ -161,8 +191,17 @@ function needsYou(views: SessionView[], live: LiveRun[]) {
   });
 }
 
-export function projectStatus(root: string, live: LiveRun[] = [], notices: Notice[] = [], selectedSessionId: string | null = null) {
-  const list = sessions(root);
+export function projectStatus(root: string, live: LiveRun[] = [], notices: Notice[] = [], selectedSessionId: string | null = null, budgetUsd: number | null = null) {
+  const all = sessions(root);
+  // Open sessions first, newest first; only the five most recent closed ones are shown in full.
+  const newest = (a: SessionView, b: SessionView) => b.updatedAt.localeCompare(a.updatedAt);
+  const shown = [...all.filter((s) => s.status !== "CLOSED").sort(newest), ...all.filter((s) => s.status === "CLOSED").sort(newest).slice(0, 5)];
+  const asked = consults(root);
+  // Every run's figures, closed sessions included, so the page can total any period itself.
+  const runs: SpendRun[] = [
+    ...all.flatMap((s) => s.runs),
+    ...asked.flatMap((c) => (c.usage ? [{ at: c.finishedAt, kind: "advisor" as const, mode: "advisor", via: c.via, model: c.model, sessionId: null, usage: c.usage }] : [])),
+  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 2_000);
   return {
     schemaVersion: 1 as const,
     key: digest(process.platform === "win32" ? root.toLowerCase() : root).slice(0, 16),
@@ -171,11 +210,13 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     updatedAt: new Date().toISOString(),
     pid: process.pid,
     selectedSessionId,
+    budgetUsd,
     live,
     notices: notices.slice(-5),
-    sessions: list,
-    consults: consults(root),
-    needsYou: needsYou(list, live),
+    sessions: shown.map(({ runs: _runs, ...view }) => view),
+    consults: asked.slice(0, 10),
+    runs,
+    needsYou: needsYou(shown, live),
   };
 }
 export type ProjectStatus = ReturnType<typeof projectStatus>;

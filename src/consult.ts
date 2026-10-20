@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { initialize, json, now, runtimePath, safePath } from "./files.ts";
 import { runAgent, type Agent, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
 import { progressParser, type ProgressEvent } from "./progress.ts";
+import { usageMeter } from "./usage.ts";
 import { projectRoot } from "./source.ts";
 import { ensure, text } from "./validation.ts";
 
@@ -123,6 +124,7 @@ export async function consultAdvisor(cwd: string, q: ConsultQuestion, options: D
   const startedAt = Date.now();
   const parse = progressParser(options.via, root, startedAt);
   const reader = answerReader(options.via);
+  const meter = usageMeter(options.via);
   const progress: ProgressEvent[] = [];
   let result;
   try {
@@ -130,6 +132,7 @@ export async function consultAdvisor(cwd: string, q: ConsultQuestion, options: D
       cwd: root, timeout: (options.timeoutMinutes ?? consultMinutes) * 60_000, signal, env: {},
       onLine: (line) => {
         reader.read(line);
+        meter.read(line);
         for (const event of parse(line)) {
           progress.push(event);
           if (progress.length > 200) progress.splice(0, progress.length - 200);
@@ -142,10 +145,11 @@ export async function consultAdvisor(cwd: string, q: ConsultQuestion, options: D
   }
   // A runner that returns stdout without streaming it (tests, older agents) still yields its answer.
   if (!reader.get()) for (const line of result.stdout.split(/\r?\n/)) reader.read(line);
+  if (!meter.get()) for (const line of result.stdout.split(/\r?\n/)) meter.read(line);
   const answer = reader.get();
   const record = {
     schemaVersion: 1, consultId: id, via: options.via, model: options.model ?? null, effort: options.effort ?? null,
-    finishedAt: now(), durationMs: Date.now() - startedAt, code: result.code, killed: result.killed,
+    finishedAt: now(), durationMs: Date.now() - startedAt, code: result.code, killed: result.killed, usage: meter.get(),
     answer: answer || null, progress, stderr: tail(result.stderr),
   };
   writeFileSync(safePath(root, `${folder}/result.json`), json(record));
