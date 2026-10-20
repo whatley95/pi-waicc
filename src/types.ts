@@ -163,6 +163,8 @@ export interface Round {
         base: SourceSnapshot;
         changedPaths: string[];
         completion: WorkCompletion;
+        /** A review of an existing change: its range, and the patch and commits beside the handoff. */
+        revision?: RevisionReview & { changedPaths: string[]; truncated: boolean; patchBytes: number; checkout: string | null };
       };
   source: SourceSnapshot;
   requirementsDigest: string;
@@ -232,6 +234,8 @@ export interface Session {
   checkpoint?: { jsonPath: string; markdownPath: string; sequence: number };
   reviewApproval?: ReviewApproval;
   closure?: Closure;
+  /** Set by /waicc-review --rev: every code review in this session covers this change. */
+  revisionReview?: RevisionReview;
   deliveryVerified: false;
   verified: false;
 }
@@ -246,6 +250,14 @@ export interface MemoryEntry {
   revoked: boolean;
   /** A lesson learned from review findings that recur across sessions: the findings it rests on. */
   evidence?: FindingRef[];
+}
+/** A Git commit or range, or SVN revisions, resolved when the review was requested. */
+export interface RevisionReview {
+  vcs: "git" | "svn";
+  range: string;
+  from: string;
+  to: string;
+  label: string;
 }
 export interface FindingRef {
   sessionId: string;

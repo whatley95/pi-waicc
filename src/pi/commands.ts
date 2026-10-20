@@ -8,7 +8,7 @@ import { deleteSession, restoreSession } from "../lifecycle.ts";
 import { initProject, projectRoot } from "../source.ts";
 import { manualHandoffMessage } from "../render.ts";
 import type { manualHandoff } from "../render.ts";
-import { beginDevelopment, decisionsView, openDecisionsText, resolveDecision, readContract, createSession, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
+import { beginDevelopment, decisionsView, openDecisionsText, resolveDecision, readContract, createSession, createRevisionReview, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
 import { advisorInput, ensure } from "../validation.ts";
 import type { SessionListFilter } from "../workflow.ts";
 import type { Contract } from "../types.ts";
@@ -223,8 +223,22 @@ export function registerCommands(app: App): void {
       });
   command(
     "waicc-review",
-    "Review ALL finished code changes; --contract explicitly reviews only the specification",
+    "Review ALL finished code changes; --rev <commit|from..to|r1234:r1250> reviews an existing change; --contract explicitly reviews only the specification",
     async (args, ctx) => {
+      if (/^--rev(?:\s|$)/.test(args)) {
+        const rev = /^--rev\s+(\S+)(?:\s+([\s\S]*))?$/.exec(args.trim());
+        ensure(rev, "Usage: /waicc-review --rev <commit | from..to | from...to | r1234 | r1234:r1250> [focus]");
+        // Its own session: the change, not whatever this chat had selected, is under review.
+        const s = createRevisionReview(ctx.cwd, rev[1], rev[2] ?? "");
+        bind(ctx, s.id);
+        const r = s.revisionReview!;
+        await prompt(
+          ctx,
+          `This new session reviews an existing ${r.vcs === "git" ? "Git" : "SVN"} change: ${r.label} (from ${r.from} to ${r.to}). WAICC attaches the change's patch and commit messages to the review handoff itself, so the reviewer sees exactly what changed. First read the change yourself (its diff and commit messages). Then use waicc_prepare mode review with reviewKind code and: (1) a contract whose requirements quote this session's request exactly and say what the change is meant to do, with tasks that cover its parts and allowedPaths listing the files it changes; (2) a completion report: a summary of the change, each task's evidence citing its commits and files, the checks you actually ran (or not_run with the reason), and findings []. Do not edit code, fix anything or judge the change yourself: the independent reviewer does that. Then tell the human to run /waicc-dispatch (or hand off the prompt) and /waicc-continue. Focus (data): ${json(rev[2]?.trim() || "correctness, regressions, requirement coverage and tests")}`,
+          rev[2],
+        );
+        return;
+      }
       const contractOnly = /^--contract(?:\s|$)/.test(args);
       const focus = contractOnly ? args.slice("--contract".length).trim() : args;
       let id = bindings.get(key(ctx))?.sessionId;
