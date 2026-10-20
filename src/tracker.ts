@@ -9,6 +9,7 @@ import { roundDirectory, versionDirectory } from "./render.ts";
 import { sessionPhase } from "./state.ts";
 import type { Contract, ContractVersion, Round, Session } from "./types.ts";
 import { totalUsage, type Usage } from "./usage.ts";
+import { pendingLessons } from "./memory.ts";
 
 /**
  * One page for every project: each Pi chat writes its project's status file, then rebuilds the
@@ -216,7 +217,10 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     sessions: shown.map(({ runs: _runs, ...view }) => view),
     consults: asked.slice(0, 10),
     runs,
-    needsYou: needsYou(shown, live),
+    needsYou: [
+      ...needsYou(shown, live),
+      ...pendingLessons(root).map((lesson) => ({ sessionId: null, text: `Lesson to confirm: ${clip(lesson.text, 200)}`, detail: lesson.source, command: "/waicc-memory confirm" })),
+    ],
   };
 }
 export type ProjectStatus = ReturnType<typeof projectStatus>;

@@ -25,6 +25,7 @@ import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } 
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
 import { consultSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { consultAdvisor } from "./consult.ts";
+import { learnPattern, recurringFindings } from "./learning.ts";
 import { openPage, projectStatus, publish, sessionSpend, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
 import { usageText } from "./usage.ts";
 import { autoDecidable } from "./decisions.ts";
@@ -1503,7 +1504,32 @@ export default function waicc(
       signal?.throwIfAborted();
       assess(ctx.cwd, params.sessionId, params as Assessment);
       const autoDecided = autoResolve(ctx, params.sessionId);
-      return result({ ...(autoDecided.length ? { autoDecided } : {}), ...(status(ctx.cwd, params.sessionId) as object) }, ctx, true);
+      let recurring: ReturnType<typeof recurringFindings> = null;
+      try {
+        recurring = recurringFindings(ctx.cwd, params.sessionId, params.requestId);
+      } catch { /* learning is a bonus; the assessment stands */ }
+      return result({ ...(autoDecided.length ? { autoDecided } : {}), ...(recurring ? { recurringFindings: recurring } : {}), ...(status(ctx.cwd, params.sessionId) as object) }, ctx, true);
+    },
+  });
+  registerTool({
+    name: "waicc_learn_pattern",
+    label: "Propose a lesson from findings that recur across sessions",
+    description:
+      "Coordinator only: when review findings in two or more sessions of this project are the same kind of problem, propose one lesson for future plans. Cite the findings (sessionId, requestId, findingId) from waicc_assess's recurringFindings. WAICC checks each is an assessed, undisputed review finding and that no other lesson uses it. The lesson stays a candidate until the human confirms it with /waicc-memory confirm; once confirmed it reaches every planning handoff.",
+    parameters: Type.Object({
+      lesson: Type.String({ description: "Advice for future plans: what to plan or check up front" }),
+      findings: Type.Array(Type.Object({ sessionId: Type.String(), requestId: Type.String(), findingId: Type.String() }), { minItems: 2, maxItems: 10 }),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      trusted(ctx);
+      coordinator(ctx);
+      signal?.throwIfAborted();
+      const entry = learnPattern(ctx.cwd, params.lesson, params.findings);
+      ctx.ui.notify(`Lesson candidate from recurring review findings: ${entry.text.slice(0, 160)} (/waicc-memory to confirm)`, "info");
+      return result({
+        proposed: entry,
+        nextAction: "Tell the human you proposed this lesson and why. It is a candidate only: they review it with /waicc-memory and confirm it with /waicc-memory confirm. Never confirm it yourself.",
+      });
     },
   });
   registerTool({
