@@ -50,6 +50,14 @@
   .kpi .label { font-size: 12px; color: var(--muted); }
   .kpi .value { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .kpi .sub { font-size: 12px; color: var(--muted); }
+  .kpi .pair { display: flex; gap: 28px; }
+  .tokbar { display: flex; height: 6px; border-radius: 999px; overflow: hidden; background: var(--chip); margin: 6px 0 4px; }
+  .tokbar i { display: block; height: 100%; min-width: 4px; }
+  .fresh { background: var(--accent); }
+  .cached { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .out { background: var(--accent2); }
+  .toklegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; margin-bottom: 2px; }
+  .toklegend b { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
   .kpi::after { content: ""; position: absolute; inset: auto -30px -40px auto; width: 120px; height: 120px; border-radius: 50%; background: var(--grad); opacity: .08; }
 
   .needs { background: var(--needs); border: 1px solid var(--needs-line); border-radius: 16px; padding: 12px 16px; margin-bottom: 14px; }
@@ -169,11 +177,12 @@
   const startOfDay = (offset = 0) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - offset); return d.getTime(); };
   // The main agent's figures are one model's hour of one chat: they count messages, not runs.
   function sum(runs, from = 0, to = Infinity) {
-    const t = { usd: null, tokens: 0, runs: 0, unpriced: 0, messages: 0 };
+    const t = { usd: null, tokens: 0, input: 0, cached: 0, output: 0, runs: 0, unpriced: 0, messages: 0 };
     for (const r of runs) {
       const at = Date.parse(r.at);
       if (at < from || at >= to) continue;
       t.tokens += r.usage.inputTokens + r.usage.outputTokens;
+      t.input += r.usage.inputTokens; t.cached += r.usage.cachedTokens ?? 0; t.output += r.usage.outputTokens;
       if (r.kind === "main") t.messages += r.messages ?? 0; else t.runs++;
       if (r.usage.costUsd !== null) t.usd = (t.usd ?? 0) + r.usage.costUsd;
       else if (r.kind !== "main") t.unpriced++;
@@ -181,6 +190,22 @@
     return t;
   }
   const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  // Input includes cached tokens, as every agent reports it; the bar shows fresh input, cached input and output.
+  const tokenSplit = (t) => `in ${tok(t.input)}${t.cached ? ` (${tok(t.cached)} cached)` : ""} · out ${tok(t.output)}`;
+  const tokenBar = (t) => {
+    const all = t.input + t.output;
+    if (!all) return "";
+    const pct = (n) => `${(100 * n / all).toFixed(1)}%`;
+    // A part too small to see still shows, so a little output is not mistaken for none.
+    const part = (cls, n) => (n ? `<i class="${cls}" style="width:${pct(n)}"></i>` : "");
+    return `<div class="tokbar" title="${esc(`fresh input ${tok(t.input - t.cached)} · cached input ${tok(t.cached)} · output ${tok(t.output)}`)}">${part("fresh", t.input - t.cached)}${part("cached", t.cached)}${part("out", t.output)}</div>`;
+  };
+  // Who used the tokens: "main agent 160.2M · dispatched 3.3M · advisor 90k".
+  const whoShort = { "Main agent": "main agent", "Agents WAICC sent work to": "dispatched", Advisor: "advisor" };
+  const tokenWho = (runs) => group(runs, who).filter((g) => g.total.tokens).sort((a, b) => b.total.tokens - a.total.tokens)
+    .map((g) => `${whoShort[g.key] ?? g.key} ${tok(g.total.tokens)}`).join(" · ");
+  // Three labelled figures under the bar, in its colours.
+  const tokenLegend = (t) => `<div class="toklegend"><span><b class="fresh"></b>input ${tok(t.input - t.cached)}</span><span><b class="cached"></b>cached ${tok(t.cached)}</span><span><b class="out"></b>output ${tok(t.output)}</span></div>`;
   const spendText = (t) => (!t.runs && !t.messages ? "$0.00" : t.usd !== null ? money(t.usd) : `${tok(t.tokens)} tok`);
   const spendCount = (t) => [t.runs ? plural(t.runs, "run") : "", t.messages ? plural(t.messages, "message") : ""].filter(Boolean).join(" · ");
   const spendSub = (t) => (t.runs || t.messages ? `${tok(t.tokens)} tokens · ${spendCount(t)}${t.unpriced ? ` · ${t.unpriced} without a price` : ""}` : "no runs");
@@ -301,7 +326,7 @@
       // Rows without a price are drawn by tokens, in a muted colour, so they are not read as dollars.
       const priced = top > 0 && r.total.usd !== null;
       const pct = priced ? (100 * r.total.usd) / top : (100 * r.total.tokens) / topTok;
-      return `<div class="rowbar"><span>${label(r.key)}</span><span class="small" style="font-variant-numeric:tabular-nums">${r.total.usd !== null ? `${money(r.total.usd)} <span class="muted">·</span> ` : `<span class="muted">tokens only ·</span> `}<span class="muted">${tok(r.total.tokens)} tok · ${spendCount(r.total)}</span></span><div class="bar${priced ? "" : " tokens"}"><i style="width:${Math.max(2, Math.round(pct))}%"></i></div></div>`;
+      return `<div class="rowbar"><span>${label(r.key)}</span><span class="small" style="font-variant-numeric:tabular-nums">${r.total.usd !== null ? `${money(r.total.usd)} <span class="muted">·</span> ` : `<span class="muted">tokens only ·</span> `}<span class="muted" title="${esc(tokenSplit(r.total))}">${tok(r.total.tokens)} tok · ${spendCount(r.total)}</span></span><div class="bar${priced ? "" : " tokens"}"><i style="width:${Math.max(2, Math.round(pct))}%"></i></div></div>`;
     }).join("");
   }
   function spendTab(p) {
@@ -311,7 +336,7 @@
     const days = `<div class="days">${week.map((d) => { const pct = topDay > 0 ? (100 * (d.t.usd ?? 0)) / topDay : (100 * d.t.tokens) / topDayTok;
       return `<div class="day" title="${esc(spendSub(d.t))}"><span>${d.t.runs ? spendText(d.t) : ""}</span><i style="height:${Math.max(2, Math.round(pct))}%"></i><span>${new Date(d.from).toLocaleDateString(undefined, { weekday: "short" })}</span></div>`; }).join("")}</div>`;
     const titles = new Map(p.sessions.map((s) => [s.id, s.title]));
-    const kpi = (label, t) => `<div class="glass kpi"><div class="label">${label}</div><div class="value">${spendText(t)}</div><div class="sub">${spendSub(t)}</div></div>`;
+    const kpi = (label, t) => `<div class="glass kpi"><div class="label">${label}</div><div class="value">${spendText(t)}</div><div class="sub">${spendSub(t)}</div>${tokenBar(t)}<div class="sub">${tokenSplit(t)}</div></div>`;
     return `<div class="kpis">${kpi("Today", sum(runs, startOfDay()))}${kpi("Last 7 days", sum(runs, startOfDay(6)))}${kpi("All time", sum(runs))}</div>
       <div class="glass section"><h3>Last 7 days</h3>${days}</div>
       <div class="glass section"><h3>By who</h3>${bars(group(runs, who), esc)}</div>
@@ -349,10 +374,13 @@
     const today = sum(runs, startOfDay()), week = sum(runs, startOfDay(6));
     document.getElementById("app").innerHTML = `
       <section class="kpis">
-        <div class="glass kpi"><div class="label">Agents working</div><div class="value">${working}</div><div class="sub">across ${projects.length} project${projects.length === 1 ? "" : "s"}</div></div>
-        <div class="glass kpi"><div class="label">Needs you</div><div class="value"${needs.length ? ` style="color:var(--warn)"` : ""}>${needs.length}</div><div class="sub">${needs.length ? "decisions and next steps" : "nothing waiting"}</div></div>
+        <div class="glass kpi"><div class="label">Now · ${plural(projects.length, "project")}</div><div class="pair">
+          <div><div class="value">${working}</div><div class="sub">agent${working === 1 ? "" : "s"} working</div></div>
+          <div><div class="value"${needs.length ? ` style="color:var(--warn)"` : ""}>${needs.length}</div><div class="sub">${needs.length ? `need${needs.length === 1 ? "s" : ""} you` : "nothing waiting"}</div></div>
+        </div></div>
         <div class="glass kpi"><div class="label">Spent today</div><div class="value">${spendText(today)}</div><div class="sub">${spendSub(today)}</div>${today.runs || today.messages ? `<div class="sub">${esc(split(runs.filter((r) => Date.parse(r.at) >= startOfDay())))}</div>` : ""}</div>
         <div class="glass kpi"><div class="label">Last 7 days</div><div class="value">${spendText(week)}</div><div class="sub">${spendSub(week)}</div>${week.runs || week.messages ? `<div class="sub">${esc(split(runs.filter((r) => Date.parse(r.at) >= startOfDay(6))))}</div>` : ""}</div>
+        <div class="glass kpi"><div class="label">Tokens today</div><div class="value">${tok(today.tokens)}</div>${tokenBar(today)}${today.tokens ? tokenLegend(today) : `<div class="sub">none yet</div>`}${today.tokens ? `<div class="sub">${esc(tokenWho(runs.filter((r) => Date.parse(r.at) >= startOfDay())))}</div>` : ""}<div class="sub" title="${esc(`${tokenSplit(week)} · ${tokenWho(runs.filter((r) => Date.parse(r.at) >= startOfDay(6)))}`)}">7 days: ${tok(week.tokens)}</div></div>
       </section>
       ${needs.length ? `<section class="needs"><h2>Needs you (${needs.length})</h2><ul>${needs.map((n) => `<li><b>${esc(n.project)}</b><span>${esc(n.text)}</span>${n.detail ? `<span class="small muted">${esc(n.detail)}</span>` : ""}<code>${esc(n.command)}</code></li>`).join("")}</ul></section>` : ""}
       <section class="grid">${projects.map(card).join("")}</section>
