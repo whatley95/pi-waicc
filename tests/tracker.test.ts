@@ -190,6 +190,14 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   assert.match(overview, /Pi chat chat-b/);
   assert.match(overview, /also claude-sonnet-5-5/);
   assert.match(overview, /Main agent \$1\.15/, "the summary strip says who used today's spend");
+  assert.match(overview, /Tokens today<\/div><div class="value">7k<\/div>/);
+  assert.match(overview, /in 6k \(2k cached\) · out 800/, "input (cached included) and output are shown apart");
+  assert.match(overview, /input 4k<\/span><span><b class="cached"><\/b>cached 2k<\/span><span><b class="out"><\/b>output 800/, "and today's fresh input, cached input and output are labelled");
+  assert.match(overview, /class="tokbar"/);
+  assert.match(overview, /<div class="sub">main agent 7k<\/div>/, "and who used them");
+  assert.match(overview, /0<\/div><div class="sub">agents working/, "working agents and what needs you share one box");
+  const spendTokens = renderPage([status], "spend");
+  assert.match(spendTokens, /All time<\/div>[\s\S]*?in 6k \(2k cached\) · out 800/);
   const spend = renderPage([status], "spend");
   assert.match(spend, /By who/);
   assert.match(spend, /main agent anthropic\/claude-opus-5-5/);
