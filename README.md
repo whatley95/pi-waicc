@@ -262,12 +262,23 @@ server):
 }
 ```
 
-You do not have to write this yourself: when `/waicc-mr-comments` meets a host that is not
-listed, it offers to add it to your user file with `"tokenEnv": "GITLAB_TOKEN"` (asking
-separately before allowing plain http). It keeps everything else in the file, never replaces a
-host already there, and never writes a token; it then tells you how to set the variable.
+**You do not have to set this up by hand.** The first `/waicc-mr-comments` for a host that is
+not set up walks you through it, asking at each step:
 
-To create the token: in GitLab, your avatar → **Preferences** → **Access tokens** → **Add new
+1. **Add the host** to your user file (and, for a plain `http://` host, whether to allow the
+   token over http).
+2. **Create the token:** it opens GitLab's token page in your browser, filled in with the name
+   "WAICC reviews" and the `api` scope; you pick an expiry date, create it and paste it into Pi.
+3. **Check and keep it:** WAICC checks the token with GitLab (it shows which account it signed in
+   as), then offers to keep it: on Windows as the `GITLAB_TOKEN` variable in your user settings
+   (what `setx` does), elsewhere in your user file, readable only by you. Say no and it works for
+   this Pi session only. It then posts the review in the same run.
+
+A token GitLab refuses is never saved. The token is never shown in the chat, and it is never put
+in Pi's own environment, so agents WAICC dispatches do not inherit it. Everything else in your
+user file is kept, and a host already listed is never replaced.
+
+To do it by hand instead, create the token in GitLab: your avatar → **Preferences** → **Access tokens** → **Add new
 token**, tick the **api** scope, and copy it. Then keep it in an environment variable rather than
 the file. On Windows, in PowerShell:
 
