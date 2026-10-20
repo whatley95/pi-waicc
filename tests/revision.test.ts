@@ -256,6 +256,51 @@ test("--mr fetches a GitLab merge request with plain git into WAICC's own refs, 
   assert.equal(safeRemoteUrl("https://whatley:glpat-secret@gitlab.example.com/a/b.git"), "https://gitlab.example.com/a/b.git", "a password in the remote URL is never recorded");
 });
 
+test("/waicc-review --mr --list: pick a merge request and its review starts; with a GitLab token, open ones with titles", async (t) => {
+  const { reviewer, author } = gitlab(t);
+  // An older merge request, !3, with its own change.
+  git(author, "switch", "-q", "-c", "fix/readme", "develop");
+  writeFileSync(join(author, "README.md"), "fixed\n");
+  git(author, "add", ".");
+  git(author, "commit", "-q", "-m", "Fix the readme");
+  git(author, "push", "-q", "origin", "HEAD:refs/merge-requests/3/head");
+  const commands = new Map<string, any>(), sent: string[] = [], shown: string[] = [];
+  let offered: { title: string; options: string[] } | undefined;
+  const agentDir = join(reviewer, "..", "agent");
+  mkdirSync(agentDir);
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  t.after(() => { process.env.PI_CODING_AGENT_DIR = previous; });
+  const api: string[] = [];
+  waicc({
+    registerCommand: (name: string, c: any) => commands.set(name, c), registerTool() {}, on() {}, appendEntry() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {},
+    sendMessage: (m: { content: string }) => shown.push(m.content), sendUserMessage: (m: string) => sent.push(m),
+  } as unknown as ExtensionAPI, { gitlab: () => async (_method, path) => (api.push(path), [
+    { iid: 7, title: "Sync orders and status", author: { username: "lifeng" }, source_branch: "feature/sync", target_branch: "develop", updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), draft: false },
+    { iid: 9, title: "WIP export", author: { username: "ali" }, source_branch: "export", target_branch: "develop", updated_at: new Date().toISOString(), draft: true },
+  ]) });
+  const ctx = (hasUI: boolean) => ({
+    cwd: reviewer, mode: "tui", hasUI, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => "list-chat", getBranch: () => [] },
+    ui: { notify() {}, select: async (title: string, options: string[]) => ((offered = { title, options }), options[0]) },
+  }) as unknown as ExtensionCommandContext;
+
+  // Without a token: plain git lists the numbers, newest first; picking one starts its review.
+  await commands.get("waicc-review").handler("--mr --list", ctx(true));
+  assert.match(offered!.title, /^The newest 2 merge request numbers on origin\. Without a GitLab token git cannot tell open from merged ones/);
+  assert.deepEqual(offered!.options.map((o) => o.split(" · ")[0]), ["!7", "!3", "Cancel"]);
+  assert.match(sent[0], /This new session reviews merge request !7 into develop/, "the picked one is reviewed");
+
+  // With the host's token: GitLab's open merge requests, and the one already in review is marked.
+  git(reviewer, "remote", "set-url", "origin", "https://gitlab.example.com/team/app.git");
+  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-secret-1" } } }));
+  await commands.get("waicc-review").handler("--mr list", ctx(false));
+  assert.equal(api[0], "/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50");
+  assert.match(shown.at(-1)!, /^2 open merge requests on team\/app: pick one to review\n- !7 Sync orders and status · lifeng · feature\/sync → develop · 2h ago · in review: draft\n- !9 \[draft\] WIP export · ali · export → develop · 0m ago$/,
+    "!7 is already in review here");
+});
+
 test("/waicc-review --mr starts a review session for the MR, and fetching it again picks up the author's new commits", async (t) => {
   const { author, reviewer } = gitlab(t);
   const commands = new Map<string, any>(), sent: string[] = [];
