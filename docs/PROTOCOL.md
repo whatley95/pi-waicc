@@ -658,6 +658,21 @@ active human-confirmed memory only. Each entry retains its source and digest.
 Conversation history carries advice, scope and assessments into subsequent rounds.
 Neither memory nor prior replies are independent proof or authorization.
 
+Pattern lessons are memory entries of kind `lesson` with `evidence: [{sessionId, requestId,
+findingId}]` and source text `review findings: <n> in <m> sessions`. Their digest covers each
+cited finding's ids, description and evidence, so an edited or deleted finding makes the entry
+stale. After `waicc_assess`, if the assessed round is a review with findings, the result may
+carry `recurringFindings`: this round's non-info, undisputed findings and up to 15 such findings
+from other sessions' ASSESSED review rounds. Findings already cited by any lesson are left out,
+and the rest are ranked by Jaccard overlap of stemmed significant words. Existing lessons and an
+instruction are included. `waicc_learn_pattern {lesson (12–600 chars), findings (2–10)}`,
+coordinator only, requires findings from at least two sessions, each an assessed, undisputed
+review finding cited once. It refuses any finding already cited by a lesson, whether candidate,
+active or revoked, and creates an unconfirmed candidate. Confirmation stays
+`/waicc-memory confirm`. `recall` always includes active pattern lessons, ranked first, whatever
+the query, so they reach every handoff's memory snapshot. Pending pattern lessons appear in the
+tracker's needs-you list.
+
 ## Assessment
 
 The primary Pi agent uses `waicc_assess`; CLI users can supply an assessment JSON:
