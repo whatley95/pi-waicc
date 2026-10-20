@@ -956,6 +956,23 @@ the checkout's revision; `review.changedPaths` is the union of the range's paths
 baseline comparison, so re-reviews also cover fixes. The handoff names both files and says when
 the checkout is not at the range's end. Exports include both files.
 
+`/waicc-review --mr <n> [--remote r] [--into b] [focus]` takes `n`, `!n` or `#n`. The remote is
+`--remote`, the only remote, or `origin`; a GitHub URL means `refs/pull/<n>/head`, anything else
+`refs/merge-requests/<n>/head`. The target is `--into` (a branch name matching
+`^[A-Za-z0-9_][A-Za-z0-9._/-]*$`), else `refs/remotes/<remote>/HEAD`, else `git ls-remote --symref
+<remote> HEAD`. `git fetch --no-tags --quiet --end-of-options <remote> +<mr ref>:refs/waicc/mr/<n>/head
++refs/heads/<target>:refs/waicc/mr/<n>/target` runs asynchronously with `GIT_TERMINAL_PROMPT=0`
+and `GCM_INTERACTIVE=never`; the range is `merge-base(target, head)..head`, labelled
+`merge request !n into <target>`. `revisionReview.mergeRequest` records
+`{remote, number, provider, target, url, head}`, the URL without any user name or password.
+In a chat whose selected open session is the same remote and number, the command refreshes
+`revisionReview` (no pending round allowed) instead of creating a session. For any revision
+review whose patch exceeds 100,000 characters across several folders, the changed paths are
+grouped at the first depth (1–4) where they split, and up to 30 groups get
+`changes/<folder>.patch` (pathspec `:(literal)<folder>/`, each cut at 400,000 characters),
+listed in `review.revision.parts`. Revision-review handoffs ask for `path:line` at the start of
+each finding's evidence.
+
 The reviewer checks the entire implementation, requirements/acceptance, integration,
 regressions, check evidence and all prior fixes, returning one consolidated reply.
 Main-agent assessment precedes source edits so the original review remains assessable.

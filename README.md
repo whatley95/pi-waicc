@@ -195,6 +195,33 @@ files from the checkout. If the reviewer finds problems, the fixes and re-review
 and each re-review carries the original change plus the fixes. `/waicc-export` includes both
 files.
 
+### Review a merge request
+
+```text
+/waicc-review --mr 123 Check the sync logic      # GitLab merge request !123 (or GitHub pull request #123)
+/waicc-dispatch                                  # the review role's profile reviews it
+/waicc-continue                                  # the main agent assesses each finding
+/waicc-review --mr 123                           # after the author pushes fixes: fetch again, re-review
+```
+
+WAICC fetches the merge request with plain `git fetch`, no token needed: GitLab publishes
+every merge request as `refs/merge-requests/<n>/head` (GitHub as `refs/pull/<n>/head`). It
+lands in WAICC's own refs (`refs/waicc/mr/<n>/…`), so your branches and working folder are not
+touched, and git never prompts for a password (a missing login fails instead of hanging). The
+review covers what the merge request would merge: from where it split off its target branch to
+its head. The target is the remote's default branch unless you give `--into <branch>`; with
+several remotes, WAICC uses `origin` or the one you name with `--remote <name>`.
+
+No `/waicc-init` is needed: in a monorepo, start Pi at the repository root (or any folder not
+initialized as its own project) and the whole repository is the project, so a merge request
+across several services is reviewed as one change. The main agent scopes the review with one
+task per service it touches, and a large change across several folders also gets one patch per
+folder (`changes/services_orders.patch`, …) so a size limit never hides a whole service. The
+reviewer cites each finding as `path:line`, ready to become a comment on that line. WAICC
+keeps its own files in `.pi/pi-waicc`, which is ignored by Git, so nothing appears in the
+repository's changes. Running the same command again in that session fetches the author's new
+commits; the next review then covers them, with every earlier finding marked fixed or disputed.
+
 For specification-only work, explicitly use `/waicc-review --contract <focus>`.
 That review may retain future execution gates and its PASS is not code approval.
 `reviewApproval.kind` distinguishes `code` from `contract`; legacy unmarked reviews
@@ -1151,6 +1178,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-test --main [focus]`                   | Return testing to the main contract owner; no handoff |
 | `/waicc-review <focus>`                          | Prepare ONE full code-change review after ALL work/fixes/checks; without a selection, capture supplied review requirements |
 | `/waicc-review --rev <commit\|a..b\|a...b\|r1234[:r1250]> [focus]` | Review an existing Git or SVN change in its own session; the reviewer gets its patch and commit messages |
+| `/waicc-review --mr <n> [--remote r] [--into branch] [focus]` | Review a GitLab merge request or GitHub pull request, fetched with plain git; again later to pick up new commits |
 | `/waicc-review --contract <focus>`               | Explicit specification-only review, not code-change approval |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |

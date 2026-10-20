@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import waicc from "../src/index.ts";
 import { artifact, initialize, loadSession } from "../src/files.ts";
 import { roundDirectory } from "../src/render.ts";
-import { maxPatchChars, resolveRevision, revisionChanges } from "../src/revision.ts";
+import { fetchMergeRequest, maxPatchChars, resolveRevision, revisionChanges, safeRemoteUrl } from "../src/revision.ts";
 import { initProject } from "../src/source.ts";
 import { assess, createRevisionReview, exportHandoff, ingest, issue, prepare } from "../src/workflow.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
@@ -192,4 +192,96 @@ test("/waicc-review --rev starts its own session and asks the main agent to scop
   assert.match(sent[0], /reviews an existing Git change: .*\(main\.\.feature\/search\)/);
   assert.match(sent[0], /waicc_prepare mode review with reviewKind code/);
   assert.match(sent[0], /Do not edit code/);
+});
+
+/**
+ * A GitLab stand-in: a bare repository where merge request 7 is published as
+ * refs/merge-requests/7/head, as GitLab does, and a reviewer's fresh clone of it. The
+ * merge request touches two services of a monorepo.
+ */
+function gitlab(t: TestContext) {
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  t.after(() => {
+    assert.ok(basename(base).startsWith("waicc-test-"));
+    rmSync(base, { recursive: true, force: true });
+  });
+  const server = join(base, "server.git"), author = join(base, "author"), reviewer = join(base, "reviewer");
+  git(base, "init", "-q", "--bare", "-b", "develop", server);
+  git(base, "clone", "-q", server, author);
+  git(author, "switch", "-q", "-c", "develop");
+  for (const service of ["orders", "status"]) {
+    mkdirSync(join(author, "services", service), { recursive: true });
+    writeFileSync(join(author, "services", service, "app.js"), `export const ${service} = 1;\n`);
+  }
+  git(author, "add", ".");
+  git(author, "commit", "-q", "-m", "Two services");
+  git(author, "push", "-q", "origin", "develop");
+  git(author, "switch", "-q", "-c", "feature/sync");
+  writeFileSync(join(author, "services", "orders", "app.js"), `export const orders = 2;\n${"// order line\n".repeat(9000)}`);
+  writeFileSync(join(author, "services", "status", "app.js"), "export const status = 2;\n");
+  git(author, "commit", "-q", "-am", "Sync orders and status");
+  git(author, "push", "-q", "origin", "HEAD:refs/merge-requests/7/head");
+  git(base, "clone", "-q", server, reviewer);
+  return { base, server, author, reviewer };
+}
+
+test("--mr fetches a GitLab merge request with plain git into WAICC's own refs, diffed against its target", async (t) => {
+  const { author, reviewer } = gitlab(t);
+  const branches = git(reviewer, "branch", "--all");
+  const mr = await fetchMergeRequest(reviewer, "!7");
+  assert.equal(mr.range, "!7");
+  assert.deepEqual({ ...mr.mergeRequest, url: null }, { remote: "origin", number: 7, provider: "gitlab", target: "develop", url: null, head: git(author, "rev-parse", "HEAD") });
+  assert.equal(mr.from, git(author, "rev-parse", "develop"));
+  assert.match(mr.label, /^merge request !7 into develop \(/);
+  assert.equal(git(reviewer, "rev-parse", "refs/waicc/mr/7/head"), mr.to);
+  assert.equal(git(reviewer, "branch", "--all"), branches, "no branch of yours is created or moved");
+  assert.equal(git(reviewer, "status", "--porcelain"), "", "the working folder is untouched");
+
+  // Large and across two services of the monorepo: one patch per service as well.
+  const changes = revisionChanges(reviewer, mr);
+  assert.deepEqual(changes.changedPaths, ["services/orders/app.js", "services/status/app.js"]);
+  assert.deepEqual(changes.parts.map((p) => [p.folder, p.file, p.paths]), [["services/orders", "services_orders.patch", 1], ["services/status", "services_status.patch", 1]]);
+  assert.match(changes.parts[1].patch, /\+export const status = 2;/);
+  assert.doesNotMatch(changes.parts[1].patch, /orders/);
+
+  assert.equal((await fetchMergeRequest(reviewer, "7", { into: "develop" })).to, mr.to);
+  await assert.rejects(fetchMergeRequest(reviewer, "!8"), /origin has no merge request !8 \(refs\/merge-requests\/8\/head\) or no branch develop/);
+  await assert.rejects(fetchMergeRequest(reviewer, "!7", { into: "nope" }), /or no branch nope/);
+  await assert.rejects(fetchMergeRequest(reviewer, "seven"), /A merge request is its number/);
+  await assert.rejects(fetchMergeRequest(reviewer, "!7", { into: "--upload-pack=x" }), /Not a branch name/);
+  git(reviewer, "remote", "add", "mirror", "https://example.invalid/x.git");
+  git(reviewer, "remote", "rename", "origin", "upstream");
+  await assert.rejects(fetchMergeRequest(reviewer, "!7"), /several remotes; pick one with --remote <name>: mirror, upstream/);
+  assert.equal((await fetchMergeRequest(reviewer, "!7", { remote: "upstream" })).mergeRequest!.remote, "upstream");
+  assert.equal(safeRemoteUrl("https://whatley:glpat-secret@gitlab.example.com/a/b.git"), "https://gitlab.example.com/a/b.git", "a password in the remote URL is never recorded");
+});
+
+test("/waicc-review --mr starts a review session for the MR, and fetching it again picks up the author's new commits", async (t) => {
+  const { author, reviewer } = gitlab(t);
+  const commands = new Map<string, any>(), sent: string[] = [];
+  waicc({
+    registerCommand: (name: string, c: any) => commands.set(name, c), registerTool() {}, on() {}, appendEntry() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage: (m: string) => sent.push(m),
+  } as unknown as ExtensionAPI);
+  const ctx = {
+    cwd: reviewer, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => "mr-chat", getBranch: () => [] }, ui: { notify() {} },
+  } as unknown as ExtensionCommandContext;
+  await commands.get("waicc-review").handler("--mr !7 Check the sync", ctx);
+  assert.match(sent[0], /This new session reviews merge request !7 into develop, fetched by WAICC from origin/);
+  assert.match(sent[0], /one task per service or area it touches/);
+  const sessions = readdirSync(join(reviewer, ".pi", "pi-waicc", "sessions"));
+  assert.equal(sessions.length, 1, "no init needed: the repository root is the project");
+  const s = loadSession(reviewer, sessions[0]);
+  assert.equal(s.revisionReview!.mergeRequest!.number, 7);
+  assert.match(s.requirements[0], /^Review the code change merge request !7 into develop .*: Check the sync$/);
+
+  // The author pushes a fix; the same command in the same chat fetches it into the same session.
+  writeFileSync(join(author, "services", "status", "app.js"), "export const status = 3;\n");
+  git(author, "commit", "-q", "-am", "Fix status");
+  git(author, "push", "-q", "-f", "origin", "HEAD:refs/merge-requests/7/head");
+  await commands.get("waicc-review").handler("--mr 7", ctx);
+  assert.equal(readdirSync(join(reviewer, ".pi", "pi-waicc", "sessions")).length, 1);
+  assert.equal(loadSession(reviewer, s.id).revisionReview!.to, git(author, "rev-parse", "HEAD"));
+  assert.match(sent[1], /Merge request !7 was fetched again: its head is [0-9a-f]+ \(was [0-9a-f]+\)/);
 });
