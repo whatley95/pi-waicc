@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { digest, json, listSessions, loadSession, now, runtimePath, safePath, sessionRelative, withLock } from "../files.ts";
+import { artifact, digest, json, listSessions, loadSession, now, runtimePath, safePath, sessionRelative, withLock } from "../files.ts";
 import { versionDirectory } from "../render.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
@@ -72,6 +72,25 @@ export function refreshRevisionReview(cwd: string, id: string, revisionReview: R
     s.revisionReview = revisionReview;
     return commit(root, s, "revision.refreshed", {});
   });
+}
+export interface PostedComments {
+  postedAt: string; requestId: string; headSha: string; webUrl: string;
+  comments: { findingId: string; key: string; inline: boolean; noteId: number | null }[];
+  summaryNoteId: number | null;
+}
+/** What was posted to the merge request, kept in the session; earlier posts are never repeated. */
+export function recordPostedComments(cwd: string, id: string, posted: PostedComments): Session {
+  const root = projectRoot(cwd);
+  return withLock(root, () => {
+    const s = loadSession(root, id);
+    return commit(root, s, "merge-request.commented", { [`mr-comments/${now().replace(/[^0-9]/g, "")}-${randomUUID().slice(0, 8)}.json`]: json(posted) });
+  });
+}
+export function postedComments(cwd: string, id: string): PostedComments[] {
+  const root = projectRoot(cwd);
+  const s = loadSession(root, id);
+  return Object.keys(s.artifacts).filter((path) => /^mr-comments\/[^/]+\.json$/.test(path)).sort()
+    .map((path) => JSON.parse(artifact(root, s, path)) as PostedComments);
 }
 /** One atomic planning-only start per captured Pi input, including retry after an interrupted bind. */
 export function createAutoPlanningSession(cwd: string, requirements: string, chatId: string, requestId: string): Session {

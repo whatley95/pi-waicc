@@ -40,6 +40,8 @@ export interface AgentConfig {
   alerts: { quietMinutes: number; desktop: boolean };
   /** User file only: whether checks run in an OS sandbox, and what it lets them reach. */
   sandbox: SandboxSettings;
+  /** User file only: GitLab hosts WAICC may post reviews to, each with its token (or the variable holding it). */
+  gitlab: Record<string, { token?: string; tokenEnv?: string; allowHttp: boolean }>;
   profiles: Record<string, AgentProfile & { source: Source }>;
   roles: Partial<Record<Mode, RoleChoice & { source: Source }>>;
   files: { user: string; project: string; found: Source[] };
@@ -80,9 +82,9 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts" and "sandbox" are allowed'));
-  // Settings that let WAICC act for you, reach you outside Pi or loosen what checks may touch are yours alone: a repository must not set them.
-  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox"])
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox" and "gitlab" are allowed'));
+  // Settings that let WAICC act for you, reach you outside Pi, loosen what checks may touch or hold your tokens are yours alone: a repository must not set them.
+  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
   if (config.policies !== undefined) {
     ensure(Array.isArray(config.policies) && config.policies.length <= 20, at('"policies" must be a list of at most 20 rules'));
@@ -110,6 +112,20 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
       at('"alerts.quietMinutes" must be a whole number of minutes from 0 (never) to 240'));
     ensure(desktop === undefined || typeof desktop === "boolean", at('"alerts.desktop" must be true or false'));
     into.alerts = { quietMinutes: (quietMinutes as number | undefined) ?? into.alerts.quietMinutes, desktop: (desktop as boolean | undefined) ?? into.alerts.desktop };
+  }
+  if (config.gitlab !== undefined) {
+    const hosts = record(config.gitlab, at('"gitlab"'));
+    ensure(Object.keys(hosts).length <= 10, at('"gitlab" lists at most 10 hosts'));
+    for (const [host, value] of Object.entries(hosts)) {
+      ensure(/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(host), at(`"gitlab" hosts are names like "gitlab.example.com" or "10.0.0.5:8080", not ${JSON.stringify(host)}`));
+      const entry = record(value, at(`"gitlab.${host}"`));
+      ensure(Object.keys(entry).every((k) => ["token", "tokenEnv", "allowHttp"].includes(k)), at(`"gitlab.${host}" takes only "token", "tokenEnv" and "allowHttp"`));
+      ensure(entry.token === undefined || (typeof entry.token === "string" && entry.token.trim().length >= 8 && entry.token.length <= 200), at(`"gitlab.${host}.token" must be your access token`));
+      ensure(entry.tokenEnv === undefined || (typeof entry.tokenEnv === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(entry.tokenEnv)), at(`"gitlab.${host}.tokenEnv" must be an environment variable name`));
+      ensure(entry.token !== undefined || entry.tokenEnv !== undefined, at(`"gitlab.${host}" needs "token" or "tokenEnv"`));
+      ensure(entry.allowHttp === undefined || typeof entry.allowHttp === "boolean", at(`"gitlab.${host}.allowHttp" must be true or false`));
+      into.gitlab[host.toLowerCase()] = { ...(entry.token ? { token: (entry.token as string).trim() } : {}), ...(entry.tokenEnv ? { tokenEnv: entry.tokenEnv as string } : {}), allowHttp: entry.allowHttp === true };
+    }
   }
   if (config.sandbox !== undefined) {
     const sandbox = record(config.sandbox, at('"sandbox"'));
@@ -172,7 +188,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -236,6 +252,11 @@ export function profilesView(cwd: string) {
     budget: config.budget.perSessionUsd === null ? "none" : { perSessionUsd: config.budget.perSessionUsd },
     alerts: config.alerts,
     sandbox: { checks: config.sandbox.mode, network: config.sandbox.network, allowWrite: config.sandbox.allowWrite },
+    // Whether a token is there, never the token.
+    gitlab: Object.fromEntries(Object.entries(config.gitlab).map(([host, h]) => [host, {
+      token: h.token ? "set in your user file" : h.tokenEnv ? (process.env[h.tokenEnv] ? `from ${h.tokenEnv}` : `missing: ${h.tokenEnv} is not set`) : "missing",
+      allowHttp: h.allowHttp,
+    }])),
     autoAdvisor: config.autoAdvisor ? { maxPerChat: config.autoAdvisor, profile: config.roles.advisor?.profile ?? "not set: no advisor role" } : "off",
     files: {
       user: { path: config.files.user, found: config.files.found.includes("user") },
@@ -287,6 +308,12 @@ export function sessionBudget(cwd: string): number | null {
 }
 
 /** How checks are sandboxed. A broken config throws: a check must not silently lose a required sandbox. */
+/** A GitLab host's token and http permission, from your user file only; null when the host is not listed. */
+export function gitlabHost(cwd: string, host: string): { token: string | null; allowHttp: boolean } | null {
+  const entry = loadAgentConfig(cwd).gitlab[host.toLowerCase()];
+  if (!entry) return null;
+  return { token: entry.token ?? (entry.tokenEnv ? process.env[entry.tokenEnv]?.trim() || null : null), allowHttp: entry.allowHttp };
+}
 export function sandboxSettings(cwd: string): SandboxSettings {
   return loadAgentConfig(cwd).sandbox;
 }
