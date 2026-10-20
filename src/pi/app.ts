@@ -1,4 +1,5 @@
 import { recipientAssignment } from "../recipient.ts";
+import type { GitLabCall, GitLabHost, GitLabProject } from "../gitlab.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
@@ -25,6 +26,8 @@ import type { Runs } from "./runs.ts";
 export interface Services {
   copyText?: ClipboardWriter; runCheck?: CheckRunner; runAgent?: AgentRunner; openPage?: (path: string) => boolean;
   notifyDesktop?: (title: string, body: string) => boolean;
+  /** GitLab's API client, replaceable in tests. */
+  gitlab?: (project: GitLabProject, host: GitLabHost) => GitLabCall;
 }
 
 /**
