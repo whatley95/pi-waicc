@@ -554,7 +554,17 @@ final `result` line gives its totals and `total_cost_usd`; Codex's `turn.complet
 give tokens, summed, with `costUsd: null`; Pi's assistant `message_end` events give tokens
 and `cost.total`, summed. Unrecognised output yields null, never a failed run. The tracker
 lists every run's usage per project (at most 2,000, closed sessions included) for the page to
-total by day, agent, model, step and session, plus per-round and per-session totals. The user
+total by day, agent, model, step and session, plus per-round and per-session totals.
+
+The main agent is counted per Pi chat. Before each tracker write (also after each assistant
+`message_end` and `model_select`), a coordinator chat whose entry count or model changed sums
+every assistant message entry on every branch (`usage.input + cacheRead + cacheWrite` as input,
+`cacheRead` as cached, `output`, `cost.total`) by `provider/model` and UTC hour, and writes
+`$PI_CODING_AGENT_DIR/waicc-tracker/chats/<key>/<chat id>.json`
+`{schemaVersion: 1, chatId, name, model (current provider/model or null), updatedAt, hours}`.
+The project status reads every chat file of its project (at most 100, newest first), adds each
+hour to the run list with `kind: "main"`, `chatId` and `messages`, and lists the ten latest
+chats' name and model. Main-agent use never counts toward the budget. The user
 file's `budget.perSessionUsd` (above 0, at most 10,000; a project file setting it is
 rejected) is checked before an automatic loop cycle and before `--review`'s dispatch. If the
 session's reported dispatch dollars reach it, the run ends with a notice; dispatches the
