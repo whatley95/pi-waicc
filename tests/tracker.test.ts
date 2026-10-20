@@ -127,12 +127,12 @@ test("the page renders cards, the needs-you list and details, and never runs tex
 });
 
 /** Renders the page's script on these projects, on one tab; returns the app's markup. */
-function renderPage(projects: unknown[], tab = "overview", tokens = "today"): string {
+function renderPage(projects: unknown[], tab = "overview", tokens = "today", spend = "today"): string {
   const elements: Record<string, { innerHTML: string; textContent: string }> = { app: { innerHTML: "", textContent: "" }, updated: { innerHTML: "", textContent: "" } };
   const window: Record<string, any> = {};
   const script = /<script>([\s\S]*)<\/script>/.exec(readFileSync(new URL("../templates/tracker.html", import.meta.url), "utf8"))![1];
   runInNewContext(script, {
-    window, location: { hash: "" }, history: { replaceState() {} }, localStorage: { getItem: (k: string) => (k === "waicc-tab" ? tab : k === "waicc-tokens" ? tokens : null), setItem() {} },
+    window, location: { hash: "" }, history: { replaceState() {} }, localStorage: { getItem: (k: string) => (k === "waicc-tab" ? tab : k === "waicc-tokens" ? tokens : k === "waicc-spend" ? spend : null), setItem() {} },
     setInterval() {}, document: {
       getElementById: (name: string) => elements[name] ?? { addEventListener() {} },
       addEventListener() {}, querySelectorAll: () => [], createElement: () => ({ remove() {} }), body: { appendChild() {} },
@@ -190,10 +190,13 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   assert.match(overview, /Pi chat chat-b/);
   assert.match(overview, /also claude-sonnet-5-5/);
   assert.match(overview, /Main agent \$1\.15/, "the summary strip says who used today's spend");
-  assert.match(overview, /<span>Tokens<\/span><span class="seg"><button type="button" data-tokrange="today" class="on">Today<\/button>[\s\S]*?<div class="value">7k<\/div>/);
+  assert.match(overview, /<span>Tokens<\/span><span class="seg"><button type="button" data-range="tokens:today" class="on">Today<\/button>[\s\S]*?<div class="value">7k<\/div>/);
+  assert.match(overview, /<span>Spent<\/span><span class="seg"><button type="button" data-range="spend:today" class="on">Today<\/button>[\s\S]*?<div class="value">\$1\.15<\/div>/);
   const everything = renderPage([status], "overview", "all");
-  assert.match(everything, /data-tokrange="all" class="on">All<\/button>[\s\S]*?<div class="value">7k<\/div>/, "All counts everything recorded");
+  assert.match(everything, /data-range="tokens:all" class="on">All<\/button>[\s\S]*?<div class="value">7k<\/div>/, "All counts everything recorded");
   assert.match(everything, /since \d+ \w+ \d{4} · \$1\.15/);
+  const spentAll = renderPage([status], "overview", "today", "all");
+  assert.match(spentAll, /data-range="spend:all" class="on">All<\/button>[\s\S]*?<div class="value">\$1\.15<\/div>[\s\S]*?Main agent \$1\.15<\/div><div class="sub">since /, "the spend box has its own switch, with who spent it");
   assert.match(overview, /input 4k<\/span><span><b class="cached"><\/b>cached 2k<\/span><span><b class="out"><\/b>output 800/, "and today's fresh input, cached input and output are labelled");
   assert.match(overview, /class="tokbar"/);
   assert.match(overview, /<div class="sub">main agent 7k<\/div>/, "and who used them");
