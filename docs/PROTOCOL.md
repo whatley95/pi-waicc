@@ -548,6 +548,18 @@ written into `data.js` as `window.waiccTracker({...})`, which `index.html`, copi
 chats, dispatched agents (`WAICC_DISPATCH_PIN`), `WAICC_TRACKER=off` and the `off` marker
 file that `/waicc-tracker off` creates all skip it.
 
+Each dispatch `result.json` and consult `result.json` records `usage` as the agent reported
+it, or null: `{inputTokens (cached included), cachedTokens, outputTokens, costUsd}`. Claude's
+final `result` line gives its totals and `total_cost_usd`; Codex's `turn.completed` events
+give tokens, summed, with `costUsd: null`; Pi's assistant `message_end` events give tokens
+and `cost.total`, summed. Unrecognised output yields null, never a failed run. The tracker
+lists every run's usage per project (at most 2,000, closed sessions included) for the page to
+total by day, agent, model, step and session, plus per-round and per-session totals. The user
+file's `budget.perSessionUsd` (above 0, at most 10,000; a project file setting it is
+rejected) is checked before an automatic loop cycle and before `--review`'s dispatch. If the
+session's reported dispatch dollars reach it, the run ends with a notice; dispatches the
+human types are never refused.
+
 Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
 ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
 dropped from the change list, and removal unlinks each folder (removing only the link)
