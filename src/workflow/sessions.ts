@@ -53,12 +53,25 @@ export function createSession(cwd: string, requirements: string, implementationO
  * A review session for an existing change (/waicc-review --rev). The range is checked against
  * the repository first, so a typo or an empty range makes no session.
  */
-export function createRevisionReview(cwd: string, input: string, focus: string): Session {
+export function createRevisionReview(cwd: string, input: string | RevisionReview, focus: string): Session {
   const root = projectRoot(cwd);
-  const revisionReview = resolveRevision(root, input, snapshot(root).vcs);
+  const revisionReview = typeof input === "string" ? resolveRevision(root, input, snapshot(root).vcs) : input;
   revisionChanges(root, revisionReview);
   const requirements = `Review the code change ${revisionReview.label}${focus.trim() ? `: ${focus.trim()}` : ""}`;
   return withLock(root, () => newSession(root, requirements, undefined, "review", undefined, revisionReview));
+}
+/** A merge request fetched again: later code reviews in its session cover its new head. */
+export function refreshRevisionReview(cwd: string, id: string, revisionReview: RevisionReview): Session {
+  const root = projectRoot(cwd);
+  revisionChanges(root, revisionReview);
+  return withLock(root, () => {
+    const s = loadSession(root, id);
+    requireOpen(s);
+    ensure(s.revisionReview?.mergeRequest, "Only a merge request review session can be fetched again");
+    ensure(!s.rounds.some((r) => r.status === "WAITING" || r.status === "RECEIVED"), "Continue or cancel the pending review before fetching the merge request again");
+    s.revisionReview = revisionReview;
+    return commit(root, s, "revision.refreshed", {});
+  });
 }
 /** One atomic planning-only start per captured Pi input, including retry after an interrupted bind. */
 export function createAutoPlanningSession(cwd: string, requirements: string, chatId: string, requestId: string): Session {

@@ -211,7 +211,10 @@ export function nextRound(
     reviewData = {
       ...reviewData,
       changedPaths: [...new Set([...revision.changedPaths, ...reviewData.changedPaths])].sort(),
-      revision: { ...s.revisionReview!, changedPaths: revision.changedPaths, truncated: revision.truncated, patchBytes: revision.patchBytes, checkout: source.revision },
+      revision: {
+        ...s.revisionReview!, changedPaths: revision.changedPaths, truncated: revision.truncated, patchBytes: revision.patchBytes, checkout: source.revision,
+        ...(revision.parts.length ? { parts: revision.parts.map(({ patch: _patch, ...part }) => part) } : {}),
+      },
     };
   resetReview(s);
   if (mode === "review") s.contractReview = "PENDING";
@@ -255,6 +258,7 @@ export function nextRound(
         ? { [`${dir}/code-review.json`]: json(reviewData) }
         : {}),
       ...(revision ? { [`${dir}/changes.patch`]: revision.patch, [`${dir}/commits.txt`]: revision.commits } : {}),
+      ...Object.fromEntries((revision?.parts ?? []).map((part) => [`${dir}/changes/${part.file}`, part.patch])),
       ...skillFiles([...v.contract.skills, ...(["implementation", "testing"].includes(mode) ? ["wai-testing"] : [])], dir),
     },
   };

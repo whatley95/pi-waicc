@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { ensure } from "./validation.ts";
 import type { RevisionReview } from "./types.ts";
 
@@ -19,6 +19,8 @@ export interface RevisionChanges {
   /** The patch was cut at the size limit; the reviewer is told what was left out. */
   truncated: boolean;
   patchBytes: number;
+  /** For a large change across several top-level folders (services in a monorepo): one patch each. */
+  parts: { folder: string; file: string; paths: number; truncated: boolean; patch: string }[];
 }
 
 export const maxPatchChars = 400_000;
@@ -26,13 +28,20 @@ const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // A revision name, never an option: no leading "-", no spaces, quotes or shell characters.
 const gitName = /^[A-Za-z0-9_][A-Za-z0-9._/~^@{}+-]*$/;
 
-function run(program: string, args: string[], cwd: string, timeout = 60_000): { ok: true; out: string } | { ok: false; error: string } {
+function run(program: string, args: string[], cwd: string, timeout = 60_000, env?: Record<string, string>): { ok: true; out: string } | { ok: false; error: string } {
   try {
-    return { ok: true, out: execFileSync(program, args, { cwd, encoding: "utf8", windowsHide: true, timeout, maxBuffer: 64_000_000, stdio: ["ignore", "pipe", "pipe"] }) };
+    return { ok: true, out: execFileSync(program, args, { cwd, encoding: "utf8", windowsHide: true, timeout, maxBuffer: 64_000_000, stdio: ["ignore", "pipe", "pipe"], ...(env ? { env: { ...process.env, ...env } } : {}) }) };
   } catch (error) {
     const e = error as { stderr?: string; message?: string };
     return { ok: false, error: (e.stderr || e.message || String(error)).trim().split("\n")[0].slice(0, 300) };
   }
+}
+/** As run, without blocking Pi: for git commands that reach the network. */
+function runAsync(program: string, args: string[], cwd: string, timeout: number, env: Record<string, string>): Promise<{ ok: true; out: string } | { ok: false; error: string }> {
+  return new Promise((resolve) => {
+    execFile(program, args, { cwd, encoding: "utf8", windowsHide: true, timeout, maxBuffer: 8_000_000, env: { ...process.env, ...env } }, (error, stdout, stderr) =>
+      resolve(error ? { ok: false, error: (stderr || error.message).trim().split("\n")[0].slice(0, 300) } : { ok: true, out: stdout }));
+  });
 }
 const short = (sha: string) => (sha === emptyTree ? "(empty)" : sha.slice(0, 10));
 
@@ -79,6 +88,61 @@ export function resolveRevision(root: string, input: string, vcs: "git" | "svn" 
   return { vcs, range, from, to, label: `commit ${short(to)}${range === to || to.startsWith(range) ? "" : ` (${range})`}` };
 }
 
+/** A remote's URL without any user name or password in it, for records and messages. */
+export const safeRemoteUrl = (url: string): string => url.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1");
+const branchName = /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/;
+
+/**
+ * Fetches a merge request (GitLab) or pull request (GitHub) and its target branch with plain
+ * git, into WAICC's own refs (refs/waicc/mr/<n>/…): your branches and working folder are not
+ * touched, and no token is needed. Git never prompts for a password here, so a missing login
+ * fails instead of hanging. The range is the MR's diff: from the merge base to its head.
+ */
+export async function fetchMergeRequest(root: string, input: string, options: { remote?: string; into?: string } = {}): Promise<RevisionReview> {
+  const m = /^[!#]?(\d{1,9})$/.exec(input.trim());
+  ensure(m && Number(m[1]) > 0, `A merge request is its number, like 123 or !123, not ${JSON.stringify(input)}`);
+  const number = Number(m[1]);
+  const remotes = run("git", ["remote"], root, 15_000);
+  ensure(remotes.ok, "This project is not a Git repository, so there is no merge request to fetch");
+  const names = remotes.out.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+  ensure(names.length > 0, "This repository has no remote to fetch the merge request from");
+  const remote = options.remote ?? (names.length === 1 ? names[0] : names.includes("origin") ? "origin" : undefined);
+  ensure(remote, `This repository has several remotes; pick one with --remote <name>: ${names.join(", ")}`);
+  ensure(names.includes(remote), `No remote named ${JSON.stringify(remote)}; remotes here: ${names.join(", ")}`);
+  const url = run("git", ["remote", "get-url", remote], root, 15_000);
+  const remoteUrl = url.ok ? safeRemoteUrl(url.out) : null;
+  const provider = remoteUrl && /github\.com[:/]/i.test(remoteUrl) ? "github" as const : "gitlab" as const;
+  const noPrompt = { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
+  let target = options.into;
+  if (!target) {
+    const local = run("git", ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`], root, 15_000);
+    if (local.ok && local.out.trim().startsWith(`${remote}/`)) target = local.out.trim().slice(remote.length + 1);
+    else {
+      const remoteHead = await runAsync("git", ["ls-remote", "--symref", remote, "HEAD"], root, 60_000, noPrompt);
+      target = remoteHead.ok ? /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(remoteHead.out)?.[1] : undefined;
+    }
+    ensure(target, `Could not tell ${remote}'s default branch; name the target with --into <branch>`);
+  }
+  ensure(branchName.test(target) && !target.includes(".."), `Not a branch name: ${JSON.stringify(target)}`);
+  const source = provider === "github" ? `refs/pull/${number}/head` : `refs/merge-requests/${number}/head`;
+  const head = `refs/waicc/mr/${number}/head`, into = `refs/waicc/mr/${number}/target`;
+  const fetched = await runAsync("git", ["fetch", "--no-tags", "--quiet", "--end-of-options", remote, `+${source}:${head}`, `+refs/heads/${target}:${into}`], root, 180_000, noPrompt);
+  ensure(fetched.ok, fetched.ok ? "" : /couldn't find remote ref/i.test(fetched.error)
+    ? `${remote} has no ${provider === "github" ? "pull" : "merge"} request ${provider === "github" ? "#" : "!"}${number} (${source}) or no branch ${target}`
+    : `git fetch from ${remote} failed: ${fetched.error}`);
+  const to = gitCommit(root, head), tip = gitCommit(root, into);
+  const base = run("git", ["merge-base", tip, to], root, 15_000);
+  ensure(base.ok, `Merge request ${number} shares no history with ${target}`);
+  const from = base.out.trim();
+  ensure(from !== to, `Merge request ${number} has no changes against ${target}`);
+  const sign = provider === "github" ? "#" : "!";
+  return {
+    vcs: "git", range: `${sign}${number}`, from, to,
+    label: `merge request ${sign}${number} into ${target} (${short(from)}..${short(to)})`,
+    mergeRequest: { remote, number, provider, target, url: remoteUrl, head: to },
+  };
+}
+
 /** The patch, changed files and commit messages of the range, limited to this project's folder. */
 export function revisionChanges(root: string, r: RevisionRange): RevisionChanges {
   let patch: string, names: string[], commits: string;
@@ -104,12 +168,38 @@ export function revisionChanges(root: string, r: RevisionRange): RevisionChanges
     commits = log.ok ? log.out : `Log unavailable: ${log.error}\n`;
   }
   ensure(names.length > 0, `${r.label} changes no files in this project`);
-  const truncated = patch.length > maxPatchChars;
+  const changedPaths = [...new Set(names)].sort();
+  const cut = (text: string) => (text.length > maxPatchChars
+    ? `${text.slice(0, maxPatchChars)}\n\n[WAICC: patch cut at ${maxPatchChars} characters of ${text.length}. Read the remaining changed files listed in code-review.json from the checkout or history.]\n` : text);
+  // Once a change is large and spans several folders, each folder gets its own patch. The
+  // folders are taken at the first depth where the change splits, so services/orders and
+  // services/status are two parts, not one "services".
+  const groupAt = (depth: number) => {
+    const groups = new Map<string, string[]>();
+    for (const path of changedPaths) {
+      const segments = path.split("/");
+      const key = segments.length > depth ? segments.slice(0, depth).join("/") : "(other files)";
+      groups.set(key, [...(groups.get(key) ?? []), path]);
+    }
+    return groups;
+  };
+  let depth = 1, folders = groupAt(1);
+  while (folders.size === 1 && depth < 4 && !folders.has("(other files)")) folders = groupAt(++depth);
+  const parts: RevisionChanges["parts"] = [];
+  if (r.vcs === "git" && folders.size > 1 && folders.size <= 30 && patch.length > 100_000)
+    for (const [folder, paths] of folders) {
+      const pathspec = folder === "(other files)" ? paths.slice(0, 200).map((path) => `:(literal)${path}`) : [`:(literal)${folder}/`];
+      const part = run("git", ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--relative", "-M", r.from, r.to, "--", ...pathspec], root);
+      if (!part.ok || !part.out) continue;
+      const file = `${folder === "(other files)" ? "_other-files" : folder.replace(/[^A-Za-z0-9._-]/g, "_")}.patch`;
+      parts.push({ folder, file, paths: paths.length, truncated: part.out.length > maxPatchChars, patch: cut(part.out) });
+    }
   return {
-    changedPaths: [...new Set(names)].sort(),
-    patch: truncated ? `${patch.slice(0, maxPatchChars)}\n\n[WAICC: patch cut at ${maxPatchChars} characters of ${patch.length}. Read the remaining changed files listed in code-review.json from the checkout or history.]\n` : patch,
+    changedPaths,
+    patch: cut(patch),
     commits: commits.slice(0, 100_000),
-    truncated,
+    truncated: patch.length > maxPatchChars,
     patchBytes: patch.length,
+    parts,
   };
 }
