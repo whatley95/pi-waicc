@@ -24,6 +24,15 @@ export interface LiveRun {
   startedAt: number;
   steps: { at: number; kind: string; text: string }[];
   said: string | null;
+  /** When the agent last showed a step, and how long without one counts as quiet (0: never). */
+  lastActivityAt?: number;
+  quietAfterMs?: number;
+}
+/** Minutes a running agent has shown nothing new, once that passes its quiet limit; else null. */
+export function quietMinutes(run: LiveRun, now = Date.now()): number | null {
+  if (!run.quietAfterMs || run.lastActivityAt === undefined) return null;
+  const quiet = now - run.lastActivityAt;
+  return quiet >= run.quietAfterMs ? Math.floor(quiet / 60_000) : null;
 }
 export interface Notice { at: string; level: "info" | "warning" | "error"; text: string }
 
@@ -205,7 +214,13 @@ function consults(root: string) {
 /** What needs the human, in this project: their decisions, and each session's next human step. */
 function needsYou(views: SessionView[], live: LiveRun[]) {
   const busy = new Set(live.map((run) => run.sessionId));
-  return views.filter((s) => s.status !== "CLOSED").flatMap((s) => {
+  // The text never carries the minutes, so one quiet spell is one item.
+  const quiet = live.filter((run) => quietMinutes(run) !== null).map((run) => ({
+    sessionId: run.sessionId, text: `${run.label.replace(/^WAICC · /, "")}: no new step for ${Math.round(run.quietAfterMs! / 60_000)}+ minutes`,
+    detail: run.steps.at(-1) ? `Last step: ${run.steps.at(-1)!.text}. It may still be working.` : "It has shown no step yet.",
+    command: run.kind === "advisor" ? "Esc stops the advisor" : "/waicc-dispatch --stop",
+  }));
+  return [...quiet, ...views.filter((s) => s.status !== "CLOSED").flatMap((s) => {
     const items = s.decisions.filter((d) => d.status === "open" && d.owner !== "agent").map((d) => ({
       sessionId: s.id, text: `${d.id}: ${d.question}`, detail: d.recommendation ? `Recommended: ${d.recommendation}` : null,
       command: d.owner === "external" ? `/waicc-decide ${d.id} <answer from its owner>` : d.recommendation ? `/waicc-decide ${d.id} recommended` : `/waicc-decide ${d.id} <answer>`,
@@ -221,7 +236,25 @@ function needsYou(views: SessionView[], live: LiveRun[]) {
     };
     const next = step[s.status];
     return next ? [...items, { sessionId: s.id, text: next[0], detail: s.title, command: next[1] }] : items;
-  });
+  })];
+}
+
+/**
+ * What needs you now that did not at the last look, for desktop notifications. The last look is
+ * kept beside the page, so a second chat in the project or a restart does not repeat one; the
+ * very first look only remembers. An item that goes away and comes back is new again.
+ */
+export function newNeeds(status: ProjectStatus): ProjectStatus["needsYou"] {
+  const path = join(trackerDirectory(), "alerted", `${status.key}.json`);
+  const id = (n: ProjectStatus["needsYou"][number]) => `${n.sessionId ?? ""}\0${n.text}`;
+  let seen: Set<string> | null = null;
+  try {
+    seen = new Set((JSON.parse(readFileSync(path, "utf8")) as { seen: string[] }).seen);
+  } catch { /* first look */ }
+  const now = status.needsYou.map(id);
+  if (seen && now.length === seen.size && now.every((key) => seen!.has(key))) return [];
+  atomicWrite(path, json({ seen: now }));
+  return seen ? status.needsYou.filter((n) => !seen!.has(id(n))) : [];
 }
 
 export function projectStatus(root: string, live: LiveRun[] = [], notices: Notice[] = [], selectedSessionId: string | null = null, budgetUsd: number | null = null,

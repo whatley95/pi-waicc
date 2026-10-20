@@ -576,6 +576,19 @@ rejected) is checked before an automatic loop cycle and before `--review`'s disp
 session's reported dispatch dollars reach it, the run ends with a notice; dispatches the
 human types are never refused.
 
+The user file's `alerts` (a project file setting it is rejected) takes `quietMinutes`, a
+whole number 0–240 (default 10; 0 never), and `desktop`, a boolean (default false). A running
+dispatch records when it last emitted a progress event; once `quietMinutes` pass without one,
+the chat is told once per quiet spell, the live run carries `lastActivityAt` and
+`quietAfterMs`, and the project's needs-you list starts with
+`<label>: no new step for <n>+ minutes` (the last step as detail, `/waicc-dispatch --stop`
+as command). Nothing is stopped or retried. With `desktop`, after each tracker write the
+chat compares the project's needs-you items (by session and text) with
+`$PI_CODING_AGENT_DIR/waicc-tracker/alerted/<key>.json`, records the current set there, and
+raises one notification for one new item or one summary for several; the first comparison
+only records. Windows uses a PowerShell toast with an encoded command and XML-escaped text,
+macOS `osascript` with the text as arguments, Linux `notify-send`; none is waited for.
+
 Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
 ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
 dropped from the change list, and removal unlinks each folder (removing only the link)
