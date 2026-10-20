@@ -224,7 +224,8 @@ function needsYou(views: SessionView[], live: LiveRun[]) {
   });
 }
 
-export function projectStatus(root: string, live: LiveRun[] = [], notices: Notice[] = [], selectedSessionId: string | null = null, budgetUsd: number | null = null) {
+export function projectStatus(root: string, live: LiveRun[] = [], notices: Notice[] = [], selectedSessionId: string | null = null, budgetUsd: number | null = null,
+  extension: { version: string | null; build: string; outdated: boolean } | null = null) {
   const all = sessions(root);
   // Open sessions first, newest first; only the five most recent closed ones are shown in full.
   const newest = (a: SessionView, b: SessionView) => b.updatedAt.localeCompare(a.updatedAt);
@@ -246,6 +247,7 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     pid: process.pid,
     selectedSessionId,
     budgetUsd,
+    extension,
     live,
     notices: notices.slice(-5),
     sessions: shown.map(({ runs: _runs, ...view }) => view),
@@ -253,6 +255,9 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     chats: talked.slice(0, 10).map(({ chatId, name, model, updatedAt }) => ({ chatId, name, model, updatedAt })),
     runs,
     needsYou: [
+      ...(extension?.outdated
+        ? [{ sessionId: null, text: "pi-waicc was updated: a Pi chat here still runs the copy it loaded", detail: "Type /reload in that chat to load the new version", command: "/reload" }]
+        : []),
       ...needsYou(shown, live),
       ...pendingLessons(root).map((lesson) => ({ sessionId: null, text: `Lesson to confirm: ${clip(lesson.text, 200)}`, detail: lesson.source, command: "/waicc-memory confirm" })),
     ],
