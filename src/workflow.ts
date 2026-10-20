@@ -39,6 +39,7 @@ import { acceptedPlanCurrent, acceptedPlanRequestId, authorizationState, default
   requirementsText, reviewKindLabel, reviewState, roundPhase, roundUsage, scopeDigest, sessionPhase } from "./state.ts";
 export { requirementsText } from "./state.ts";
 import {
+  Collector,
   ensure,
   identifier,
   list,
@@ -666,38 +667,39 @@ export function validateRoundReply(
     r.mode === "advisor"
       ? r.advisor!.requirementIds
       : v.contract.requirements.map((req) => req.id);
-  ensure(
+  // Independent problems are reported together, so a recipient fixes them in one pass.
+  const problems = new Collector();
+  problems.check("coverage", () => ensure(
     reply.coverage.length === ids.length &&
       reply.coverage.every((row) => ids.includes(row.requirementId)),
     "Reply must cover every requirement in its assigned scope exactly once",
-  );
+  ));
   if (r.mode === "advisor")
-    ensure(
+    problems.check("advice.question", () => ensure(
       reply.advice!.question === r.advisor!.question,
       "Advisor question does not match this request",
-    );
-  if (reply.proposedContract) {
-    try {
-      validateContract(reply.proposedContract, requirementsText(s));
-      stableIds(v.contract, reply.proposedContract);
-    } catch (error) {
-      // Name the failing part and show a valid shape, so a recipient fixes it in one pass.
-      throw new Error(`proposedContract: ${error instanceof Error ? error.message : String(error)}. Every field is required except decisions; a valid example: ${JSON.stringify(proposedContractExample)}`);
-    }
-  }
-  if (reply.completion) {
-    const data = reviewContext(s, v.contract, r.source, r.source,
-      { kind: "code", completion: reply.completion }, undefined, true);
-    ensure(data.kind === "code", "Expected work completion evidence");
-    reply.completion = data.completion;
-    const checkClaims = (checks: Reply["checks"]) => checks.map(({ description, outcome, evidence }) => ({ description, outcome, evidence }));
-    ensure(json(checkClaims(reply.completion.checks)) === json(checkClaims(reply.checks)),
-      "Completion checks must match the reply checks; do not hide failed/not-run results");
-  }
+    ));
+  const proposal = reply.proposedContract && problems.check("proposedContract", () => {
+    validateContract(reply.proposedContract, requirementsText(s));
+    stableIds(v.contract, reply.proposedContract!);
+    return true;
+  }) === undefined;
+  if (reply.completion)
+    problems.check("completion", () => {
+      const data = reviewContext(s, v.contract, r.source, r.source,
+        { kind: "code", completion: reply.completion! }, undefined, true);
+      ensure(data.kind === "code", "Expected work completion evidence");
+      reply.completion = data.completion;
+      const checkClaims = (checks: Reply["checks"]) => checks.map(({ description, outcome, evidence }) => ({ description, outcome, evidence }));
+      ensure(json(checkClaims(reply.completion.checks)) === json(checkClaims(reply.checks)),
+        "Completion checks must match the reply checks; do not hide failed/not-run results");
+    });
   if (r.mode === "implementation" && r.wholeWork && reply.outcome === "ready")
-    ensure(reply.completion, "A completed delegated implementation needs completion evidence for ALL tasks and prior code-review findings");
+    problems.check("completion", () => ensure(reply.completion, "A completed delegated implementation needs completion evidence for ALL tasks and prior code-review findings"));
   if (r.mode === "testing" && reply.outcome === "ready")
-    ensure(reply.checks.some((check) => check.outcome === "passed"), "Testing readiness needs actual executed check evidence, not only not_run");
+    problems.check("checks", () => ensure(reply.checks.some((check) => check.outcome === "passed"), "Testing readiness needs actual executed check evidence, not only not_run"));
+  // With a broken proposal, show a valid shape too.
+  problems.done(proposal ? `\nEvery proposedContract field is required except decisions; a valid example: ${JSON.stringify(proposedContractExample)}` : "");
   return reply;
 }
 export interface Assessment {

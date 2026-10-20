@@ -441,8 +441,16 @@ own edit tools cannot be confined to task paths, unless dispatch started it with
 most one pin and never retargets. Validation and submission use the same engine as
 `waicc_reply`; tool failures return `isError` results so the agent can correct and retry.
 `--session <id> --request <id>` restricts a server to one request. Planning and review
-assignments include `proposedContractExample`, a minimal contract that passes validation;
-an invalid `proposedContract` error is prefixed `proposedContract:` and repeats that example.
+assignments include `proposedContractExample`, a minimal contract that passes validation.
+Reply and contract validation collect every independent problem with its location (for
+example `proposedContract.tasks[0].acceptance[1].verification`) and report them together:
+one problem reads `<location>: <message>`, several read `<n> problems; fix all of them:`
+followed by a numbered line each. A check that later checks depend on stops only those:
+a field that is not a list skips its entries, task dependency cycles are checked only when
+every task is valid, and acceptance references are judged only against valid task
+references. Reply identity and pinned inputs are still checked first, alone. After the reply
+itself, coverage, the advisor question, `proposedContract`, completion and readiness checks
+are collected together; when `proposedContract` has problems, the example follows them.
 
 `/waicc-dispatch` and `waicc dispatch` are explicit human actions. They accept only a
 single WAITING planning, review or advisor round, or an implementation round with
