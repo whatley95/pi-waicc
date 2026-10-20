@@ -5,6 +5,7 @@ import { registerCommands } from "./pi/commands.ts";
 import { registerDispatchCommands } from "./pi/dispatch-commands.ts";
 import { registerTools } from "./pi/tools.ts";
 import { registerHooks } from "./pi/hooks.ts";
+import { registerMergeRequestCommands } from "./pi/merge-requests.ts";
 
 /** The Pi extension: one shared app object, then every command, tool and hook. */
 export default function waicc(pi: ExtensionAPI, services: Services = {}): void {
@@ -12,6 +13,7 @@ export default function waicc(pi: ExtensionAPI, services: Services = {}): void {
   const app: App = Object.assign(core, createRuns(core));
   registerCommands(app);
   registerDispatchCommands(app);
+  registerMergeRequestCommands(app);
   registerTools(app);
   registerHooks(app);
 }

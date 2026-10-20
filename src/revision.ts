@@ -88,6 +88,11 @@ export function resolveRevision(root: string, input: string, vcs: "git" | "svn" 
   return { vcs, range, from, to, label: `commit ${short(to)}${range === to || to.startsWith(range) ? "" : ` (${range})`}` };
 }
 
+/** The project's folder inside its Git repository ("services/orders/"), or "" at the root. */
+export function repositoryPrefix(root: string): string {
+  const prefix = run("git", ["rev-parse", "--show-prefix"], root, 15_000);
+  return prefix.ok ? prefix.out.trim() : "";
+}
 /** A remote's URL without any user name or password in it, for records and messages. */
 export const safeRemoteUrl = (url: string): string => url.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1");
 const branchName = /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/;
