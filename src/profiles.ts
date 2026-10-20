@@ -35,6 +35,8 @@ export interface AgentConfig {
   autoAdvisor: number;
   /** User file only: automatic runs stop once a session's reported cost reaches this many dollars. */
   budget: { perSessionUsd: number | null };
+  /** User file only: when a running agent counts as quiet (0 never), and whether to raise desktop notifications. */
+  alerts: { quietMinutes: number; desktop: boolean };
   profiles: Record<string, AgentProfile & { source: Source }>;
   roles: Partial<Record<Mode, RoleChoice & { source: Source }>>;
   files: { user: string; project: string; found: Source[] };
@@ -75,9 +77,9 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor" and "budget" are allowed'));
-  // Settings that let WAICC act for you are yours alone: a repository must not grant them.
-  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget"])
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget" and "alerts" are allowed'));
+  // Settings that let WAICC act for you, or reach you outside Pi, are yours alone: a repository must not grant them.
+  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
   if (config.policies !== undefined) {
     ensure(Array.isArray(config.policies) && config.policies.length <= 20, at('"policies" must be a list of at most 20 rules'));
@@ -96,6 +98,15 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
     const usd = budget.perSessionUsd;
     ensure(usd === undefined || (typeof usd === "number" && usd > 0 && usd <= 10_000), at('"budget.perSessionUsd" must be a dollar amount above 0 and at most 10000'));
     into.budget = { perSessionUsd: (usd as number | undefined) ?? null };
+  }
+  if (config.alerts !== undefined) {
+    const alerts = record(config.alerts, at('"alerts"'));
+    ensure(Object.keys(alerts).every((key) => key === "quietMinutes" || key === "desktop"), at('"alerts" takes only "quietMinutes" and "desktop"'));
+    const { quietMinutes, desktop } = alerts;
+    ensure(quietMinutes === undefined || (Number.isInteger(quietMinutes) && (quietMinutes as number) >= 0 && (quietMinutes as number) <= 240),
+      at('"alerts.quietMinutes" must be a whole number of minutes from 0 (never) to 240'));
+    ensure(desktop === undefined || typeof desktop === "boolean", at('"alerts.desktop" must be true or false'));
+    into.alerts = { quietMinutes: (quietMinutes as number | undefined) ?? into.alerts.quietMinutes, desktop: (desktop as boolean | undefined) ?? into.alerts.desktop };
   }
   if (config.autoAdvisor !== undefined) {
     const value = config.autoAdvisor;
@@ -143,7 +154,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -205,6 +216,7 @@ export function profilesView(cwd: string) {
     policies: config.policies,
     autoDecide: config.autoDecide,
     budget: config.budget.perSessionUsd === null ? "none" : { perSessionUsd: config.budget.perSessionUsd },
+    alerts: config.alerts,
     autoAdvisor: config.autoAdvisor ? { maxPerChat: config.autoAdvisor, profile: config.roles.advisor?.profile ?? "not set: no advisor role" } : "off",
     files: {
       user: { path: config.files.user, found: config.files.found.includes("user") },
@@ -253,4 +265,14 @@ export function consultSettings(cwd: string): { limit: number; profile: string |
 /** Your per-session dollar budget for automatic runs, or null for none. */
 export function sessionBudget(cwd: string): number | null {
   return loadAgentConfig(cwd).budget.perSessionUsd;
+}
+
+/** When a running agent counts as quiet, and whether to notify on the desktop; defaults if the config is broken. */
+export function alertSettings(cwd: string): { quietMs: number; desktop: boolean } {
+  try {
+    const { alerts } = loadAgentConfig(cwd);
+    return { quietMs: alerts.quietMinutes * 60_000, desktop: alerts.desktop };
+  } catch {
+    return { quietMs: 10 * 60_000, desktop: false };
+  }
 }
