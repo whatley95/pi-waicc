@@ -10,6 +10,8 @@ import waicc from "../src/index.ts";
 import { gitlabClient, gitlabProject, reviewComments, summaryNote, type GitLabCall } from "../src/gitlab.ts";
 import { addGitlabHost, gitlabHost, loadAgentConfig, profilesView } from "../src/profiles.ts";
 import { forgetSessionTokens } from "../src/pi/merge-requests.ts";
+import { mergeRequestUrl, projectStatus } from "../src/tracker.ts";
+import { runInNewContext } from "node:vm";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { resolveRevision } from "../src/revision.ts";
 import { assess, createRevisionReview, ingest, postedComments, prepare } from "../src/workflow.ts";
@@ -264,6 +266,43 @@ test("guided setup: a token GitLab refuses saves nothing; one kept only for this
   writeFileSync(join(empty.agentDir, "waicc-agents.json"), "{}");
   await empty.post();
   assert.match(empty.notices.at(-1)!, /^Nothing was posted\. When you have the token, run \/waicc-mr-comments again/);
+});
+
+/** The tracker page's script on these projects; returns its markup. */
+function renderTracker(projects: unknown[], tab = "overview"): string {
+  const app = { innerHTML: "", textContent: "" }, window: Record<string, any> = {};
+  const script = /<script>([\s\S]*)<\/script>/.exec(readFileSync(new URL("../templates/tracker.html", import.meta.url), "utf8"))![1];
+  runInNewContext(script, {
+    window, location: { hash: "" }, history: { replaceState() {} }, localStorage: { getItem: (k: string) => (k === "waicc-tab" ? tab : null), setItem() {} }, setInterval() {},
+    document: { getElementById: (name: string) => (name === "app" ? app : { textContent: "", addEventListener() {} }), addEventListener() {}, querySelectorAll: () => [], createElement: () => ({ remove() {} }), body: { appendChild() {} } },
+  });
+  window.waiccTracker({ generatedAt: new Date().toISOString(), projects: JSON.parse(JSON.stringify(projects)) });
+  return app.innerHTML;
+}
+
+test("the tracker shows which merge request a session reviews, links it, and what is ready to post or was posted", async (t) => {
+  const h = await run(t, { select: (options) => options[0] });
+  const before = projectStatus(h.root);
+  const change = before.sessions[0].change!;
+  assert.deepEqual(change.mergeRequest, { number: 7, provider: "gitlab", target: "develop", webUrl: "https://gitlab.example.com/team/app/-/merge_requests/7" });
+  assert.equal(change.awaitingPost, true);
+  assert.equal(change.toPost, 2);
+  assert.deepEqual(before.needsYou.filter((n) => n.command === "/waicc-mr-comments").map((n) => n.text), ["Review of merge request !7 is ready to post to GitLab: 2 findings"]);
+  const page = renderTracker([before]);
+  assert.match(page, /<a class="chip mr" href="https:\/\/gitlab\.example\.com\/team\/app\/-\/merge_requests\/7" target="_blank" rel="noopener noreferrer" title="Open it">MR !7 → develop ↗<\/a>/);
+  assert.match(page, /nothing posted to GitLab yet · <span style="color:var\(--warn\)">ready to post \(2 findings\): <code>\/waicc-mr-comments<\/code>/);
+  assert.match(page, /<span class="chip mr">MR !7 → develop<\/span>/, "on the project's card too");
+  assert.match(renderTracker([before], "timeline"), new RegExp(`code review at ${h.head.slice(0, 10)}`), "the timeline says which commit was reviewed");
+
+  await h.post();
+  const after = projectStatus(h.root);
+  assert.deepEqual([after.sessions[0].change!.awaitingPost, after.sessions[0].change!.toPost], [false, 0]);
+  assert.equal(after.sessions[0].change!.posted!.lineComments, 1);
+  assert.equal(after.needsYou.filter((n) => n.command === "/waicc-mr-comments").length, 0, "posted: no longer waiting on you");
+  assert.match(renderTracker([after]), /posted to GitLab: 1 line comment and a summary, last \d+[smhd]/);
+
+  assert.equal(mergeRequestUrl({ remote: "origin", number: 45, provider: "github", target: "main", url: "git@github.com:whatley95/pi-waicc.git", head: "x" }), "https://github.com/whatley95/pi-waicc/pull/45");
+  assert.equal(mergeRequestUrl({ remote: "origin", number: 3, provider: "gitlab", target: "main", url: "git@gitlab.example.com:group/app.git", head: "x" }), "https://gitlab.example.com/group/app/-/merge_requests/3");
 });
 
 test("the API client sends the token only as a header, reads GitLab's errors, and refuses plain http unless allowed", async (t) => {
