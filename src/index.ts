@@ -26,6 +26,7 @@ import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, p
 import { consultSettings, decisionSettings, sessionBudget, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { consultAdvisor } from "./consult.ts";
 import { learnPattern, recurringFindings } from "./learning.ts";
+import { buildOutdated, loadedBuild } from "./build.ts";
 import { openPage, projectStatus, publish, recordChat, sessionSpend, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
 import { usageText } from "./usage.ts";
 import { autoDecidable } from "./decisions.ts";
@@ -162,6 +163,15 @@ export default function waicc(
   /** Recent run outcomes per project, for the tracker page. */
   const notices = new Map<string, Notice[]>();
   const trackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Said once per loaded copy: after pi update, an open chat keeps the code it started with.
+  let outdatedWarned = false;
+  function warnOutdated(ctx: ExtensionContext): void {
+    try {
+      if (outdatedWarned || !ctx.hasUI || bindings.get(key(ctx))?.role === "recipient" || !buildOutdated()) return;
+      outdatedWarned = true;
+      ctx.ui.notify("pi-waicc was updated since this chat loaded it. Type /reload to use the new version.", "warning");
+    } catch { /* a notice only */ }
+  }
   // Per chat: the entry count and model last saved, so an unchanged chat is not summarised again.
   const chatsRecorded = new Map<string, string>();
   function recordMainAgent(ctx: ExtensionContext, root: string): void {
@@ -198,7 +208,8 @@ export default function waicc(
     try {
       budget = sessionBudget(ctx.cwd);
     } catch { /* a broken config is reported where it is used */ }
-    return projectStatus(root, runs, notices.get(root) ?? [], binding?.role === "coordinator" ? binding.sessionId : null, budget);
+    return projectStatus(root, runs, notices.get(root) ?? [], binding?.role === "coordinator" ? binding.sessionId : null, budget,
+      { ...loadedBuild, outdated: buildOutdated() });
   }
   /** Refreshes this project on the tracker page, at most every 2 s, off WAICC's own path; never fails WAICC. */
   function track(ctx: ExtensionContext, immediately = false, live = true): void {
@@ -1709,6 +1720,7 @@ export default function waicc(
     automaticRequests.clear(ctx);
     advanceLoop(ctx);
     track(ctx);
+    warnOutdated(ctx);
   });
   // The main agent's own use and model, as it works.
   pi.on("message_end", async (event, ctx) => { if (event.message.role === "assistant") track(ctx); });
