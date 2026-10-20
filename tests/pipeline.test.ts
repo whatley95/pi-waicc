@@ -38,7 +38,7 @@ const profiles = {
 };
 
 /** A planning handoff waiting, your agent config, and Pi with a scripted planner and reviewer. */
-function run(t: TestContext, replies: object[], decisions?: ContractDecision[]) {
+function run(t: TestContext, replies: object[], decisions?: ContractDecision[], spending?: { budgetUsd: number; costUsd: number }) {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   const root = join(base, "project"), agentDir = join(base, "agent");
   mkdirSync(root);
@@ -50,7 +50,7 @@ function run(t: TestContext, replies: object[], decisions?: ContractDecision[]) 
     assert.ok(basename(base).startsWith("waicc-test-"));
     rmSync(base, { recursive: true, force: true });
   });
-  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ profiles, roles: { planning: "opus", review: "sol" } }));
+  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ profiles, roles: { planning: "opus", review: "sol" }, ...(spending ? { budget: { perSessionUsd: spending.budgetUsd } } : {}) }));
   writeFileSync(join(root, "status.txt"), "status\n");
   const s = createSession(root, "Add a status message field", undefined, "planning");
   prepare(root, s.id, scope(decisions), "planning", "Plan", 0);
@@ -61,7 +61,9 @@ function run(t: TestContext, replies: object[], decisions?: ContractDecision[]) 
     agents.push(`${program} ${args.includes("gpt-6.1-sol") || args.some((a) => a.includes("gpt-6.1-sol")) ? "sol" : ""}${args.some((a) => a.includes("ultra")) ? " ultra" : ""}`.trim());
     const body = replies[agents.length - 1];
     if (body) submitRecipientReply(root, receiveHandoff(root, s.id).pin, body);
-    return { stdout: "", stderr: "", code: 0, killed: false };
+    // Each run reports its cost the way Claude does.
+    const stdout = spending ? `${JSON.stringify({ type: "result", total_cost_usd: spending.costUsd, usage: { input_tokens: 10, output_tokens: 5 } })}\n` : "";
+    return { stdout, stderr: "", code: 0, killed: false };
   };
   waicc({
     registerCommand: (n: string, c: any) => commands.set(n, c), registerTool() {}, on: (n: string, h: any) => hooks.set(n, h),
@@ -136,4 +138,14 @@ test("--develop never starts coding while a decision is open, and a plan alone s
   await plain.turnEnds();
   assert.match(plain.messages().at(-1)!, /^Plan accepted after 1 cycle \(PLAN_READY\)\. Run \/waicc-develop to start coding\./);
   assert.equal(loadSession(plain.root, plain.id).status, "PLAN_READY");
+});
+
+test("an automatic loop stops once the session reaches your budget; nothing more is dispatched", async (t) => {
+  const h = run(t, [reply("planned"), reply("planned")], undefined, { budgetUsd: 1, costUsd: 1.5 });
+  await h.start("--loop 3");
+  await waitFor(() => h.prompts.length === 1, "the first plan's assessment");
+  h.assess("followup", "Cover the empty-message case");
+  await h.turnEnds();
+  assert.match(h.messages().at(-1)!, /^Planning loop stopped after cycle 1\/3: this session's agents have reported \$1\.50, reaching your \$1 budget/);
+  assert.equal(h.agents.length, 1, "the revised plan waits for you to dispatch it");
 });

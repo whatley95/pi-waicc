@@ -12,6 +12,7 @@ import { projectRoot, snapshot } from "./source.ts";
 import { ensure } from "./validation.ts";
 import { applyIsolatedChanges, createIsolation, isolatedChanges, removeIsolation, type Isolation } from "./worktree.ts";
 import { progressParser, type ProgressEvent } from "./progress.ts";
+import { usageMeter } from "./usage.ts";
 import type { Mode, RecipientPin } from "./types.ts";
 
 export const agents = ["claude", "codex", "pi", "agy"] as const;
@@ -421,8 +422,10 @@ const tail = (text: string, limit = 24_000): string => (text.length > limit ? te
 export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgent, signal?: AbortSignal, onProgress?: (event: ProgressEvent) => void) {
   const startedAt = Date.now();
   const parse = progressParser(plan.via, plan.cwd, startedAt);
+  const meter = usageMeter(plan.via);
   const progress: ProgressEvent[] = [];
   const onLine = (line: string) => {
+    meter.read(line);
     for (const event of parse(line)) {
       progress.push(event);
       if (progress.length > 400) progress.splice(0, progress.length - 400);
@@ -437,12 +440,15 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   } finally {
     for (const path of plan.scratch) rmSync(path, { force: true });
   }
+  // A runner that returns stdout without streaming it (older agents, tests) still yields its usage.
+  if (!meter.get()) for (const line of result.stdout.split(/\r?\n/)) meter.read(line);
+  const usage = meter.get();
   const replySubmitted = existsSync(plan.replyPath);
   const isolation = plan.isolation ? settleIsolation(plan, replySubmitted) : null;
   const report = {
     schemaVersion: 1, dispatchId: plan.dispatchId, sessionId: plan.sessionId, requestId: plan.requestId,
     mode: plan.mode, via: plan.via, model: plan.model, effort: plan.effort, finishedAt: now(), durationMs: Date.now() - startedAt,
-    code: result.code, killed: result.killed, replySubmitted, isolation,
+    code: result.code, killed: result.killed, replySubmitted, isolation, usage,
     // What the agent did, step by step, and the last thing it said.
     progress, lastMessage: progress.findLast((event) => event.kind === "note")?.text ?? null,
     stdout: tail(result.stdout), stderr: tail(result.stderr),
@@ -457,7 +463,7 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   });
   return {
     dispatched: true, via: plan.via, model: plan.model, effort: plan.effort, sessionId: plan.sessionId, requestId: plan.requestId,
-    replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs,
+    replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs, usage,
     isolation, lastMessage: report.lastMessage, steps: progress.length,
     log: saved ? join(plan.root, sessionRelative(plan.sessionId), logPath) : null,
     nextAction: isolation && !isolation.applied && replySubmitted

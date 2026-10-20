@@ -33,6 +33,8 @@ export interface AgentConfig {
   autoDecide: "off" | "low-risk";
   /** User file only: how many times per Pi chat the main agent may ask the advisor on its own; 0 is off. */
   autoAdvisor: number;
+  /** User file only: automatic runs stop once a session's reported cost reaches this many dollars. */
+  budget: { perSessionUsd: number | null };
   profiles: Record<string, AgentProfile & { source: Source }>;
   roles: Partial<Record<Mode, RoleChoice & { source: Source }>>;
   files: { user: string; project: string; found: Source[] };
@@ -73,9 +75,9 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide" and "autoAdvisor" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor" and "budget" are allowed'));
   // Settings that let WAICC act for you are yours alone: a repository must not grant them.
-  for (const key of ["policies", "autoDecide", "autoAdvisor"])
+  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
   if (config.policies !== undefined) {
     ensure(Array.isArray(config.policies) && config.policies.length <= 20, at('"policies" must be a list of at most 20 rules'));
@@ -87,6 +89,13 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   if (config.autoDecide !== undefined) {
     ensure(config.autoDecide === "off" || config.autoDecide === "low-risk", at('"autoDecide" must be "off" or "low-risk"'));
     into.autoDecide = config.autoDecide;
+  }
+  if (config.budget !== undefined) {
+    const budget = record(config.budget, at('"budget"'));
+    ensure(Object.keys(budget).every((key) => key === "perSessionUsd"), at('"budget" takes only "perSessionUsd"'));
+    const usd = budget.perSessionUsd;
+    ensure(usd === undefined || (typeof usd === "number" && usd > 0 && usd <= 10_000), at('"budget.perSessionUsd" must be a dollar amount above 0 and at most 10000'));
+    into.budget = { perSessionUsd: (usd as number | undefined) ?? null };
   }
   if (config.autoAdvisor !== undefined) {
     const value = config.autoAdvisor;
@@ -134,7 +143,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -195,6 +204,7 @@ export function profilesView(cwd: string) {
     autoContinue: config.autoContinue,
     policies: config.policies,
     autoDecide: config.autoDecide,
+    budget: config.budget.perSessionUsd === null ? "none" : { perSessionUsd: config.budget.perSessionUsd },
     autoAdvisor: config.autoAdvisor ? { maxPerChat: config.autoAdvisor, profile: config.roles.advisor?.profile ?? "not set: no advisor role" } : "off",
     files: {
       user: { path: config.files.user, found: config.files.found.includes("user") },
@@ -238,4 +248,9 @@ export function consultSettings(cwd: string): { limit: number; profile: string |
       ? `Asking the advisor on your own is off ("autoAdvisor" in ${config.files.user}).`
       : `No advisor role is set. Set roles.advisor in ${config.files.user}.${config.files.found.length ? "" : ` ${initHint}.`}`,
   };
+}
+
+/** Your per-session dollar budget for automatic runs, or null for none. */
+export function sessionBudget(cwd: string): number | null {
+  return loadAgentConfig(cwd).budget.perSessionUsd;
 }
