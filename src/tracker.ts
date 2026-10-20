@@ -8,7 +8,7 @@ import { dispatchPinVariable } from "./dispatch.ts";
 import { roundDirectory, versionDirectory } from "./render.ts";
 import { sessionPhase } from "./state.ts";
 import type { Contract, ContractVersion, Round, Session } from "./types.ts";
-import { totalUsage, type Usage } from "./usage.ts";
+import { chatUsage, totalUsage, type ChatHour, type Usage } from "./usage.ts";
 import { pendingLessons } from "./memory.ts";
 
 /**
@@ -62,9 +62,41 @@ function dispatchRuns(root: string, s: Session, r: Round) {
   }).sort((a, b) => a.finishedAt.localeCompare(b.finishedAt));
 }
 
-/** One agent run with what it used, for the page's spend figures. */
+/** One agent run with what it used, for the page's spend figures; for the main agent, one model's hour in one chat. */
 export interface SpendRun {
-  at: string; kind: "dispatch" | "advisor"; mode: string; via: string; model: string | null; sessionId: string | null; usage: Usage;
+  at: string; kind: "dispatch" | "advisor" | "main"; mode: string; via: string; model: string | null; sessionId: string | null; usage: Usage;
+  chatId?: string; messages?: number;
+}
+
+const projectKey = (root: string): string => digest(process.platform === "win32" ? root.toLowerCase() : root).slice(0, 16);
+const chatFolder = (root: string): string => join(trackerDirectory(), "chats", projectKey(root));
+/** The main agent of one Pi chat in a project: its model now, and what it has used. */
+export interface ChatRecord { schemaVersion: 1; chatId: string; name: string | null; model: string | null; updatedAt: string; hours: ChatHour[] }
+
+/** Saves what this chat's main agent has used, so every chat in the project is counted, whichever writes the page. */
+export function recordChat(root: string, chatId: string, name: string | null, model: string | null, entries: readonly unknown[]): void {
+  const record: ChatRecord = { schemaVersion: 1, chatId, name: clip(name, 120), model, updatedAt: new Date().toISOString(), hours: chatUsage(entries) };
+  atomicWrite(join(chatFolder(root), `${chatId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80)}.json`), json(record));
+}
+const chatCache = new Map<string, { mtimeMs: number; record: ChatRecord | null }>();
+function chats(root: string): ChatRecord[] {
+  const folder = chatFolder(root);
+  if (!existsSync(folder)) return [];
+  return readdirSync(folder).filter((name) => name.endsWith(".json")).flatMap((name) => {
+    const path = join(folder, name);
+    try {
+      const mtimeMs = statSync(path).mtimeMs;
+      let cached = chatCache.get(path);
+      if (cached?.mtimeMs !== mtimeMs) {
+        const record = JSON.parse(readFileSync(path, "utf8")) as ChatRecord;
+        cached = { mtimeMs, record: record.schemaVersion === 1 && Array.isArray(record.hours) ? record : null };
+        chatCache.set(path, cached);
+      }
+      return cached.record ? [cached.record] : [];
+    } catch {
+      return [];
+    }
+  }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 100);
 }
 
 function sessionView(root: string, s: Session) {
@@ -198,14 +230,16 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
   const newest = (a: SessionView, b: SessionView) => b.updatedAt.localeCompare(a.updatedAt);
   const shown = [...all.filter((s) => s.status !== "CLOSED").sort(newest), ...all.filter((s) => s.status === "CLOSED").sort(newest).slice(0, 5)];
   const asked = consults(root);
+  const talked = chats(root);
   // Every run's figures, closed sessions included, so the page can total any period itself.
   const runs: SpendRun[] = [
     ...all.flatMap((s) => s.runs),
     ...asked.flatMap((c) => (c.usage ? [{ at: c.finishedAt, kind: "advisor" as const, mode: "advisor", via: c.via, model: c.model, sessionId: null, usage: c.usage }] : [])),
+    ...talked.flatMap((c) => c.hours.map((h) => ({ at: h.at, kind: "main" as const, mode: "main agent", via: "main agent", model: h.model, sessionId: null, usage: h.usage, chatId: c.chatId, messages: h.messages }))),
   ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 2_000);
   return {
     schemaVersion: 1 as const,
-    key: digest(process.platform === "win32" ? root.toLowerCase() : root).slice(0, 16),
+    key: projectKey(root),
     name: basename(root) || root,
     root,
     updatedAt: new Date().toISOString(),
@@ -216,6 +250,7 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     notices: notices.slice(-5),
     sessions: shown.map(({ runs: _runs, ...view }) => view),
     consults: asked.slice(0, 10),
+    chats: talked.slice(0, 10).map(({ chatId, name, model, updatedAt }) => ({ chatId, name, model, updatedAt })),
     runs,
     needsYou: [
       ...needsYou(shown, live),

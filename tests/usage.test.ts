@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
 import { loadAgentConfig } from "../src/profiles.ts";
 import { projectStatus, sessionSpend } from "../src/tracker.ts";
-import { totalUsage, usageMeter, usageText } from "../src/usage.ts";
+import { chatUsage, totalUsage, usageMeter, usageText } from "../src/usage.ts";
 import { createSession, prepare } from "../src/workflow.ts";
 import type { Contract } from "../src/types.ts";
 
@@ -99,4 +99,22 @@ test("budget.perSessionUsd: a positive dollar amount, yours alone to set", (t) =
   const shared = project(t);
   writeFileSync(join(shared.root, ".pi", "waicc-agents.json"), JSON.stringify({ budget: { perSessionUsd: 1 } }));
   assert.throws(() => loadAgentConfig(shared.root), /"budget" is allowed only in your user file/);
+});
+
+test("a Pi chat's main agent use is grouped by model and hour, from its assistant messages only", () => {
+  const message = (timestamp: string, model: string, usage: unknown, role = "assistant") => ({ type: "message", timestamp, message: { role, provider: "openai", model, usage } });
+  const hours = chatUsage([
+    message("2026-10-20T09:10:00.000Z", "gpt-6.1", { input: 100, output: 10, cacheRead: 50, cacheWrite: 5, cost: { total: 0.1 } }),
+    message("2026-10-20T09:50:00.000Z", "gpt-6.1", { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0.2 } }),
+    message("2026-10-20T10:01:00.000Z", "gpt-6.1", { input: 7, output: 3 }),
+    message("2026-10-20T09:30:00.000Z", "gpt-6.1", { input: 999, output: 999 }, "user"),
+    { type: "custom", timestamp: "2026-10-20T09:30:00.000Z", data: {} },
+    message("not a time", "gpt-6.1", { input: 1, output: 1 }),
+  ]);
+  assert.deepEqual(hours.map((h) => [h.at, h.model, h.messages, h.usage.inputTokens, h.usage.cachedTokens, h.usage.outputTokens]), [
+    ["2026-10-20T09:00:00.000Z", "openai/gpt-6.1", 2, 255, 50, 20],
+    ["2026-10-20T10:00:00.000Z", "openai/gpt-6.1", 1, 7, 0, 3],
+  ]);
+  assert.ok(Math.abs(hours[0].usage.costUsd! - 0.3) < 1e-9);
+  assert.equal(hours[1].usage.costUsd, null, "no reported price stays unpriced, not $0");
 });

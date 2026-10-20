@@ -126,6 +126,87 @@ test("the page renders cards, the needs-you list and details, and never runs tex
   assert.doesNotMatch(elements.app.innerHTML, /could not show/);
 });
 
+/** Renders the page's script on these projects, on one tab; returns the app's markup. */
+function renderPage(projects: unknown[], tab = "overview"): string {
+  const elements: Record<string, { innerHTML: string; textContent: string }> = { app: { innerHTML: "", textContent: "" }, updated: { innerHTML: "", textContent: "" } };
+  const window: Record<string, any> = {};
+  const script = /<script>([\s\S]*)<\/script>/.exec(readFileSync(new URL("../templates/tracker.html", import.meta.url), "utf8"))![1];
+  runInNewContext(script, {
+    window, location: { hash: "" }, history: { replaceState() {} }, localStorage: { getItem: (k: string) => (k === "waicc-tab" ? tab : null), setItem() {} },
+    setInterval() {}, document: {
+      getElementById: (name: string) => elements[name] ?? { addEventListener() {} },
+      addEventListener() {}, querySelectorAll: () => [], createElement: () => ({ remove() {} }), body: { appendChild() {} },
+    },
+  });
+  window.waiccTracker({ generatedAt: new Date().toISOString(), projects });
+  return elements.app.innerHTML;
+}
+
+test("the main agent's model and use in every Pi chat of a project are counted, apart from the agents WAICC sent work to", async (t) => {
+  const { project } = setup(t);
+  const { root } = project("shop");
+  const handlers = new Map<string, any>();
+  waicc({
+    registerCommand() {}, registerTool() {}, on: (name: string, h: any) => handlers.set(name, h), appendEntry() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage() {},
+  } as unknown as ExtensionAPI);
+  const hour = new Date();
+  hour.setMinutes(5, 0, 0);
+  const at = (minutes: number) => new Date(hour.getTime() + minutes * 60_000).toISOString();
+  const said = (minutes: number, model: string, cost: number | undefined, input = 1000) => ({
+    type: "message", id: `m${minutes}`, parentId: null, timestamp: at(minutes),
+    message: { role: "assistant", provider: "anthropic", model, usage: { input, output: 200, cacheRead: 500, cacheWrite: 0, totalTokens: input + 700, cost: cost === undefined ? undefined : { total: cost } } },
+  });
+  const chat = (id: string, name: string | undefined, model: string, entries: unknown[]) => ({
+    cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
+    model: { provider: "anthropic", id: model },
+    sessionManager: { getSessionId: () => id, getBranch: () => [], getEntries: () => entries, getSessionName: () => name },
+    ui: { notify() {} },
+  });
+  const first = chat("chat-a", "Fix checkout", "claude-opus-5-5", [
+    { type: "message", id: "u1", parentId: null, timestamp: at(0), message: { role: "user", content: "Fix checkout" } },
+    said(1, "claude-opus-5-5", 0.4), said(20, "claude-opus-5-5", 0.6), said(50, "claude-sonnet-5-5", 0.1),
+  ]);
+  const second = chat("chat-b", undefined, "claude-haiku-5-5", [said(2, "claude-haiku-5-5", 0.05)]);
+  await handlers.get("session_shutdown")({}, first);
+  await new Promise((resolve) => setTimeout(resolve, 5)); // So the second chat is the latest one.
+  await handlers.get("session_shutdown")({}, second);
+
+  const status = JSON.parse(JSON.stringify(projectStatus(root)));
+  assert.deepEqual(status.chats.map((c: any) => [c.chatId, c.name, c.model]).sort(),
+    [["chat-a", "Fix checkout", "anthropic/claude-opus-5-5"], ["chat-b", null, "anthropic/claude-haiku-5-5"]]);
+  const main = status.runs.filter((r: any) => r.kind === "main");
+  const opus = main.find((r: any) => r.model === "anthropic/claude-opus-5-5");
+  assert.equal(opus.messages, 2, "one model's messages in one hour are one figure");
+  assert.equal(opus.usage.inputTokens, 3000, "input counts cached tokens too");
+  assert.equal(opus.usage.cachedTokens, 1000);
+  assert.ok(Math.abs(opus.usage.costUsd - 1) < 1e-9);
+  assert.equal(main.reduce((n: number, r: any) => n + r.messages, 0), 4, "only the main agent's own messages count");
+
+  const overview = renderPage([status]);
+  assert.match(overview, /main agent · claude-haiku-5-5, claude-opus-5-5/, "each chat's model, the latest chat first");
+  assert.match(overview, /<h3>Main agent<\/h3>/);
+  assert.match(overview, /Fix checkout/);
+  assert.match(overview, /Pi chat chat-b/);
+  assert.match(overview, /also claude-sonnet-5-5/);
+  assert.match(overview, /Main agent \$1\.15/, "the summary strip says who used today's spend");
+  const spend = renderPage([status], "spend");
+  assert.match(spend, /By who/);
+  assert.match(spend, /main agent anthropic\/claude-opus-5-5/);
+  assert.match(spend, /4 messages/);
+
+  // An unchanged chat is not saved again; a new message is.
+  const savedAt = () => projectStatus(root).chats.find((c) => c.chatId === "chat-a")!.updatedAt;
+  const before = savedAt();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await handlers.get("session_shutdown")({}, first);
+  assert.equal(savedAt(), before);
+  first.sessionManager.getEntries().push(said(55, "claude-opus-5-5", 0.2));
+  await handlers.get("session_shutdown")({}, first);
+  assert.notEqual(savedAt(), before);
+  assert.equal(projectStatus(root).runs.filter((r) => r.kind === "main").reduce((n, r) => n + r.messages!, 0), 5);
+});
+
 test("/waicc-tracker opens the page; off stops every update, on resumes; dispatched agents never write it", async (t) => {
   const { agentDir, project } = setup(t);
   const { root } = project("shop");
