@@ -8,6 +8,7 @@ import {
   validateRecipientReply,
 } from "./recipient.ts";
 import { runRecipientCheck, type CheckCommand } from "./checks.ts";
+import { sandboxSettings } from "./profiles.ts";
 import { commandText, maxCheckMs, runAgent } from "./dispatch.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { decodeJsonText, ensure, identifier } from "./validation.ts";
@@ -141,7 +142,7 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
         const index = Number(args.check);
         ensure(Number.isInteger(index) && index >= 0 && index < checks.length, `check must be a number from 0 to ${checks.length - 1}`);
         const source = snapshot(projectRoot(cwd)).fingerprint;
-        const result = await runRecipientCheck(cwd, pinned(), checks[index], source, runAgent, undefined, { maxTimeoutMs: maxCheckMs, workdir: options.checkCwd });
+        const result = await runRecipientCheck(cwd, pinned(), checks[index], source, runAgent, undefined, { maxTimeoutMs: maxCheckMs, workdir: options.checkCwd, sandbox: sandboxSettings(cwd) });
         return JSON.stringify(result, null, 2);
       }
       case "waicc_read_input": {
