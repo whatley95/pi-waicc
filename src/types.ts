@@ -164,7 +164,11 @@ export interface Round {
         changedPaths: string[];
         completion: WorkCompletion;
         /** A review of an existing change: its range, and the patch and commits beside the handoff. */
-        revision?: RevisionReview & { changedPaths: string[]; truncated: boolean; patchBytes: number; checkout: string | null };
+        revision?: RevisionReview & {
+          changedPaths: string[]; truncated: boolean; patchBytes: number; checkout: string | null;
+          /** Per-folder patches in changes/, for a large change across several folders. */
+          parts?: { folder: string; file: string; paths: number; truncated: boolean }[];
+        };
       };
   source: SourceSnapshot;
   requirementsDigest: string;
@@ -258,6 +262,8 @@ export interface RevisionReview {
   from: string;
   to: string;
   label: string;
+  /** Set for /waicc-review --mr: where it was fetched from and into which branch it merges. */
+  mergeRequest?: { remote: string; number: number; provider: "gitlab" | "github"; target: string; url: string | null; head: string };
 }
 export interface FindingRef {
   sessionId: string;

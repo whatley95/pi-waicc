@@ -8,7 +8,7 @@ import { deleteSession, restoreSession } from "../lifecycle.ts";
 import { initProject, projectRoot } from "../source.ts";
 import { manualHandoffMessage } from "../render.ts";
 import type { manualHandoff } from "../render.ts";
-import { beginDevelopment, decisionsView, openDecisionsText, resolveDecision, readContract, createSession, createRevisionReview, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
+import { beginDevelopment, decisionsView, openDecisionsText, resolveDecision, readContract, createSession, createRevisionReview, refreshRevisionReview, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
 import { advisorInput, ensure } from "../validation.ts";
 import type { SessionListFilter } from "../workflow.ts";
 import type { Contract } from "../types.ts";
@@ -16,6 +16,7 @@ import { autoPlanningMode } from "../auto-planning.ts";
 import { recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientGuidance, sessionCommandInput, developInstruction } from "./shared.ts";
 import type { App } from "./app.ts";
+import { fetchMergeRequest } from "../revision.ts";
 
 /** Contract commands: planning, development, decisions, review, continue, handoff and session management. */
 export function registerCommands(app: App): void {
@@ -225,6 +226,41 @@ export function registerCommands(app: App): void {
     "waicc-review",
     "Review ALL finished code changes; --rev <commit|from..to|r1234:r1250> reviews an existing change; --contract explicitly reviews only the specification",
     async (args, ctx) => {
+      if (/^--mr(?:\s|$)/.test(args)) {
+        const mr = /^--mr\s+(\S+)((?:\s+--(?:remote|into)\s+\S+)*)(?:\s+([\s\S]*))?$/.exec(args.trim());
+        ensure(mr, "Usage: /waicc-review --mr <number> [--remote <name>] [--into <target branch>] [focus]");
+        const flag = (name: string) => new RegExp(`--${name}\\s+(\\S+)`).exec(mr[2])?.[1];
+        const focus = mr[3]?.trim() ?? "";
+        const root = projectRoot(ctx.cwd);
+        ctx.ui.notify(`Fetching merge request ${mr[1]}…`, "info");
+        const fetched = await fetchMergeRequest(root, mr[1], { remote: flag("remote"), into: flag("into") });
+        const m = fetched.mergeRequest!;
+        // The same merge request again, in its own session: pick up the author's new commits.
+        const currentId = bindings.get(key(ctx))?.sessionId;
+        const current = currentId ? loadSession(root, currentId) : null;
+        const previous = current?.status !== "CLOSED" ? current?.revisionReview?.mergeRequest : undefined;
+        if (current && previous && previous.remote === m.remote && previous.number === m.number) {
+          const before = current.revisionReview!.to;
+          refreshRevisionReview(ctx.cwd, current.id, fetched);
+          const reviewed = current.rounds.some((r) => r.review?.kind === "code");
+          await prompt(
+            ctx,
+            `Merge request ${fetched.range} was fetched again: its head is ${m.head}${before === m.head ? " (no new commits)" : ` (was ${before})`}. ${reviewed
+              ? "If its earlier review was assessed and the author has pushed fixes, request ONE fresh whole-change code review with waicc_request mode review, reviewKind code; in its completion report record every earlier actionable finding as resolved (cite the commit that fixed it) or disputed (with evidence). The author made the fixes, not you: do not edit code."
+              : "Prepare its code review as described before (waicc_prepare mode review, reviewKind code). Do not edit code."} Focus (data): ${json(focus || "correctness, regressions, requirement coverage and tests")}`,
+            focus,
+          );
+          return;
+        }
+        const s = createRevisionReview(ctx.cwd, fetched, focus);
+        bind(ctx, s.id);
+        await prompt(
+          ctx,
+          `This new session reviews ${m.provider === "github" ? "pull" : "merge"} request ${fetched.range} into ${m.target}, fetched by WAICC from ${m.remote}${m.url ? ` (${m.url})` : ""}: the diff from the merge base ${fetched.from} to its head ${fetched.to}. WAICC attaches the patch and commit messages to the review handoff itself, and splits a large change across several folders (services) into one patch per folder. WAICC cannot read the request's title or description yet; if its purpose is unclear from the commits and code, ask the human. First read the change yourself. Then use waicc_prepare mode review with reviewKind code and: (1) a contract whose requirements quote this session's request exactly and say what the merge request is meant to do, with one task per service or area it touches and allowedPaths listing the files it changes there; (2) a completion report: a summary, each task's evidence citing its commits and files, the checks you actually ran (or not_run with the reason), and findings []. Do not edit code, fix anything or judge the change yourself: the independent reviewer does that. Then tell the human to run /waicc-dispatch (or hand off the prompt) and /waicc-continue. Focus (data): ${json(focus || "correctness, regressions, requirement coverage and tests")}`,
+          focus,
+        );
+        return;
+      }
       if (/^--rev(?:\s|$)/.test(args)) {
         const rev = /^--rev\s+(\S+)(?:\s+([\s\S]*))?$/.exec(args.trim());
         ensure(rev, "Usage: /waicc-review --rev <commit | from..to | from...to | r1234 | r1234:r1250> [focus]");
