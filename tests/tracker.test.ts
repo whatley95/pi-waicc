@@ -194,7 +194,7 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   assert.match(overview, /<span>Spent<\/span><span class="seg"><button type="button" data-range="spend:today" class="on">Today<\/button>[\s\S]*?<div class="value">\$1\.15<\/div>/);
   const everything = renderPage([status], "overview", "all");
   assert.match(everything, /data-range="tokens:all" class="on">All<\/button>[\s\S]*?<div class="value">7k<\/div>/, "All counts everything recorded");
-  assert.match(everything, /since \d+ \w+ \d{4} · \$1\.15/);
+  assert.match(everything, /since [^<·]*\d{4} · \$1\.15/, "the date is in the viewer's own format");
   const spentAll = renderPage([status], "overview", "today", "all");
   assert.match(spentAll, /data-range="spend:all" class="on">All<\/button>[\s\S]*?<div class="value">\$1\.15<\/div>[\s\S]*?Main agent \$1\.15<\/div><div class="sub">since /, "the spend box has its own switch, with who spent it");
   assert.match(overview, /input 4k<\/span><span><b class="cached"><\/b>cached 2k<\/span><span><b class="out"><\/b>output 800/, "and today's fresh input, cached input and output are labelled");
