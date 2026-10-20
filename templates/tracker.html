@@ -197,7 +197,7 @@
     return `<button type="button" class="card glass${p.key === selected ? " selected" : ""}${p.live.length && !stale(p) ? " live" : ""}" data-key="${esc(p.key)}">
       <div class="head"><span class="name">${esc(p.name)}</span></div><div class="path" title="${esc(p.root)}">${esc(p.root)}</div>
       ${state}${progress}
-      <div class="chips"><span class="chip">${openCount} open</span>${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span></div>
+      <div class="chips"><span class="chip">${openCount} open</span>${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
     </button>`;
   }
 
@@ -336,10 +336,24 @@
     if (data) document.getElementById("updated").textContent = `${data.projects.length} project${data.projects.length === 1 ? "" : "s"} · updated ${ago(data.generatedAt)}${paused ? " · paused" : ""}`;
   }
 
+  // A Pi started before an update still writes its project in the older shape: fill what it lacks.
+  const noSpend = { costUsd: null, inputTokens: 0, outputTokens: 0, runs: 0, unpricedRuns: 0 };
+  const upgrade = (p) => ({
+    live: [], notices: [], consults: [], needsYou: [], budgetUsd: null, ...p,
+    runs: p.runs ?? [], olderVersion: !Array.isArray(p.runs),
+    sessions: (p.sessions ?? []).map((s) => ({ tasks: [], decisions: [], rounds: [], requirements: [], ...s, spend: s.spend ?? noSpend })),
+  });
   window.waiccTracker = (next) => {
     if (paused || !next || !Array.isArray(next.projects)) return;
-    data = next;
-    if (next.generatedAt !== shown) { shown = next.generatedAt; render(); }
+    data = { ...next, projects: next.projects.map(upgrade) };
+    if (next.generatedAt !== shown) {
+      shown = next.generatedAt;
+      try {
+        render();
+      } catch (error) {
+        document.getElementById("app").innerHTML = `<p class="empty">The tracker could not show this data: ${esc(error.message)}</p>`;
+      }
+    }
     tick();
   };
   let script = null;
