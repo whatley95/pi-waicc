@@ -12,6 +12,38 @@ and where to reply. Pi validates that reply, assesses the evidence, and prepares
 the next decision or handoff. A fresh agent can pick up the assignment without
 needing the original chat history.
 
+## Quick start
+
+**New here? Read [docs/QUICKSTART.md](docs/QUICKSTART.md)**: install to a closed contract in
+ten commands, with one worked example. In short:
+
+```text
+pi install git:github.com/whatley95/pi-waicc      # once, in a terminal
+/waicc-dispatch --init-profiles                   # once: pick an agent per role
+/waicc-planning <what you want, and constraints>  # start a contract
+/waicc-dispatch                                   # an agent plans; then /waicc-continue
+/waicc-develop                                    # the main agent builds the accepted plan
+/waicc-review <focus>                             # then /waicc-dispatch and /waicc-continue
+/waicc-close <reason>                             # when the review passes
+```
+
+Or `/waicc-dispatch --auto` after `/waicc-planning` to plan, build and review on its own.
+`/waicc-tracker` shows every project on one page.
+
+**This README is the full reference.** Contents: [Install](#install) ·
+[Start a conversation](#start-a-conversation) ·
+[Coding and testing handoffs](#optional-coding-and-testing-handoffs) ·
+[Manual handoff](#manual-handoff-exactly-what-to-give) ·
+[Dispatch to a headless agent](#dispatch-to-a-headless-agent) ·
+[Agent profiles](#agent-profiles-choose-an-agent-per-role-once) ·
+[MCP server](#mcp-server-for-any-agent) · [Commands](#commands) ·
+[Finish a contract](#finish-a-contract-discussion) ·
+[Advisor](#when-the-main-agent-is-stuck-it-asks-the-advisor) ·
+[Monorepos](#monorepos-one-service-as-its-own-project) ·
+[Storage](#project-storage-and-version-control) · [Memory](#memory-and-wai-skills) ·
+[Integrity and limits](#integrity-and-limits). Exact formats and rules:
+[docs/PROTOCOL.md](docs/PROTOCOL.md).
+
 ## Install
 
 Requires **Node.js 22.19+** and the **`@earendil-works` Pi coding-agent host**.
