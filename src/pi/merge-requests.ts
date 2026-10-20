@@ -1,9 +1,10 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { listSessions, loadSession } from "../files.ts";
-import { gitlabClient, gitlabProject, mergeRequestInfo, openMergeRequests, reviewComments, summaryNote, type GitLabProject, type ReviewComment } from "../gitlab.ts";
+import { gitlabClient, gitlabProject, mergeRequestInfo, openMergeRequests, reviewComments, saveWindowsUserVariable, summaryNote, tokenPageUrl, type GitLabHost, type GitLabProject, type ReviewComment } from "../gitlab.ts";
 import { addGitlabHost, gitlabHost, userConfigPath } from "../profiles.ts";
 import { chooseRemote, remoteMergeRequests, repositoryPrefix } from "../revision.ts";
 import { projectRoot } from "../source.ts";
+import { openPage } from "../tracker.ts";
 import { postedComments, recordPostedComments, type PostedComments } from "../workflow.ts";
 import { ensure } from "../validation.ts";
 import type { App } from "./app.ts";
@@ -13,6 +14,80 @@ const oneLine = (text: string, max = 110) => {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 };
+
+// A token pasted during setup and not saved: kept in memory for this Pi session only. Never put in
+// Pi's environment, so agents WAICC dispatches do not inherit it.
+const sessionTokens = new Map<string, string>();
+/** Forgets tokens pasted this session (tests start each case clean). */
+export const forgetSessionTokens = (): void => sessionTokens.clear();
+/** A listed host's settings, with a token pasted this session if the file or variable has none. */
+export function resolveGitlabHost(cwd: string, host: string): GitLabHost | null {
+  const listed = gitlabHost(cwd, host);
+  return listed && !listed.token && sessionTokens.has(host.toLowerCase()) ? { ...listed, token: sessionTokens.get(host.toLowerCase())! } : listed;
+}
+
+/**
+ * Guided setup for a GitLab host, step by step and only with your yes at each step: list the host
+ * in your user file, open GitLab's token page, take the pasted token, check it with GitLab, then
+ * keep it (a Windows user variable, or your user file elsewhere) or use it for this session only.
+ * Returns the host's settings, or null when you stopped.
+ */
+async function setupGitlabHost(app: App, ctx: ExtensionCommandContext, project: GitLabProject): Promise<GitLabHost | null> {
+  const { services } = app;
+  const listed = gitlabHost(ctx.cwd, project.host);
+  const manual = `WAICC posts only to GitLab hosts listed in your user file. Add this to ${userConfigPath()}:\n"gitlab": { "${project.host}": { "tokenEnv": "GITLAB_TOKEN"${project.secure ? "" : `, "allowHttp": true`} } }\nthen create a GitLab personal access token with the "api" scope and set it, in PowerShell: setx GITLAB_TOKEN "glpat-...", reopen the terminal and start Pi again.`;
+  if (!listed && !(await ctx.ui.confirm(`Set up ${project.host} for posting? (step 1 of 3)`,
+    `WAICC posts only to GitLab hosts in your user file (${userConfigPath()}). Add ${project.host} there? Next you create a token, and WAICC checks it with GitLab before posting anything.`))) {
+    ctx.ui.notify(`Nothing was posted. ${manual}`, "info");
+    return null;
+  }
+  if (!project.secure && !listed?.allowHttp && !(await ctx.ui.confirm("Send the token over plain http?",
+    `${project.host} is reached over http, so your token would travel unencrypted. Allow that for this host? Say no unless the network is trusted.`))) {
+    ctx.ui.notify(`Nothing was posted, and ${project.host} was not added: posting to it needs the token over plain http.`, "info");
+    return null;
+  }
+  const allowHttp = !project.secure;
+  const save = (options: { token?: string } = {}) => (listed ? null : addGitlabHost(project.host, { allowHttp, ...options }));
+  if (!listed && process.env.GITLAB_TOKEN?.trim()) {
+    save();
+    return resolveGitlabHost(ctx.cwd, project.host);
+  }
+
+  const page = tokenPageUrl(project);
+  if (await ctx.ui.confirm("Create a GitLab token (step 2 of 3)",
+    `WAICC needs a personal access token with the "api" scope. Open GitLab's page for it in your browser? It comes filled in with the name "WAICC reviews" and the api scope: choose an expiry date, create it and copy it. If the page is not found, use your avatar → Preferences → Access tokens.`))
+    (services.openPage ?? openPage)(page);
+  const token = (await ctx.ui.input("Paste the token (it starts with glpat-). It is checked with GitLab and never shown in the chat.", "glpat-..."))?.trim();
+  if (!token) {
+    ctx.ui.notify(`Nothing was posted. When you have the token, run /waicc-mr-comments again (token page: ${page}).`, "info");
+    return null;
+  }
+  if (!/^[A-Za-z0-9_.-]{8,200}$/.test(token)) {
+    ctx.ui.notify("That does not look like a GitLab token, so nothing was saved or posted. Copy the whole token and run /waicc-mr-comments again.", "error");
+    return null;
+  }
+  let username = "";
+  try {
+    const user = await (services.gitlab ?? gitlabClient)(project, { token, allowHttp })("GET", "/user");
+    username = String(user?.username ?? "");
+  } catch (error) {
+    ctx.ui.notify(`GitLab did not accept that token (${error instanceof Error ? error.message : String(error)}), so nothing was saved or posted. Check it has the "api" scope and has not expired.`, "error");
+    return null;
+  }
+
+  // Step 3: keep it for next time, or use it only in this Pi session.
+  const windows = process.platform === "win32";
+  const keep = await ctx.ui.confirm(`The token works${username ? `: signed in as @${username}` : ""} (step 3 of 3)`,
+    windows
+      ? "Keep it for next time as the GITLAB_TOKEN variable in your Windows user settings (what setx does)? Programs you start later can read it. Without it, it works in this Pi session and you paste it again after a restart."
+      : `Keep it for next time in your user file (${userConfigPath()}), readable only by you? Without it, it works in this Pi session; to keep it yourself, add export GITLAB_TOKEN="…" to your shell profile.`);
+  let saved = false;
+  if (keep && windows) saved = (services.saveUserVariable ?? saveWindowsUserVariable)("GITLAB_TOKEN", token);
+  const added = save(keep && !windows ? { token } : {});
+  if (!(keep && !windows)) sessionTokens.set(project.host.toLowerCase(), token);
+  ctx.ui.notify(`${added ? `Added ${project.host} to ${added.path}. ` : ""}${keep ? (windows ? (saved ? "Saved GITLAB_TOKEN in your Windows user settings; new terminals will have it." : "Could not save GITLAB_TOKEN in your Windows settings; it works for this Pi session.") : "Saved the token in your user file.") : "The token works for this Pi session only."}`, "info");
+  return resolveGitlabHost(ctx.cwd, project.host);
+}
 
 const ago = (iso: string) => {
   const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
@@ -42,7 +117,7 @@ export async function pickMergeRequest(app: App, ctx: ExtensionCommandContext, w
   try {
     project = provider === "gitlab" && url ? gitlabProject(url) : null;
   } catch { /* an unusual remote URL: list with git only */ }
-  const host = project ? gitlabHost(ctx.cwd, project.host) : null;
+  const host = project ? resolveGitlabHost(ctx.cwd, project.host) : null;
   let rows: { number: number; label: string }[], title: string;
   ctx.ui.notify(`Listing merge requests on ${remote}…`, "info");
   if (project && host?.token) {
@@ -89,20 +164,8 @@ export function registerMergeRequestCommands(app: App): void {
         "No assessed review to post yet: /waicc-dispatch the review, then /waicc-continue so the main agent checks its findings");
       ensure(mr.url, "The merge request's remote URL was not recorded; fetch it again with /waicc-review --mr");
       const project = gitlabProject(mr.url);
-      let host = gitlabHost(ctx.cwd, project.host);
-      const tokenSteps = `create a GitLab personal access token with the "api" scope (avatar → Preferences → Access tokens) and set it: in PowerShell, setx GITLAB_TOKEN "glpat-...", then close and reopen the terminal and start Pi again. Then run /waicc-mr-comments`;
-      if (!host) {
-        // Only with your yes: the host goes into your user file, the token never does.
-        const manual = `WAICC posts only to GitLab hosts listed in your user file. Add this to ${userConfigPath()}:\n"gitlab": { "${project.host}": { "tokenEnv": "GITLAB_TOKEN"${project.secure ? "" : `, "allowHttp": true`} } }\nthen ${tokenSteps}.`;
-        if (!(await ctx.ui.confirm(`Set up ${project.host} for posting?`,
-          `WAICC posts only to GitLab hosts in your user file (${userConfigPath()}). Add ${project.host} there, with its token read from the GITLAB_TOKEN environment variable? No token is written to the file.`)))
-          return ctx.ui.notify(`Nothing was posted. ${manual}`, "info");
-        const allowHttp = !project.secure && await ctx.ui.confirm("Send the token over plain http?",
-          `${project.host} is reached over http, so your token would travel unencrypted. Allow that for this host? Say no unless the network is trusted; nothing will be posted to it then.`);
-        const added = addGitlabHost(project.host, { allowHttp });
-        if (!added.tokenSet) return ctx.ui.notify(`Added ${added.host} to ${added.path}. Now ${tokenSteps}.`, "info");
-        host = gitlabHost(ctx.cwd, project.host)!;
-      }
+      const host = resolveGitlabHost(ctx.cwd, project.host)?.token ? resolveGitlabHost(ctx.cwd, project.host)! : await setupGitlabHost(app, ctx, project);
+      if (!host) return;
       const call = (services.gitlab ?? gitlabClient)(project, host);
       const info = await mergeRequestInfo(call, mr.number);
       const reviewed = round.review.revision.to;
