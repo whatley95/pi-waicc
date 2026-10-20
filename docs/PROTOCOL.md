@@ -544,7 +544,13 @@ latest journal entry. It is written atomically to
 then every project file updated within 14 days whose root still exists (at most 30) is
 written into `data.js` as `window.waiccTracker({...})`, which `index.html`, copied from
 `templates/tracker.html`, loads every 3 s and renders with all text escaped.
-`session_shutdown` writes the project with no running work. Failures are ignored. Recipient
+Each project status carries `extension: {version, build, outdated}`. `build` is the first 12
+hex of a SHA-256 over the sorted names and content digests of the package's `src` (nested
+folders included; `.ts`, `.js`, `.json`, `.html`) and `templates`, computed when the module
+loads. At most once a minute it is recomputed from disk; once it differs, the chat is outdated
+for the rest of its life: the status adds a `/reload` needs-you item and, after the next
+`agent_end`, a chat with UI is told once to type `/reload` (Pi's reload loads extensions
+afresh). `session_shutdown` writes the project with no running work. Failures are ignored. Recipient
 chats, dispatched agents (`WAICC_DISPATCH_PIN`), `WAICC_TRACKER=off` and the `off` marker
 file that `/waicc-tracker off` creates all skip it.
 
