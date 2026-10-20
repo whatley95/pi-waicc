@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,30 @@ export function initAgentConfig() {
     created: true, path, template: templateConfigPath(),
     nextAction: "Created your agent config from the default template. Its models need matching accounts (Claude, Codex, and DeepSeek in Pi); change any you do not have, then check with /waicc-dispatch --profiles.",
   };
+}
+
+/**
+ * Adds a GitLab host to your user file, its token read from an environment variable, after you
+ * agreed to it. Everything else in the file is kept, a host already there is never replaced, and
+ * no token is ever written: you set the variable yourself.
+ */
+export function addGitlabHost(host: string, options: { tokenEnv?: string; allowHttp?: boolean } = {}) {
+  const path = userConfigPath();
+  const name = host.toLowerCase(), tokenEnv = options.tokenEnv ?? "GITLAB_TOKEN";
+  let config: Record<string, unknown> = {};
+  if (existsSync(path)) {
+    try {
+      config = record(JSON.parse(readFileSync(path, "utf8")), "Your user file");
+    } catch (error) {
+      throw new Error(`${path} is not valid JSON, so it was left unchanged: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const gitlab = config.gitlab === undefined ? {} : record(config.gitlab, `"gitlab" in ${path}`);
+  ensure(!Object.keys(gitlab).some((key) => key.toLowerCase() === name), `${name} is already under "gitlab" in ${path}; it was left unchanged`);
+  config.gitlab = { ...gitlab, [name]: { tokenEnv, ...(options.allowHttp ? { allowHttp: true } : {}) } };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  return { path, host: name, tokenEnv, tokenSet: Boolean(process.env[tokenEnv]?.trim()) };
 }
 
 function readConfig(path: string, source: Source, into: AgentConfig): void {
