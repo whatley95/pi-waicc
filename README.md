@@ -723,7 +723,12 @@ that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
   (review passed, plan ready, a reply to assess), with the command to type.
 - **A card per project:** the main agent's model, the agent at work (agent, model, effort,
   loop cycle, elapsed time, its last steps), or the session's status when idle, its task
-  progress and today's spend. Projects at work come first.
+  progress and today's spend. Projects at work come first. The main agent shows here too
+  while it works on a turn: "Main agent · claude-opus-5-5 working", how long, its last steps
+  ("Reading src/menu.tsx", "Running npm test") and its latest message; it disappears when the
+  turn ends. A review of a merge request or a `--rev` range shows what it reviews
+  ("MR !7 → develop", linked to the merge request), what was posted to GitLab, and, under
+  Needs you, when an assessed review is ready to post.
 - **Click a card** for its tabs:
   - **Overview:** what the agent is doing step by step and its latest message; the main
     agent in each Pi chat in the project (model now, other models used, spend today and in
