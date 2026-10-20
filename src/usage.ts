@@ -77,3 +77,31 @@ export function usageText(usage: Usage | null | undefined): string | null {
   const all = usage.inputTokens + usage.outputTokens;
   return `${usage.costUsd !== null ? `$${usage.costUsd.toFixed(2)} · ` : ""}${tokens(all)} tokens`;
 }
+
+/** The main agent's use in one model for one hour of a Pi chat. */
+export interface ChatHour { at: string; model: string; messages: number; usage: Usage }
+/**
+ * The main agent's use, from a Pi chat's saved entries: every assistant message on every branch,
+ * since each one was paid for. Grouped by model and hour so a long chat stays small.
+ */
+export function chatUsage(entries: readonly unknown[]): ChatHour[] {
+  const hours = new Map<string, ChatHour>();
+  for (const entry of entries as any[]) {
+    const m = entry?.type === "message" ? entry.message : null;
+    if (m?.role !== "assistant" || !m.usage || typeof m.model !== "string") continue;
+    const at = new Date(typeof entry.timestamp === "string" ? entry.timestamp : m.timestamp);
+    if (Number.isNaN(at.getTime())) continue;
+    at.setUTCMinutes(0, 0, 0);
+    const model = typeof m.provider === "string" && m.provider ? `${m.provider}/${m.model}` : m.model;
+    const id = `${at.toISOString()}\0${model}`;
+    let hour = hours.get(id);
+    if (!hour) hours.set(id, (hour = { at: at.toISOString(), model, messages: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: null } }));
+    const u = m.usage;
+    hour.messages++;
+    hour.usage.inputTokens += count(u.input) + count(u.cacheRead) + count(u.cacheWrite);
+    hour.usage.cachedTokens += count(u.cacheRead);
+    hour.usage.outputTokens += count(u.output);
+    if (typeof u.cost?.total === "number" && Number.isFinite(u.cost.total)) hour.usage.costUsd = (hour.usage.costUsd ?? 0) + u.cost.total;
+  }
+  return [...hours.values()].sort((a, b) => a.at.localeCompare(b.at));
+}

@@ -557,24 +557,28 @@ that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
   and in the last 7 days, across all projects.
 - **Needs you:** every decision waiting for your answer and each session's next step for you
   (review passed, plan ready, a reply to assess), with the command to type.
-- **A card per project:** the agent at work (agent, model, effort, loop cycle, elapsed
-  time, its last steps), or the session's status when idle, its task progress and today's
-  spend. Projects at work come first.
+- **A card per project:** the main agent's model, the agent at work (agent, model, effort,
+  loop cycle, elapsed time, its last steps), or the session's status when idle, its task
+  progress and today's spend. Projects at work come first.
 - **Click a card** for its tabs:
-  - **Overview:** what the agent is doing step by step and its latest message, recent run
-    results, and each session's requirements, tasks (marked when the coder reports them
-    done) and budget bar.
+  - **Overview:** what the agent is doing step by step and its latest message; the main
+    agent in each Pi chat in the project (model now, other models used, spend today and in
+    all); recent run results; and each session's requirements, tasks (marked when the coder
+    reports them done) and budget bar.
   - **Timeline:** every round (plan, review, fixes, re-reviews) with agent, result,
     findings, checks, time and cost.
   - **Decisions:** open ones first, with recommendations and the command to accept them.
-  - **Spend:** today, 7 days and all time; a 7-day chart; and totals by agent and model, by
-    step (planning, code review, testing…) and by session.
+  - **Spend:** today, 7 days and all time; a 7-day chart; and totals by who (main agent,
+    agents WAICC sent work to, advisor), by agent and model, by step (planning, code review,
+    testing…) and by session.
   - **Advisor:** the main agent's questions when it was stuck, and the answers.
 
 Costs are what each agent reports about its own run: Claude and Pi report dollars (on a
 subscription, Claude's figure is the API-equivalent price), Codex reports tokens only, shown
 as "tokens only". Failed runs count too. The same figure appears in Pi when a run finishes,
-for example `codex submitted a reply ($0.75 · 443k tokens)`.
+for example `codex submitted a reply ($0.75 · 443k tokens)`. The main agent's figures are
+every message it sent in that project's Pi chats, WAICC work or not, as Pi records them; they
+are shown as messages rather than runs and never count toward your budget.
 
 The page is `~/.pi/agent/waicc-tracker/index.html` (beside your profiles). It refreshes itself
 every 3 s and needs no server: each Pi chat writes its project's status into that folder.
