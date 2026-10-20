@@ -25,6 +25,7 @@ import { checkCommand, runRecipientCheck, type CheckCommand, type CheckRunner } 
 import { commandText, dispatchChecksVariable, dispatchPinVariable, maxCheckMs, prepareDispatch, runAgent, runDispatch, type AgentRunner, type DispatchOptions } from "./dispatch.ts";
 import { consultSettings, decisionSettings, initAgentConfig, policyGuidance, profilesView, projectConfigPath, resolveDispatch } from "./profiles.ts";
 import { consultAdvisor } from "./consult.ts";
+import { openPage, projectStatus, publish, setTrackerEnabled, trackerEnabled, trackerPage, type LiveRun, type Notice } from "./tracker.ts";
 import { autoDecidable } from "./decisions.ts";
 import { elapsed, type ProgressEvent } from "./progress.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "./checkpoint.ts";
@@ -134,25 +135,74 @@ For useful discoveries, waicc_memory propose saves candidates. /waicc-memory con
 
 export default function waicc(
   pi: ExtensionAPI,
-  services: { copyText?: ClipboardWriter; runCheck?: CheckRunner; runAgent?: AgentRunner } = {},
+  services: { copyText?: ClipboardWriter; runCheck?: CheckRunner; runAgent?: AgentRunner; openPage?: (path: string) => boolean } = {},
 ): void {
   const bindings = new Map<string, ChatBinding>();
   const copied = new Map<string, string>();
   const compactedRuns = new Set<string>();
   const automaticRequests = new AutoPlanningRequests();
   // Every WAICC tool accepts nested arguments sent as JSON text (see decodeJsonArguments).
+  // The tracker page is refreshed after every tool and command (see track).
   const registerTool: ExtensionAPI["registerTool"] = (tool) =>
-    pi.registerTool({ ...tool, execute: (id, params, ...rest) => tool.execute(id, decodeJsonArguments(params, tool.parameters), ...rest) });
+    pi.registerTool({ ...tool, execute: async (id, params, signal, update, ctx) => {
+      try {
+        return await tool.execute(id, decodeJsonArguments(params, tool.parameters), signal, update, ctx);
+      } finally {
+        track(ctx);
+      }
+    } });
   const dispatches = new Map<string, {
     controller: AbortController; done: Promise<unknown>;
-    label: string; startedAt: number; events: ProgressEvent[];
+    label: string; startedAt: number; events: ProgressEvent[]; root: string;
   }>();
+  /** The main agent's advisor questions in progress, by chat. */
+  const advising = new Map<string, LiveRun & { root: string }>();
+  /** Recent run outcomes per project, for the tracker page. */
+  const notices = new Map<string, Notice[]>();
+  const trackTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const doing: Record<string, string> = { planning: "planning", review: "reviewing", advisor: "advising", implementation: "coding", testing: "testing" };
   const mark = (event: ProgressEvent) => (event.kind === "rejected" ? "✗" : event.kind === "waicc" ? "◆" : event.kind === "note" ? "·" : "›");
   const stepLine = (event: ProgressEvent) => `${elapsed(event.at).padStart(7)}  ${mark(event)} ${event.text}`;
   let dispatchRefusal: string | undefined;
   const key = (ctx: ExtensionContext): string =>
     `${projectRoot(ctx.cwd)}:${ctx.sessionManager.getSessionId()}`;
+  const toLive = (kind: LiveRun["kind"], sessionId: string | null, label: string, startedAt: number, events: ProgressEvent[]): LiveRun => ({
+    kind, sessionId, label, startedAt,
+    steps: events.filter((event) => event.kind !== "note").slice(-12),
+    said: events.findLast((event) => event.kind === "note")?.text ?? null,
+  });
+  function trackerStatus(ctx: ExtensionContext, root: string, live = true) {
+    const runs = live
+      ? [
+          ...[...dispatches].filter(([, run]) => samePath(run.root, root)).map(([id, run]) => toLive("dispatch", id, run.label, run.startedAt, run.events)),
+          ...[...advising.values()].filter((run) => samePath(run.root, root)),
+        ]
+      : [];
+    const binding = bindings.get(key(ctx));
+    return projectStatus(root, runs, notices.get(root) ?? [], binding?.role === "coordinator" ? binding.sessionId : null);
+  }
+  /** Refreshes this project on the tracker page, at most every 2 s, off WAICC's own path; never fails WAICC. */
+  function track(ctx: ExtensionContext, immediately = false, live = true): void {
+    try {
+      if (!ctx.isProjectTrusted() || bindings.get(key(ctx))?.role === "recipient" || !trackerEnabled()) return;
+      const root = projectRoot(ctx.cwd);
+      const run = () => {
+        trackTimers.delete(root);
+        try {
+          publish(trackerStatus(ctx, root, live));
+        } catch { /* the page is a convenience; WAICC carries on */ }
+      };
+      if (immediately) return run();
+      if (trackTimers.has(root)) return;
+      const timer = setTimeout(run, 2_000);
+      timer.unref?.();
+      trackTimers.set(root, timer);
+    } catch { /* as above */ }
+  }
+  const notice = (ctx: ExtensionContext, level: Notice["level"], text: string) => {
+    const root = projectRoot(ctx.cwd);
+    notices.set(root, [...(notices.get(root) ?? []), { at: new Date().toISOString(), level, text }].slice(-5));
+  };
   function selected(ctx: ExtensionContext, explicit?: string): string {
     const id = explicit || bindings.get(key(ctx))?.sessionId;
     ensure(
@@ -341,6 +391,8 @@ export default function waicc(
             error instanceof Error ? error.message : String(error),
             "error",
           );
+        } finally {
+          track(ctx);
         }
       },
     });
@@ -698,6 +750,29 @@ export default function waicc(
     async (_args, ctx) => continueSession(ctx),
   );
   command(
+    "waicc-tracker",
+    "Open the live tracker page for all your projects; /waicc-tracker off|on turns it off or on",
+    async (args, ctx) => {
+      ensure(["", "on", "off"].includes(args), "Usage: /waicc-tracker [on|off]");
+      if (args === "off") {
+        setTrackerEnabled(false);
+        ctx.ui.notify("Tracker off. /waicc-tracker on turns it back on.", "info");
+        show(ctx, { tracker: "off", page: trackerPage(), nextAction: "No Pi chat updates the page now. /waicc-tracker on turns it back on." });
+        return;
+      }
+      if (args === "on") setTrackerEnabled(true);
+      ensure(trackerEnabled(), process.env.WAICC_TRACKER === "off"
+        ? "The tracker is turned off for this Pi by WAICC_TRACKER=off."
+        : "The tracker is off. /waicc-tracker on turns it back on.");
+      const page = publish(trackerStatus(ctx, projectRoot(ctx.cwd)));
+      const opened = ctx.hasUI && (services.openPage ?? openPage)(page);
+      show(ctx, {
+        tracker: "on", page, opened,
+        nextAction: `${opened ? "Opened in your browser." : `Open ${page} in your browser.`} It refreshes itself every 3 s and shows every project where Pi runs WAICC; keep it open. Nothing leaves your computer.`,
+      });
+    },
+  );
+  command(
     "waicc-status",
     "Show selected session progress; open/all/closed/deleted explicitly lists project sessions",
     async (args, ctx) => {
@@ -784,6 +859,7 @@ export default function waicc(
   const loopName = (loop: Loop) => (loop.mode === "planning" ? "Planning loop" : "Review loop");
   const endLoop = (ctx: ExtensionContext, id: string, message: string, level: "info" | "warning" | "error" = "info") => {
     loops.delete(id);
+    notice(ctx, level, message);
     ctx.ui.notify(message, level);
     pi.sendMessage({ customType: "waicc-review-loop", content: message, display: true }, { triggerTurn: false });
   };
@@ -805,7 +881,7 @@ export default function waicc(
     const loop = loops.get(id);
     const controller = new AbortController();
     const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
-    const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[] };
+    const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root };
     // A live panel above the editor and a footer status, refreshed on each step and every few seconds.
     const render = () => {
       const recent = state.events.filter((event) => event.kind !== "note").slice(-5);
@@ -816,6 +892,7 @@ export default function waicc(
         ...(said ? [`         says: ${said.text}`] : []),
       ]);
       ctx.ui.setStatus?.("waicc-dispatch", `${plan.via} ${doing[plan.mode] ?? plan.mode}${loop ? ` ${loop.cycle}/${loop.max}` : ""} · ${elapsed(Date.now() - state.startedAt)}`);
+      track(ctx);
     };
     const ticker = setInterval(render, 5_000);
     ticker.unref?.();
@@ -825,6 +902,7 @@ export default function waicc(
       ctx.ui.setWidget?.("waicc-dispatch", undefined);
       ctx.ui.setStatus?.("waicc-dispatch", undefined);
       if (dispatches.get(id) === state) dispatches.delete(id);
+      track(ctx);
     };
     // Runs in the background so this chat stays usable; the result arrives as a message.
     const done = runDispatch(plan, services.runAgent, controller.signal, (event) => {
@@ -840,6 +918,7 @@ export default function waicc(
         ctx.ui.notify(outcome.replySubmitted
           ? `${plan.via} submitted a reply.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
           : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
+        notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}.`);
         pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
         const current = loops.get(id);
         if (current && !outcome.replySubmitted) return endLoop(ctx, id, `${loopName(current)} stopped at cycle ${current.cycle}/${current.max}: ${plan.via} submitted no reply. See the dispatch log.`, "warning");
@@ -1237,6 +1316,8 @@ export default function waicc(
           ...(events.length ? events.filter((event) => event.kind !== "note").slice(-4).map(stepLine) : ["        starting the advisor…"]),
         ]);
         ctx.ui.setStatus?.("waicc-advisor", `advisor · ${elapsed(Date.now() - startedAt)}`);
+        advising.set(chat, { ...toLive("advisor", binding?.role === "coordinator" ? binding.sessionId : null, `${label} · ${params.question.slice(0, 120)}`, startedAt, events), root: projectRoot(ctx.cwd) });
+        track(ctx);
       };
       const ticker = setInterval(render, 5_000);
       ticker.unref?.();
@@ -1247,6 +1328,7 @@ export default function waicc(
           render();
           update?.({ content: [{ type: "text", text: `Advisor: ${event.text}` }], details: undefined });
         });
+        notice(ctx, outcome.answer ? "info" : "warning", `Advisor ${settings.profile}: ${outcome.answer ? "answered" : "gave no answer to"} "${params.question.slice(0, 120)}" in ${elapsed(outcome.durationMs)}.`);
         ensure(outcome.answer, `The advisor gave no answer (exit ${outcome.code}${outcome.killed ? ", stopped" : ""}). See ${outcome.log}. Continue on your own or ask the human.`);
         return {
           content: [{
@@ -1258,6 +1340,7 @@ export default function waicc(
       } finally {
         clearInterval(ticker);
         consulting.delete(chat);
+        advising.delete(chat);
         ctx.ui.setWidget?.("waicc-advisor", undefined);
         ctx.ui.setStatus?.("waicc-advisor", undefined);
       }
@@ -1563,10 +1646,14 @@ export default function waicc(
   pi.on("agent_end", async (_event, ctx) => {
     automaticRequests.clear(ctx);
     advanceLoop(ctx);
+    track(ctx);
   });
+  // Pi is closing this chat: its agents stop with it, so the page shows the project idle.
+  pi.on("session_shutdown", async (_event, ctx) => { track(ctx, true, false); });
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);
+    track(ctx);
     const entry = ctx.sessionManager
       .getBranch()
       .findLast(

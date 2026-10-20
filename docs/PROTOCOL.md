@@ -530,6 +530,24 @@ requirements preview. The user file's `autoAdvisor` (`true` = 3, `false` = off, 
 Pi chat, counted by `waicc-advisor-consult` entries on the chat branch, appended before the
 run so failed or stopped consults count. One consult runs at a time per chat.
 
+The tracker is a read-only view outside the project. After each WAICC tool and command,
+`agent_end`, `session_start` and each dispatch or consult progress tick, a coordinator chat in
+a trusted project schedules (at most once per 2 s, timer unref'd) a summary of its project:
+open sessions and the five most recent closed ones (contract title, requirements, tasks with
+whether the latest whole-work report claims them, decisions, rounds with outcome, assessment,
+findings, checks and the round's last dispatch result), the last ten consults, the chat's
+running dispatches and consult, its last five run notices, and needs-you items (open human or
+external decisions; READY_TO_CLOSE, PLAN_READY, AWAITING_ASSESSMENT, NEEDS_CLARIFICATION, BLOCKED
+and WAITING_FOR_REPLY when nothing runs for that session). Session summaries are cached by
+latest journal entry. It is written atomically to
+`$PI_CODING_AGENT_DIR/waicc-tracker/projects/<key>.json` (key: digest of the project root),
+then every project file updated within 14 days whose root still exists (at most 30) is
+written into `data.js` as `window.waiccTracker({...})`, which `index.html`, copied from
+`templates/tracker.html`, loads every 3 s and renders with all text escaped.
+`session_shutdown` writes the project with no running work. Failures are ignored. Recipient
+chats, dispatched agents (`WAICC_DISPATCH_PIN`), `WAICC_TRACKER=off` and the `off` marker
+file that `/waicc-tracker off` creates all skip it.
+
 Isolated worktrees link top-level `node_modules`, `.venv` and `venv` directories that Git
 ignores (a junction on Windows) instead of copying them. Changes under a linked folder are
 dropped from the change list, and removal unlinks each folder (removing only the link)

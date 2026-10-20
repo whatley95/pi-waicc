@@ -550,6 +550,27 @@ Every step and the agent's last message are also saved in the run's `dispatch/<i
 Progress comes from each agent's own event stream (Claude `stream-json`, Codex `--json`,
 Pi `--mode json`); Antigravity's stream is not verified, so it may show fewer steps.
 
+**Watch every project on one page.** Run `/waicc-tracker` and your browser opens one page
+that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
+
+- **Needs you:** every decision waiting for your answer and each session's next step for you
+  (review passed, plan ready, a reply to assess), with the command to type.
+- **A card per project:** the agent at work (agent, model, effort, loop cycle, elapsed
+  time, its last steps), or the session's status when idle. Projects at work come first.
+- **Click a card** for its details: what the agent is doing step by step and its latest
+  message, then each session's requirements, tasks (marked when the coder reports them
+  done), decisions with recommendations and answers, the round timeline (plan, review, fixes
+  and re-reviews, with agent, result, findings, checks and time), and the main agent's
+  advisor questions with their answers.
+
+The page is `~/.pi/agent/waicc-tracker/index.html` (beside your profiles). It refreshes itself
+every 3 s and needs no server: each Pi chat writes its project's status into that folder.
+Keep it open in a tab, or open it again any time. Nothing leaves your computer. Updating it
+takes about 10 ms, at most once every 2 s, and never while WAICC is saving. If writing it ever
+fails, WAICC carries on. A card whose agent stops reporting for 90 s says Pi may have
+closed. Projects not seen for 14 days drop off. `/waicc-tracker off` stops every chat
+from updating it; `/waicc-tracker on` turns it back on.
+
 **Continue automatically.** Add `--continue` (short: `-c`) and, when the agent submits a valid reply,
 WAICC runs the `/waicc-continue` step for you: the reply is validated and the main agent
 starts assessing it. If the main agent is busy, the assessment waits for its current turn.
@@ -1034,6 +1055,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch --via <agent> --check "<command>"...` | Dispatch a testing (or coding) handoff that may run only these exact pre-approved commands |
 | `/waicc-dispatch [profile]`                      | Dispatch with the agent profile for the waiting handoff's role, or a named profile |
 | `/waicc-dispatch --progress`                     | List every step the running agent has taken so far |
+| `/waicc-tracker [on\|off]`                       | Open the live page for all your projects in the browser; off/on stops or resumes its updates |
 | `/waicc-dispatch [profile] --continue` (or `-c`)  | Run the continue step automatically when a valid reply arrives (`--no-continue` to skip once) |
 | `/waicc-dispatch [profile] --loop [cycles]`      | Code review → fix → re-review until it passes, or plan → assess → revise until accepted; at most 3 cycles by default; never closes |
 | `/waicc-dispatch --loop 3 --develop [--review]`  | Plan until accepted, start development, then review with your review profile until it passes |
