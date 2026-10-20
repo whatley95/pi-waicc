@@ -10,29 +10,66 @@ import { ensure } from "../validation.ts";
 import type { RecipientPin, Session } from "../types.ts";
 import { authorizationState } from "../state.ts";
 import { autoPlanningInstructions } from "../auto-planning.ts";
+import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
 import type { App } from "./app.ts";
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
-  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop } = app;
+  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns } = app;
   // Set when a dispatched recipient's binding is refused; its every turn then only explains why.
   let dispatchRefusal: string | undefined;
   pi.on("input", async (event, ctx) => {
     automaticRequests.capture(event, ctx, bindings.get(key(ctx))?.role === "recipient");
   });
+  // The main agent's turn, step by step, for the tracker: what it is working on right now.
+  // Steps read like a dispatched agent's ("Reading src/x.ts", "Running npm test").
+  const feedMain = (ctx: Parameters<typeof track>[0], event: unknown) => {
+    const turn = mainTurns.get(key(ctx));
+    if (!turn) return;
+    try {
+      turn.events.push(...turn.read(JSON.stringify(event)));
+      if (turn.events.length > 200) turn.events.splice(0, turn.events.length - 200);
+    } catch { /* a step the tracker cannot read is left out */ }
+    track(ctx);
+  };
+  const endMain = (ctx: Parameters<typeof track>[0]) => {
+    const turn = mainTurns.get(key(ctx));
+    if (turn) clearInterval(turn.ticker);
+    mainTurns.delete(key(ctx));
+  };
+  pi.on("agent_start", async (_event, ctx) => {
+    // A dispatched recipient's own Pi is not this project's main agent.
+    if (bindings.get(key(ctx))?.role === "recipient") return;
+    endMain(ctx);
+    // Refreshed while it thinks without using tools, so the page does not take it for gone.
+    const ticker = setInterval(() => track(ctx), 20_000);
+    ticker.unref?.();
+    const model = ctx.model?.id;
+    mainTurns.set(key(ctx), { root: projectRoot(ctx.cwd), label: `Main agent${model ? ` · ${model}` : ""} working`, startedAt: Date.now(), events: [], read: progressParser("pi", ctx.cwd), ticker });
+    track(ctx);
+  });
+  pi.on("tool_execution_start", async (event, ctx) => feedMain(ctx, { type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args }));
+  pi.on("tool_execution_end", async (event, ctx) => {
+    if (event.isError) feedMain(ctx, { type: "tool_execution_end", toolName: event.toolName, isError: true, result: event.result });
+  });
   pi.on("agent_end", async (_event, ctx) => {
+    endMain(ctx);
     automaticRequests.clear(ctx);
     advanceLoop(ctx);
     track(ctx);
     warnOutdated(ctx);
   });
   // The main agent's own use and model, as it works.
-  pi.on("message_end", async (event, ctx) => { if (event.message.role === "assistant") track(ctx); });
+  pi.on("message_end", async (event, ctx) => {
+    if (event.message.role !== "assistant") return;
+    if (mainTurns.has(key(ctx))) feedMain(ctx, { type: "message_end", message: event.message });
+    else track(ctx);
+  });
   pi.on("model_select", async (_event, ctx) => { track(ctx); });
   // Pi is closing this chat: its agents stop with it, so the page shows the project idle.
-  pi.on("session_shutdown", async (_event, ctx) => { track(ctx, true, false); });
+  pi.on("session_shutdown", async (_event, ctx) => { endMain(ctx); track(ctx, true, false); });
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);

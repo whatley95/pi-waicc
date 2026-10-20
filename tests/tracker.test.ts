@@ -234,6 +234,40 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   assert.match(renderPage([JSON.parse(JSON.stringify(big))], "overview", "all"), /<div class="value">32k<\/div>/, "31.6k tokens from 2,105 messages, beyond the run list");
 });
 
+test("the tracker shows what the main agent is working on during its turn, step by step", async (t) => {
+  const { agentDir, project } = setup(t);
+  const { root } = project("shop");
+  const handlers = new Map<string, any>(), commands = new Map<string, any>();
+  waicc({
+    registerCommand: (n: string, c: any) => commands.set(n, c), registerTool() {}, on: (name: string, h: any) => handlers.set(name, h), appendEntry() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage() {},
+  } as unknown as ExtensionAPI, { openPage: () => true });
+  const ctx = {
+    cwd: root, mode: "tui", hasUI: true, isIdle: () => false, isProjectTrusted: () => true, model: { provider: "anthropic", id: "claude-opus-5-5" },
+    sessionManager: { getSessionId: () => "main-chat", getBranch: () => [], getEntries: () => [], getSessionName: () => undefined }, ui: { notify() {} },
+  } as unknown as ExtensionCommandContext;
+  const live = async () => {
+    await commands.get("waicc-tracker").handler("", ctx);
+    let data: { projects: ProjectStatus[] } | undefined;
+    runInNewContext(readFileSync(join(agentDir, "waicc-tracker", "data.js"), "utf8"), { window: { waiccTracker: (d: typeof data) => (data = d) } });
+    return JSON.parse(JSON.stringify(data!.projects.find((p) => p.root === root)!.live)) as ProjectStatus["live"];
+  };
+
+  await handlers.get("agent_start")({}, ctx);
+  await handlers.get("tool_execution_start")({ toolCallId: "1", toolName: "read", args: { path: join(root, "app.txt") } }, ctx);
+  await handlers.get("tool_execution_start")({ toolCallId: "2", toolName: "bash", args: { command: "npm test" } }, ctx);
+  await handlers.get("message_end")({ message: { role: "assistant", content: [{ type: "text", text: "Tests pass; now updating the menu." }] } }, ctx);
+  const [run] = await live();
+  assert.equal(run.kind, "main");
+  assert.equal(run.label, "Main agent · claude-opus-5-5 working");
+  assert.deepEqual(run.steps.map((s) => s.text), ["Reading app.txt", "Running npm test"]);
+  assert.equal(run.said, "Tests pass; now updating the menu.");
+  assert.match(renderPage([{ ...JSON.parse(JSON.stringify(projectStatus(root, [run]))) }]), /Main agent · claude-opus-5-5 working/, "shown on the card and in the overview");
+
+  await handlers.get("agent_end")({}, ctx);
+  assert.deepEqual(await live(), [], "gone when its turn ends");
+});
+
 test("/waicc-tracker opens the page; off stops every update, on resumes; dispatched agents never write it", async (t) => {
   const { agentDir, project } = setup(t);
   const { root } = project("shop");

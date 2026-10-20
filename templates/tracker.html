@@ -91,6 +91,8 @@
   .chip { background: var(--chip); border-radius: 999px; padding: 2px 9px; font-size: 12px; white-space: nowrap; }
   .chip.attn { background: var(--needs); box-shadow: inset 0 0 0 1px var(--needs-line); }
   .chip.money { font-variant-numeric: tabular-nums; }
+  .chip.mr { color: var(--accent); text-decoration: none; }
+  a.chip.mr:hover { text-decoration: underline; }
   .bar { height: 6px; border-radius: 99px; background: var(--chip); overflow: hidden; }
   .bar > i { display: block; height: 100%; border-radius: 99px; background: var(--grad); }
   .bar.over > i { background: var(--bad); }
@@ -289,7 +291,7 @@
       <div class="head"><span class="name">${esc(p.name)}</span></div><div class="path" title="${esc(p.root)}${p.extension ? ` · pi-waicc ${esc(p.extension.version ?? "")} build ${esc(p.extension.build)}` : ""}">${esc(p.root)}</div>
       ${mainModels(p).length ? `<div class="tiny muted" title="${esc(mainModels(p).join(", "))}">main agent · ${esc(mainModels(p).slice(0, 3).map(modelName).join(", "))}</div>` : ""}
       ${state}${progress}
-      <div class="chips"><span class="chip">${openCount} open</span>${p.extension?.outdated ? `<span class="chip attn" title="pi-waicc was updated on disk; this project's Pi chat still runs the copy it loaded (${esc(p.extension.build)}). Type /reload in it.">updated · type /reload</span>` : ""}${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
+      <div class="chips"><span class="chip">${openCount} open</span>${lead?.change && lead.status !== "CLOSED" ? `<span class="chip mr">${esc(changeName(lead.change))}</span>` : ""}${p.extension?.outdated ? `<span class="chip attn" title="pi-waicc was updated on disk; this project's Pi chat still runs the copy it loaded (${esc(p.extension.build)}). Type /reload in it.">updated · type /reload</span>` : ""}${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
     </button>`;
   }
 
@@ -306,8 +308,25 @@
     const usd = s.spend.costUsd ?? 0, pct = Math.min(100, Math.round(100 * usd / p.budgetUsd));
     return `<div style="margin:8px 0"><div class="tiny muted" style="display:flex;justify-content:space-between"><span>budget for automatic runs</span><span>${money(usd)} of ${money(p.budgetUsd)}</span></div><div class="bar${usd >= p.budgetUsd ? " over" : ""}"><i style="width:${pct}%"></i></div></div>`;
   }
+  // A review of an existing change: "MR !7 → develop", linked to the merge request when it can be.
+  const webLink = (url) => (/^https?:\/\//i.test(url ?? "") ? url : null);
+  const changeName = (c) => (c.mergeRequest ? `${c.mergeRequest.provider === "github" ? "PR #" : "MR !"}${c.mergeRequest.number} → ${c.mergeRequest.target}` : c.range);
+  const changeChip = (s) => {
+    if (!s.change) return "";
+    const url = s.change.mergeRequest && webLink(s.change.mergeRequest.webUrl);
+    return url ? ` <a class="chip mr" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Open it">${esc(changeName(s.change))} ↗</a>` : ` <span class="chip">${esc(changeName(s.change))}</span>`;
+  };
+  function changeLine(s) {
+    const c = s.change;
+    if (!c) return "";
+    const where = c.mergeRequest?.provider === "github" ? "GitHub" : "GitLab";
+    const posted = c.posted
+      ? `posted to ${where}: ${plural(c.posted.lineComments, "line comment")}${c.posted.summaries ? ` and ${c.posted.summaries === 1 ? "a summary" : `${c.posted.summaries} summaries`}` : ""}, last ${ago(c.posted.lastAt)}`
+      : c.mergeRequest ? `nothing posted to ${where} yet` : "";
+    return `<div class="tiny muted" style="margin:6px 0">Reviews ${esc(c.label)}${posted ? ` · ${esc(posted)}` : ""}${c.awaitingPost ? ` · <span style="color:var(--warn)">ready to post${c.toPost ? ` (${plural(c.toPost, "finding")})` : ""}: <code>/waicc-mr-comments</code></span>` : ""}</div>`;
+  }
   function sessionHead(p, s) {
-    return `<span class="session-head">${pill(s.status)} <b>${esc(s.title)}</b> <span class="small muted">${esc(s.phase)} · v${s.contractVersion} · ${ago(s.updatedAt)}${s.id === p.selectedSessionId ? " · selected in Pi" : ""}</span> <span class="chip money" title="${esc(spendSub(sessionSpend(s)))}">${spendText(sessionSpend(s))}</span></span>`;
+    return `<span class="session-head">${pill(s.status)} <b>${esc(s.title)}</b>${changeChip(s)} <span class="small muted">${esc(s.phase)} · v${s.contractVersion} · ${ago(s.updatedAt)}${s.id === p.selectedSessionId ? " · selected in Pi" : ""}</span> <span class="chip money" title="${esc(spendSub(sessionSpend(s)))}">${spendText(sessionSpend(s))}</span></span>`;
   }
 
   function overview(p) {
@@ -320,7 +339,7 @@
         ${s.tasks.map((t) => `<tr><td>${esc(t.id)}</td><td>${esc(t.title)}</td><td>${t.reported ? `<span class="ok">✓ reported</span>` : `<span class="na">—</span>`}</td></tr>`).join("")}</table></div>
         <div class="tiny muted">"Reported" is the coding agent's claim in its latest whole-work report; review checks it.</div>` : "";
       const requirements = s.requirements.length ? fold(`${s.id}:req`, `<span class="small">Requirements (${s.requirements.length})</span>`, `<ul class="small">${s.requirements.map((r) => `<li><b>${esc(r.id)}</b> ${esc(r.text)}</li>`).join("")}</ul>`, false) : "";
-      return `<div class="glass section">${fold(`${p.key}:${s.id}`, sessionHead(p, s), `<div class="tiny muted" style="margin:6px 0">Session <code>${esc(s.id)}</code> · coding by ${esc(s.implementationOwner)}</div>${budgetBar(p, s)}${requirements}${tasks}`, s.status !== "CLOSED")}</div>`;
+      return `<div class="glass section">${fold(`${p.key}:${s.id}`, sessionHead(p, s), `<div class="tiny muted" style="margin:6px 0">Session <code>${esc(s.id)}</code> · coding by ${esc(s.implementationOwner)}</div>${changeLine(s)}${budgetBar(p, s)}${requirements}${tasks}`, s.status !== "CLOSED")}</div>`;
     }).join("");
     return `${live}${mainAgents(p)}${notices}${sessions || `<p class="small muted">No WAICC sessions in this project yet.</p>`}`;
   }
@@ -342,7 +361,7 @@
     return p.sessions.map((s) => {
       const rows = s.rounds.map((r) => {
         const passed = r.checks.filter((c) => c.outcome === "passed").length, failed = r.checks.filter((c) => c.outcome === "failed").length;
-        const step = r.mode === "review" ? `${r.kind ?? "contract"} review` : r.mode;
+        const step = `${r.mode === "review" ? `${r.kind ?? "contract"} review` : r.mode}${r.reviewedAt ? ` at ${r.reviewedAt}` : ""}`;
         const result = r.decision ? pill(r.decision) : r.outcome ? pill(r.outcome) : pill(r.status);
         const more = [r.question && `<div><b>Question:</b> ${esc(r.question)}</div>`, r.summary && `<div><b>Reply:</b> ${esc(r.summary)}</div>`, r.rationale && `<div><b>Assessment:</b> ${esc(r.rationale)}</div>`,
           r.findings.length && `<div><b>Findings:</b><ul>${r.findings.map((f) => `<li><span class="pill ${/critical|high/.test(f.severity) ? "bad" : f.severity === "medium" ? "warn" : ""}">${esc(f.severity)}</span> ${esc(f.description)}</li>`).join("")}</ul></div>`,
