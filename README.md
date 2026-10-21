@@ -558,6 +558,15 @@ remedy instead of requiring another handoff solely to rewrite the reply.
 
 ## Manual handoff: exactly what to give
 
+When a handoff is ready, the main agent shows only a short table of next steps, not the
+prompt itself:
+
+| Step | Command |
+|---|---|
+| Send it to an agent, headless | `/waicc-dispatch` (it names the profile its role uses, e.g. *your opus profile*; `--implement` for coding) |
+| Or give it to an agent yourself | `/waicc-handoff` (shows the prompt to paste, and copies it) |
+| When its reply is in | `/waicc-continue` |
+
 Run this in the coordinating Pi chat whenever you need clear copy/paste instructions:
 
 ```text
@@ -577,8 +586,9 @@ prompt; it still needs the entire export folder and matching source. Replies do 
 This reuses Pi's Windows/macOS/Linux clipboard support (native helpers, Wayland/X11,
 WSL and supported terminal forwarding). Linux may need wl-clipboard or xclip/xsel
 and display access. Remote OSC 52 depends on terminal permissions and cannot be
-independently confirmed. Missing clipboard access is reported with a manual fallback;
-it never invalidates the handoff. RPC/JSON/print modes do not write the host clipboard
+independently confirmed. Missing clipboard access is reported in one line pointing to
+`/waicc-handoff`, never by dropping the whole prompt into the chat, and it never
+invalidates the handoff. RPC/JSON/print modes do not write the host clipboard
 or emit clipboard control sequences. Tests mock the writer rather than live macOS/
 Linux desktops; no OS packages are installed automatically. Copying replaces the
 clipboard's existing text.
