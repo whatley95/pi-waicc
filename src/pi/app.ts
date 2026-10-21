@@ -30,6 +30,8 @@ export interface Services {
   gitlab?: (project: GitLabProject, host: GitLabHost) => GitLabCall;
   /** Finds where a GitLab server really answers (redirects followed, no token), replaceable in tests. */
   gitlabOrigin?: OriginProbe;
+  /** Opens a new terminal in a folder running Pi, replaceable in tests. */
+  openTerminal?: (path: string) => boolean;
   /** Saves a Windows user environment variable (what setx does), replaceable in tests. */
   saveUserVariable?: (name: string, value: string) => boolean;
 }
