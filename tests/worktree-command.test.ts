@@ -82,8 +82,10 @@ test("/waicc-worktree lists branch folders with their sessions and changes, and 
   }) as unknown as ExtensionCommandContext;
   const run = (args: string, cwd = service, hasUI = true) => commands.get("waicc-worktree").handler(args, ctx(cwd, hasUI)).catch((e: Error) => notices.push(`error: ${e.message}`));
 
-  confirms.push(true);
+  // Only Windows asks whether to open a new terminal there.
+  if (process.platform === "win32") confirms.push(true);
   await run("feature/local");
+  assert.equal(confirms.length, 0);
   const folder = join(repo, "..", "mono-feature-local", "services", "orders");
   assert.match(notices.at(-1)!, /^Created .*mono-feature-local on your branch, with .* set up for WAICC like this service\. Start Pi in /);
   if (process.platform === "win32") assert.deepEqual(opened, [realpathSync.native(folder)], "and a new terminal opens there with Pi");
