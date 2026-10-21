@@ -78,6 +78,10 @@ function dispatchRuns(root: string, s: Session, r: Round) {
 export interface SpendRun {
   at: string; kind: "dispatch" | "advisor" | "main"; mode: string; via: string; model: string | null; sessionId: string | null; usage: Usage;
   chatId?: string; messages?: number;
+  /** Main agent: seconds spent producing replies, their output tokens, and replies without a price. */
+  seconds?: number; timedOutput?: number; unpriced?: number;
+  /** Dispatched and advisor runs: how long the whole run took, reading and commands included. */
+  durationMs?: number;
 }
 
 const projectKey = (root: string): string => digest(process.platform === "win32" ? root.toLowerCase() : root).slice(0, 16);
@@ -173,7 +177,7 @@ function sessionView(root: string, s: Session) {
   const rounds = s.rounds.map((r, i) => {
     const dispatches = dispatchRuns(root, s, r);
     for (const d of dispatches)
-      if (d.usage) runs.push({ at: d.finishedAt, kind: "dispatch", mode: r.review?.kind === "code" ? "code review" : r.mode, via: d.via, model: d.model, sessionId: s.id, usage: d.usage });
+      if (d.usage) runs.push({ at: d.finishedAt, kind: "dispatch", mode: r.review?.kind === "code" ? "code review" : r.mode, via: d.via, model: d.model, sessionId: s.id, usage: d.usage, durationMs: d.durationMs });
     return {
       n: i + 1, id: r.id, mode: r.mode, kind: r.review?.kind ?? null, status: r.status,
       outcome: r.reply?.outcome ?? null, decision: r.decision ?? null,
@@ -329,8 +333,11 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
   // Every run's figures, closed sessions included, so the page can total any period itself.
   const everyRun: SpendRun[] = [
     ...all.flatMap((s) => s.runs),
-    ...asked.flatMap((c) => (c.usage ? [{ at: c.finishedAt, kind: "advisor" as const, mode: "advisor", via: c.via, model: c.model, sessionId: null, usage: c.usage }] : [])),
-    ...talked.flatMap((c) => c.hours.map((h) => ({ at: h.at, kind: "main" as const, mode: "main agent", via: "main agent", model: h.model, sessionId: null, usage: h.usage, chatId: c.chatId, messages: h.messages }))),
+    ...asked.flatMap((c) => (c.usage ? [{ at: c.finishedAt, kind: "advisor" as const, mode: "advisor", via: c.via, model: c.model, sessionId: null, usage: c.usage, durationMs: c.durationMs }] : [])),
+    ...talked.flatMap((c) => c.hours.map((h) => ({
+      at: h.at, kind: "main" as const, mode: "main agent", via: "main agent", model: h.model, sessionId: null, usage: h.usage, chatId: c.chatId, messages: h.messages,
+      seconds: h.seconds ?? 0, timedOutput: h.timedOutput ?? 0, unpriced: h.unpriced ?? 0,
+    }))),
   ].sort((a, b) => b.at.localeCompare(a.at));
   const runs = everyRun.slice(0, 2_000);
   // Exact totals over everything recorded, before the list above is cut, by who used it.
@@ -338,8 +345,13 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     since: everyRun.at(-1)?.at ?? null,
     byKind: Object.fromEntries((["main", "dispatch", "advisor"] as const).map((kind) => {
       const mine = everyRun.filter((run) => run.kind === kind);
-      return [kind, { ...totalUsage(mine.map((run) => run.usage)), messages: mine.reduce((n, run) => n + (run.messages ?? 0), 0) }];
-    })) as Record<SpendRun["kind"], ReturnType<typeof totalUsage> & { messages: number }>,
+      const add = (pick: (run: SpendRun) => number | undefined) => mine.reduce((n, run) => n + (pick(run) ?? 0), 0);
+      return [kind, {
+        ...totalUsage(mine.map((run) => run.usage)), messages: add((r) => r.messages), unpricedMessages: add((r) => r.unpriced),
+        seconds: add((r) => r.seconds), timedOutput: add((r) => r.timedOutput),
+        runMs: add((r) => r.durationMs), runOutput: add((r) => (r.durationMs ? r.usage.outputTokens : 0)),
+      }];
+    })) as Record<SpendRun["kind"], ReturnType<typeof totalUsage> & { messages: number; unpricedMessages: number; seconds: number; timedOutput: number; runMs: number; runOutput: number }>,
   };
   return {
     schemaVersion: 1 as const,

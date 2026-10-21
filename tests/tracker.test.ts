@@ -155,7 +155,8 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   const at = (minutes: number) => new Date(hour.getTime() + minutes * 60_000).toISOString();
   const said = (minutes: number, model: string, cost: number | undefined, input = 1000) => ({
     type: "message", id: `m${minutes}`, parentId: null, timestamp: at(minutes),
-    message: { role: "assistant", provider: "anthropic", model, usage: { input, output: 200, cacheRead: 500, cacheWrite: 0, totalTokens: input + 700, cost: cost === undefined ? undefined : { total: cost } } },
+    // Stamped 2 s before it was saved: 200 output tokens in 2 s.
+    message: { role: "assistant", provider: "anthropic", model, timestamp: Date.parse(at(minutes)) - 2000, usage: { input, output: 200, cacheRead: 500, cacheWrite: 0, totalTokens: input + 700, cost: cost === undefined ? undefined : { total: cost } } },
   });
   const chat = (id: string, name: string | undefined, model: string, entries: unknown[]) => ({
     cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
@@ -189,6 +190,8 @@ test("the main agent's model and use in every Pi chat of a project are counted, 
   assert.match(overview, /Fix checkout/);
   assert.match(overview, /Pi chat chat-b/);
   assert.match(overview, /also claude-sonnet-5-5/);
+  assert.match(overview, /<th>Speed<\/th>/);
+  assert.match(overview, />100 tok\/s<\/td>/, "200 output tokens in 2 s of producing each reply");
   assert.match(overview, /Main agent \$1\.15/, "the summary strip says who used today's spend");
   assert.match(overview, /<span>Tokens<\/span><span class="seg"><button type="button" data-range="tokens:today" class="on">Today<\/button>[\s\S]*?<div class="value">7k<\/div>/);
   assert.match(overview, /<span>Spent<\/span><span class="seg"><button type="button" data-range="spend:today" class="on">Today<\/button>[\s\S]*?<div class="value">\$1\.15<\/div>/);
