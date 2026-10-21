@@ -209,8 +209,8 @@ test("profiles set each agent's effort, typed --effort overrides it, and every a
   await runDispatch(agy, async () => ({ stdout: "", stderr: "", code: 0, killed: false }));
   assert.throws(() => prepareDispatch(root, id, { via: "claude", effort: "ultra" }), /effort for claude must be one of low, medium, high, xhigh, max/);
   assert.throws(() => resolveDispatch(root, id, "--effort LOUD"), /Invalid effort level/);
-  const bad = project(t, { user: { profiles: { x: { via: "agy", effort: "max" } } } });
-  assert.throws(() => loadAgentConfig(bad.root), /profile x: effort for agy must be one of low, medium, high/);
+  const bad = project(t, { user: { profiles: { x: { via: "agy", effort: "ultra" } } } });
+  assert.throws(() => loadAgentConfig(bad.root), /profile x: effort for agy must be one of low, medium, high, xhigh, max/);
 });
 
 test("the shipped template is a valid default for every role, and init never replaces a file", async (t) => {

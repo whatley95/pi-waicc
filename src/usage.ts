@@ -43,7 +43,20 @@ export function usageMeter(via: Agent) {
         return;
       }
       if (!j || typeof j !== "object") return;
-      if (via === "claude" || via === "agy") {
+      if (via === "agy") {
+        // Antigravity reports tokens per response step and the run's total on its result; no price.
+        // Its fields are separate (total_tokens is input + output only): cache reads are input
+        // on top of input_tokens, and thinking tokens are output, as models bill them.
+        const step = j.event === "step_update" && j.step_update?.step_type === "agent_response" && j.step_update.state === "DONE" ? j.step_update.usage : null;
+        const total = j.event === "result" ? j.result?.usage : null;
+        const u = total ?? step;
+        if (!u) return;
+        if (total) usage = null;
+        const cached = count(u.cache_read_tokens);
+        add(count(u.input_tokens) + cached, cached, count(u.output_tokens) + count(u.thinking_tokens), null);
+        return;
+      }
+      if (via === "claude") {
         if (j.type === "system" && j.subtype === "init" && typeof j.apiKeySource === "string") subscription = j.apiKeySource === "none";
         // The final result carries the whole run's totals, so it replaces anything seen before.
         if (j.type !== "result" || (j.usage === undefined && j.total_cost_usd === undefined)) return;
