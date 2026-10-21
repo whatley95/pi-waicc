@@ -258,7 +258,7 @@ server):
 ```json
 "gitlab": {
   "gitlab.example.com": { "tokenEnv": "GITLAB_TOKEN" },
-  "10.0.0.5": { "token": "glpat-…", "allowHttp": true }
+  "10.0.0.5": { "tokenEnv": "GITLAB_TOKEN", "allowHttp": true }
 }
 ```
 
