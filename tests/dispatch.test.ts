@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 import { loadSession } from "../src/files.ts";
-import { dispatch, dispatchOptions, prepareDispatch, runAgent, runDispatch, windowsCommand, type AgentRunner } from "../src/dispatch.ts";
+import { agyRegistry, dispatch, dispatchOptions, prepareDispatch, runAgent, runDispatch, windowsCommand, type AgentRunner } from "../src/dispatch.ts";
 import { mcpServer } from "../src/mcp.ts";
 import { receiveHandoff, submitRecipientReply, validateRecipientReply } from "../src/recipient.ts";
 import { assess, createSession, delegateWork, ingest, prepare } from "../src/workflow.ts";
@@ -118,6 +118,12 @@ test("MCP receive refuses implementation work that only Pi can confine to task p
 
 test("dispatch builds read-only, request-pinned invocations for every supported agent", async (t) => {
   const { root, id, requestId } = fixture(t);
+  // agy's server goes into its own config for the run: recorded here, never registered for real.
+  const registered: { name: string; args: string[]; tools: readonly string[] }[] = [], removed: string[] = [];
+  const real = { ...agyRegistry };
+  agyRegistry.register = (server, tools) => { registered.push({ name: server.name, args: server.args, tools }); };
+  agyRegistry.unregister = (name) => { removed.push(name); };
+  t.after(() => Object.assign(agyRegistry, real));
   for (const via of ["claude", "codex", "pi", "agy"] as const) {
     const plan = prepareDispatch(root, id, { via, model: "some-model" });
     const line = plan.args.join(" ");
@@ -143,6 +149,14 @@ test("dispatch builds read-only, request-pinned invocations for every supported 
     assert.throws(() => prepareDispatch(root, id, { via: "claude" }), /still working/);
     await runDispatch(plan, silent);
     assert.ok(plan.scratch.every((path) => !existsSync(path)), "per-run MCP config is removed");
+    if (via === "agy") {
+      assert.ok(line.includes("--sandbox") && !line.includes("--dangerously-skip-permissions"), "agy's headless permissions stay on");
+      const [server] = registered;
+      assert.deepEqual(server.args.slice(-5), ["mcp", "--session", id, "--request", requestId], "its server is pinned to this request");
+      assert.ok(server.tools.includes("waicc_submit_reply") && !server.tools.some((tool) => !tool.startsWith("waicc_")), "only WAICC's tools are allowed");
+      assert.ok(plan.args[1].includes(`MCP server named ${JSON.stringify(server.name)}`), "the prompt names the server");
+      assert.deepEqual(removed, [server.name], "and it is removed after the run");
+    }
   }
 });
 

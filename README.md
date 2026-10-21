@@ -712,7 +712,7 @@ last five steps; `/waicc-dispatch --progress` lists every step so far. The panel
 clear when the agent finishes. The CLI prints the same steps to stderr as they happen.
 Every step and the agent's last message are also saved in the run's `dispatch/<id>/result.json`.
 Progress comes from each agent's own event stream (Claude `stream-json`, Codex `--json`,
-Pi `--mode json`); Antigravity's stream is not verified, so it may show fewer steps.
+Pi `--mode json`, Antigravity `stream-json`).
 
 **Watch every project on one page.** Run `/waicc-tracker` and your browser opens one page
 that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
@@ -869,7 +869,7 @@ its test, and Codex `gpt-6.1-sol` reviewed automatically, running the review rol
 | `claude` | `claude -p` (Claude Code)            | Edit/Write/NotebookEdit/Bash disallowed; only WAICC MCP. Coding: edits in an isolated worktree, no shell | `--model opus` |
 | `codex`  | `codex exec`                         | `--sandbox read-only` (OS sandbox); only WAICC tools approved. Coding: `workspace-write` in an isolated worktree | `-m <model>` |
 | `pi`     | `pi -p` with this extension          | WAICC's own recipient mode: read/search tools; with `--implement`, edit/write only inside task paths | `--model provider/id` |
-| `agy`    | `agy -p` (Antigravity CLI)           | Its headless mode soft-denies unapproved tools          | `--model <slug>`        |
+| `agy`    | `agy -p` (Antigravity CLI)           | Its headless permissions deny edits and commands; only WAICC's tools on its pinned server are allowed | `--model <slug>`        |
 
 What it does and does not do:
 
@@ -971,15 +971,18 @@ Pre-approved checks were verified live: a Claude tester ran `--check "node --tes
 index.test.js"` through `waicc_run_check` (logged as passed), and Codex implemented a
 function plus its test in a worktree, ran the same approved check inside the copy, and
 WAICC applied both in-scope files.
-**Antigravity (`agy`) support is experimental and untested:** it reads MCP
-servers from its own configuration, so add WAICC once in `~/.gemini/config/mcp_config.json`:
-
-```json
-{ "mcpServers": { "waicc": { "command": "waicc", "args": ["mcp"] } } }
-```
-
-and allow its `waicc_*` tools in `~/.gemini/antigravity-cli/settings.json`, otherwise
-headless runs soft-deny them. Check `agy models` for exact model slugs.
+**Antigravity (`agy`)** was verified live with agy 1.4.4 on Windows: a review handoff was
+dispatched, agy read it and submitted a valid reply through WAICC's tools, with its steps shown
+live and its tokens recorded. No setup is needed. agy reads MCP servers only from its own
+configuration, so each run registers its own WAICC server there (`waicc-run-<time>-<id>`, pinned
+to that one request like the other agents') and allows exactly WAICC's recipient tools on it
+(`mcp(<server>/waicc_…)` under `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`);
+both are removed when the run ends, and any a crashed run left behind are removed after three
+hours. Nothing else in agy's settings is changed, and if that file is not valid JSON WAICC does
+not dispatch. agy's own headless permissions stay on, so it cannot edit files or run commands
+(verified: a write and a command were both denied); `--sandbox` restricts its terminal too.
+It reports tokens but no price. Implementation and pre-approved checks are not offered for agy
+yet. Check `agy models` for exact model slugs.
 
 ### Agent profiles: choose an agent per role once
 
@@ -1092,7 +1095,7 @@ To write it yourself, create either file, or both:
   | `claude` | `--effort <level>`               | low, medium, high, xhigh, max |
   | `codex`  | `-c model_reasoning_effort=…`    | minimal, low, medium, high, xhigh, max, ultra |
   | `pi`     | `--thinking <level>`             | off, minimal, low, medium, high, xhigh, max |
-  | `agy`    | `--effort <level>`               | low, medium, high |
+  | `agy`    | `--effort <level>`               | low, medium, high, xhigh, max |
 
 - Typed options win: a profile name you type replaces the role's profile, and `--via`,
   `--model`, `--effort`, `--timeout` or `--check` replace that setting. A role's `checks` apply whichever
