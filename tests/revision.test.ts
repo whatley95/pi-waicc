@@ -288,7 +288,7 @@ test("/waicc-review --mr --list: pick a merge request and its review starts; wit
 
   // Without a token: plain git lists the numbers, newest first; picking one starts its review.
   await commands.get("waicc-review").handler("--mr --list", ctx(true));
-  assert.match(offered!.title, /^The newest 2 merge request numbers on origin\. Without a GitLab token git cannot tell open from merged ones/);
+  assert.match(offered!.title, /^The newest 2 merge request numbers on origin, open or merged: no titles because this remote is not a GitLab project WAICC can read$/);
   assert.deepEqual(offered!.options.map((o) => o.split(" · ")[0]), ["!7", "!3", "Cancel"]);
   assert.match(sent[0], /This new session reviews merge request !7 into develop/, "the picked one is reviewed");
 
@@ -299,6 +299,20 @@ test("/waicc-review --mr --list: pick a merge request and its review starts; wit
   assert.equal(api[0], "/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50");
   assert.match(shown.at(-1)!, /^2 open merge requests on team\/app: pick one to review\n- !7 Sync orders and status · alice · feature\/sync → develop · 2h ago · in review: draft\n- !9 \[draft\] WIP export · ali · export → develop · 0m ago$/,
     "!7 is already in review here");
+
+  // GITLAB_TOKEN set, host not listed: with your yes, the host is listed and the open ones come back.
+  writeFileSync(join(agentDir, "waicc-agents.json"), "{}");
+  process.env.GITLAB_TOKEN = "glpat-from-setx";
+  t.after(() => { delete process.env.GITLAB_TOKEN; });
+  let asked = "";
+  const yes = {
+    ...ctx(true),
+    ui: { notify() {}, confirm: async (title: string) => ((asked = title), true), select: async (title: string, options: string[]) => ((offered = { title, options }), "Cancel") },
+  } as unknown as ExtensionCommandContext;
+  await commands.get("waicc-review").handler("--mr --list", yes);
+  assert.equal(asked, "Use your GitLab token for gitlab.example.com?");
+  assert.deepEqual(JSON.parse(readFileSync(join(agentDir, "waicc-agents.json"), "utf8")), { gitlab: { "gitlab.example.com": { tokenEnv: "GITLAB_TOKEN" } } });
+  assert.match(offered!.title, /^2 open merge requests on team\/app/);
 });
 
 test("/waicc-review --mr starts a review session for the MR, and fetching it again picks up the author's new commits", async (t) => {

@@ -208,8 +208,9 @@ files.
 `--mr --list` (or `--mr list`, with `--remote <name>` if needed) lists the merge requests to pick
 from; picking one starts its review as `--mr <number>` would. With your GitLab host set up (see
 the token below) it shows the open ones, most recently updated first, with title, author,
-branches and age. Without a token, git can only list the newest 30 numbers, which may include
-merged or closed ones. Either way, a merge request a WAICC session here already reviews is
+branches and age. If `GITLAB_TOKEN` is set but the host is not listed yet, it offers to list it
+first. Without a token, git can only list the newest 30 numbers, which may include merged or
+closed ones, and the list says what is missing. Either way, a merge request a WAICC session here already reviews is
 marked with that session's state.
 
 **GitHub:** pull requests are fetched and reviewed the same way (`--mr 45` reads
