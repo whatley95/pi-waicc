@@ -854,6 +854,21 @@ sent back to the planner automatically, until the plan is accepted (`PLAN_READY`
   /waicc-dispatch --auto                                          # opus plans, sol reviews
   /waicc-dispatch --auto --plan-with opus-max --review-with sol-ultra
   ```
+- **`--code-with [profile]` hands the coding to another agent.** Once the plan is accepted,
+  the main agent writes ONE coding handoff for the whole plan, and WAICC dispatches it
+  headless to that profile (or your `implementation` role's, when you name none), in an
+  isolated worktree. The main agent assesses the code but does not edit it. Review findings
+  go back to the same coding agent as one fix handoff, then a fresh review runs, up to the
+  loop's limit. Antigravity (`agy`) profiles cannot code yet and are refused before planning
+  starts, as is a missing profile.
+
+  ```text
+  /waicc-dispatch --auto --code-with sol-ultra    # opus plans, sol-ultra codes and fixes, sol reviews
+  /waicc-dispatch --auto --code-with              # your implementation role codes
+  ```
+- **`--review-once` stops after the first code review**, without fixing anything. The main
+  agent assesses the review and tells you what it found; you decide what comes next. It needs
+  `--auto` (or `--develop --review`), and works with or without `--code-with`.
 - **`--develop` is your approval of the plan, given in advance for this run.** Without it the
   run stops at `PLAN_READY` and you run `/waicc-develop` yourself, after reading the plan.
   It is recorded as authorized by `--develop` on the dispatch.
@@ -1308,6 +1323,8 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch [profile] --loop [cycles]`      | Code review → fix → re-review until it passes, or plan → assess → revise until accepted; at most 3 cycles by default; never closes |
 | `/waicc-dispatch --loop 3 --develop [--review]`  | Plan until accepted, start development, then review with your review profile until it passes |
 | `/waicc-dispatch --auto [--plan-with p] [--review-with p]` | Short for `--loop 3 --develop --review`, choosing each stage's profile |
+| `/waicc-dispatch --auto --code-with [p]`         | Another agent codes the accepted plan and fixes the review's findings; the main agent only assesses |
+| `/waicc-dispatch --auto --review-once`           | Stop after the first code review, without fixing                                                       |
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
