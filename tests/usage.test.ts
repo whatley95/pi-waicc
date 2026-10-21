@@ -118,3 +118,30 @@ test("a Pi chat's main agent use is grouped by model and hour, from its assistan
   assert.ok(Math.abs(hours[0].usage.costUsd! - 0.3) < 1e-9);
   assert.equal(hours[1].usage.costUsd, null, "no reported price stays unpriced, not $0");
 });
+
+test("a reply's speed comes from when it was requested and saved, and $0 for real tokens means no price set", () => {
+  const entry = (saved: string, seconds: number, usage: unknown) => ({ type: "message", timestamp: saved, message: { role: "assistant", provider: "hyper", model: "flash", timestamp: Date.parse(saved) - seconds * 1000, usage } });
+  const [hour] = chatUsage([
+    entry("2026-10-20T09:10:04.000Z", 4, { input: 100, output: 400, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } }),
+    entry("2026-10-20T09:20:06.000Z", 6, { input: 100, output: 600, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } }),
+    entry("2026-10-20T09:30:00.000Z", 0, { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } }),
+  ]);
+  assert.deepEqual([hour.seconds, hour.timedOutput], [10, 1000], "100 tokens per second over the two timed replies");
+  assert.equal(hour.unpriced, 2, "$0 for real tokens is a missing price, not a free reply");
+  assert.ok(Math.abs(hour.usage.costUsd! - 0.01) < 1e-9);
+});
+
+test("Claude on a claude.ai subscription is marked API-equivalent; with an API key it is a real charge", () => {
+  const run = (apiKeySource: string) => {
+    const meter = usageMeter("claude");
+    meter.read(JSON.stringify({ type: "system", subtype: "init", apiKeySource }));
+    meter.read(JSON.stringify({ type: "result", total_cost_usd: 0.42, usage: { input_tokens: 10, output_tokens: 20 } }));
+    return meter.get()!;
+  };
+  assert.equal(run("none").costBasis, "api-equivalent");
+  assert.equal(run("ANTHROPIC_API_KEY").costBasis, undefined);
+  assert.equal(totalUsage([run("none"), run("ANTHROPIC_API_KEY")]).apiEquivalentUsd, 0.42);
+  const pi = usageMeter("pi");
+  pi.read(JSON.stringify({ type: "message_end", message: { role: "assistant", usage: { input: 50, output: 5, cost: { total: 0 } } } }));
+  assert.equal(pi.get()!.costUsd, null, "a Pi model with no price set reports $0, shown as without a price");
+});
