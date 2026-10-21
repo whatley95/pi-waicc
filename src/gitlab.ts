@@ -37,6 +37,42 @@ export function gitlabProject(remoteUrl: string): GitLabProject {
   return { origin: `${secure ? "https" : "http"}://${host}`, host, path, secure };
 }
 
+export type OriginProbe = (project: GitLabProject) => Promise<GitLabProject>;
+const canonical = new Map<string, GitLabProject>();
+/**
+ * Where the GitLab server really answers. A remote may name an address that redirects
+ * elsewhere, such as http://10.0.0.5 forwarding to https://gitlab.example.com. One request to the
+ * public version endpoint, without any token, follows up to three redirects; the token is then
+ * looked up, and sent, only for the host that answers. On any failure the remote's own address
+ * stands, and the real request reports the problem.
+ */
+export const canonicalProject: OriginProbe = async (project) => {
+  const known = canonical.get(project.origin);
+  if (known) return { ...known, path: project.path };
+  let url = new URL(`${project.origin}/api/v4/version`);
+  for (let hop = 0; hop < 3; hop++) {
+    const location = await new Promise<string | null>((resolve) => {
+      const send = url.protocol === "https:" ? httpsRequest : httpRequest;
+      const req = send(url, { method: "GET", timeout: 10_000, ...(url.protocol === "https:" && certificates() ? { ca: certificates() } : {}) }, (res) => {
+        res.resume();
+        resolve([301, 302, 307, 308].includes(res.statusCode ?? 0) ? String(res.headers.location ?? "") || null : null);
+      });
+      req.on("timeout", () => req.destroy());
+      req.on("error", () => resolve(null));
+      req.end();
+    });
+    if (!location) break;
+    const next = new URL(location, url);
+    if (!["https:", "http:"].includes(next.protocol)) break;
+    url = next;
+  }
+  const secure = url.protocol === "https:";
+  const host = url.port && url.port !== (secure ? "443" : "80") ? `${url.hostname}:${url.port}` : url.hostname;
+  const found = { origin: `${url.protocol}//${host}`, host, path: project.path, secure };
+  canonical.set(project.origin, found);
+  return found;
+};
+
 // The system's certificates as well as Node's own, so an internal GitLab trusted by Windows (and git) works.
 let trusted: string[] | undefined;
 const certificates = (): string[] | undefined => {
@@ -73,6 +109,12 @@ export function gitlabClient(project: GitLabProject, settings: GitLabHost): GitL
           json = text ? JSON.parse(text) : null;
         } catch { /* not JSON: reported as text */ }
         if ((res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300) return resolve(json);
+        // A redirect is not followed with your token; say where it points instead of showing its page.
+        if ((res.statusCode ?? 0) >= 300 && (res.statusCode ?? 0) < 400) {
+          const error = new Error(`GitLab at ${project.host} redirected ${method} ${path.split("?")[0]} to ${String(res.headers.location ?? "another address").split("?")[0]}; WAICC does not send your token on to another address. List that host under "gitlab" in your user file, or point the remote at it.`) as Error & { status?: number };
+          error.status = res.statusCode;
+          return reject(error);
+        }
         const message = json?.message ? (typeof json.message === "string" ? json.message : JSON.stringify(json.message)) : json?.error ?? text.slice(0, 200);
         const error = new Error(`GitLab ${method} ${path.split("?")[0]} failed (HTTP ${res.statusCode}): ${message}`) as Error & { status?: number };
         error.status = res.statusCode;

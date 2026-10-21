@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
-import { gitlabClient, gitlabProject, reviewComments, summaryNote, type GitLabCall } from "../src/gitlab.ts";
+import { canonicalProject, gitlabClient, gitlabProject, reviewComments, summaryNote, type GitLabCall } from "../src/gitlab.ts";
 import { addGitlabHost, gitlabHost, loadAgentConfig, profilesView } from "../src/profiles.ts";
 import { forgetSessionTokens } from "../src/pi/merge-requests.ts";
 import { mergeRequestUrl, projectStatus } from "../src/tracker.ts";
@@ -140,7 +140,7 @@ async function run(t: TestContext, answers: { select: (options: string[]) => str
     registerCommand: (name: string, c: any) => commands.set(name, c), registerTool() {}, on() {}, appendEntry() {},
     getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage() {},
   } as unknown as ExtensionAPI, {
-    gitlab: fake, openPage: (url) => (opened.push(url), true), saveUserVariable: (name, value) => (saved.push([name, value]), true),
+    gitlab: fake, gitlabOrigin: async (project) => project, openPage: (url) => (opened.push(url), true), saveUserVariable: (name, value) => (saved.push([name, value]), true),
   });
   const confirms = [...(answers.confirm ?? [])], inputs = [...(answers.input ?? [])];
   const ctx = {
@@ -303,6 +303,37 @@ test("the tracker shows which merge request a session reviews, links it, and wha
 
   assert.equal(mergeRequestUrl({ remote: "origin", number: 45, provider: "github", target: "main", url: "git@github.com:whatley95/pi-waicc.git", head: "x" }), "https://github.com/whatley95/pi-waicc/pull/45");
   assert.equal(mergeRequestUrl({ remote: "origin", number: 3, provider: "gitlab", target: "main", url: "git@gitlab.example.com:group/app.git", head: "x" }), "https://gitlab.example.com/group/app/-/merge_requests/3");
+});
+
+test("a remote's address that redirects is followed without a token, and the client never follows a redirect with it", async (t) => {
+  const tokens: (string | string[] | undefined)[] = [];
+  const target = createServer((req, res) => {
+    tokens.push(req.headers["private-token"]);
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ message: "401 Unauthorized" }));
+  });
+  await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+  const to = (target.address() as { port: number }).port;
+  // The remote's address: every path moves to the other server, as nginx does for http → https.
+  const front = createServer((req, res) => {
+    tokens.push(req.headers["private-token"]);
+    res.writeHead(301, { Location: `http://localhost:${to}${req.url}` });
+    res.end("<html>301 Moved Permanently</html>");
+  });
+  await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+  t.after(() => { front.close(); target.close(); });
+  const from = (front.address() as { port: number }).port;
+
+  const remote = gitlabProject(`http://127.0.0.1:${from}/group/app.git`);
+  const found = await canonicalProject(remote);
+  assert.deepEqual(found, { origin: `http://localhost:${to}`, host: `localhost:${to}`, path: "group/app", secure: false });
+  assert.deepEqual(tokens, [undefined, undefined], "the address is found without sending a token anywhere");
+  assert.deepEqual(await canonicalProject(gitlabProject("http://127.0.0.1:9/x/y.git")), gitlabProject("http://127.0.0.1:9/x/y.git"), "unreachable: the remote's own address stands");
+
+  // The client itself never follows a redirect with your token, and says where it points.
+  const call = gitlabClient(remote, { token: "glpat-x", allowHttp: true });
+  await assert.rejects(call("GET", "/merge_requests?state=opened"), /GitLab at 127\.0\.0\.1:\d+ redirected GET \/merge_requests to http:\/\/localhost:\d+\/api\/v4\/projects\/group%2Fapp\/merge_requests; WAICC does not send your token on to another address/);
+  assert.equal(tokens.filter(Boolean).length, 1, "only the one request to the listed address carried it");
 });
 
 test("the API client sends the token only as a header, reads GitLab's errors, and refuses plain http unless allowed", async (t) => {

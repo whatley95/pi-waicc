@@ -276,7 +276,7 @@ test("/waicc-review --mr --list: pick a merge request and its review starts; wit
     registerCommand: (name: string, c: any) => commands.set(name, c), registerTool() {}, on() {}, appendEntry() {},
     getAllTools: () => [], getActiveTools: () => [], setActiveTools() {},
     sendMessage: (m: { content: string }) => shown.push(m.content), sendUserMessage: (m: string) => sent.push(m),
-  } as unknown as ExtensionAPI, { gitlab: () => async (_method, path) => (api.push(path), [
+  } as unknown as ExtensionAPI, { gitlabOrigin: async (project) => project, gitlab: () => async (_method, path) => (api.push(path), [
     { iid: 7, title: "Sync orders and status", author: { username: "alice" }, source_branch: "feature/sync", target_branch: "develop", updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), draft: false },
     { iid: 9, title: "WIP export", author: { username: "ali" }, source_branch: "export", target_branch: "develop", updated_at: new Date().toISOString(), draft: true },
   ]) });
