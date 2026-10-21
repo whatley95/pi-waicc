@@ -1516,9 +1516,11 @@ node src/cli.ts --root <project> advisor <session-id> --requirements REQ-001 "Wh
 
 ## Monorepos: one service as its own project
 
-WAICC's project is normally the repository root. In a monorepo that can be too much: tens of
-thousands of files to fingerprint (WAICC stops at 10,000), and every commit by any team
-would look like a change to your handoffs. Make the service folder its own project, once:
+WAICC's project is normally the repository root. A Git repository of more than 10,000 files
+(a whole monorepo) is fingerprinted with Git's own blob IDs instead of reading every file, up to
+100,000 files, so reviewing a merge request across services from the root works. For day-to-day
+work on one service the root can still be too much: every commit by any team would look like a
+change to your handoffs. Make the service folder its own project, once:
 
 ```text
 cd services/status
@@ -1675,8 +1677,9 @@ from before this normalization may need a fresh request after upgrading. Common
 untracked build/dependency directories and WAICC output are excluded; tracked source
 is retained even under a build-named directory. Symlinks/junctions fail closed rather
 than expanding scope.
-Limits: 10,000 files, 128 MB source content, 128,000-character contracts and 256 KB
-replies. Large monorepos should use a smaller checkout; per-subtree fingerprint
+Limits: 10,000 files read one by one (a Git project above that uses Git's blob IDs, up to
+100,000 files), 128 MB of source content read (for such a Git project, of changed and untracked
+files only), 128,000-character contracts and 256 KB replies. Per-subtree fingerprint
 configuration and cross-repository scheduling are future work. There is no automatic
 parallel implementation scheduler or task-completion certification in this release.
 
