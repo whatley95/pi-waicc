@@ -40,6 +40,29 @@ function describe(tool: string, input: Record<string, unknown>, shorten: (path: 
   }
 }
 
+/** Antigravity's tool names and parameters, as the names the step descriptions know. */
+export function agyTool(name: string, parameters: Record<string, unknown>): { tool: string; input: Record<string, unknown> } {
+  const p = parameters ?? {};
+  const pick = (...keys: string[]) => keys.map((k) => p[k]).find((v) => typeof v === "string") as string | undefined;
+  switch (name) {
+    case "read_file": case "view_file": return { tool: "Read", input: { file_path: pick("Path", "AbsolutePath", "FilePath", "path") } };
+    case "list_dir": return { tool: "ls", input: { path: pick("DirectoryPath", "Path", "path") } };
+    case "grep_search": return { tool: "Grep", input: { pattern: pick("Query", "Pattern", "query"), path: pick("SearchPath", "Path") } };
+    case "find_by_name": return { tool: "Glob", input: { pattern: pick("Pattern", "Query", "pattern") } };
+    case "run_command": return { tool: "Bash", input: { command: pick("CommandLine", "Command", "command") } };
+    case "write_to_file": case "write_file": return { tool: "Write", input: { file_path: pick("TargetFile", "Path", "path") } };
+    case "replace_file_content": case "multi_replace_file_content": case "sed_file":
+      return { tool: "Edit", input: { file_path: pick("TargetFile", "Path", "path") } };
+    case "call_mcp_tool": {
+      // Its own MCP tools arrive by name inside the call: WAICC's are described as WAICC steps.
+      const tool = (Object.entries(p).find(([k, v]) => /tool/i.test(k) && typeof v === "string")?.[1] as string | undefined) ?? "an MCP tool";
+      const args = Object.entries(p).find(([k, v]) => /arg|input|param/i.test(k) && v && typeof v === "object")?.[1];
+      return { tool, input: (args as Record<string, unknown>) ?? {} };
+    }
+    default: return { tool: name, input: p };
+  }
+}
+
 /** Codex wraps commands in a shell invocation; show the command itself. */
 const unwrapShell = (command: string): string =>
   command.match(/-Command\s+"([\s\S]*)"\s*$/)?.[1] ?? command.match(/-lc\s+'([\s\S]*)'\s*$/)?.[1] ?? command;
@@ -57,6 +80,8 @@ export function progressParser(via: Agent, cwd: string, startedAt = Date.now()) 
     return handoff ? `the handoff's ${handoff[1]}` : shown;
   };
   const tools = new Map<string, string>();
+  // Antigravity's reply text, gathered from its deltas by step.
+  const replies = new Map<string, string>();
   const event = (part: Omit<ProgressEvent, "at"> | null): ProgressEvent[] => (part ? [{ at: Date.now() - startedAt, ...part }] : []);
   const note = (text: unknown): ProgressEvent[] => (typeof text === "string" && text.trim() ? event({ kind: "note", text: oneLine(text) }) : []);
   const rejected = (tool: string | undefined, text: unknown): ProgressEvent[] =>
@@ -114,10 +139,25 @@ export function progressParser(via: Agent, cwd: string, startedAt = Date.now()) 
         return [];
       }
       default: {
-        // Antigravity's stream is not verified: take any tool-shaped event, best effort.
-        const name = j.tool_name ?? j.toolName ?? j.name ?? j.tool?.name;
-        if (typeof name === "string" && /tool/i.test(String(j.type ?? ""))) return event(describe(name, j.input ?? j.args ?? j.arguments ?? {}, shorten));
-        return typeof j.text === "string" && /message|text/i.test(String(j.type ?? "")) ? note(j.text) : [];
+        // Antigravity (agy 1.4): {"event":"step_update","step_update":{step_type, state, tool_name,
+        // tool_info:{parameters, output}, text_delta}}; a reply arrives as text deltas of one step.
+        const step = j.event === "step_update" ? j.step_update : null;
+        if (!step) return [];
+        if (step.step_type === "tool") {
+          const { tool, input } = agyTool(String(step.tool_name ?? step.tool_info?.name ?? ""), step.tool_info?.parameters ?? {});
+          if (step.state === "ACTIVE") return event(describe(tool, input, shorten));
+          const failed = step.tool_info?.error ?? (step.state === "ERROR" || step.state === "FAILED" ? step.tool_info?.output : undefined);
+          return step.state !== "DONE" || failed ? rejected(tool, failed ?? step.state) : [];
+        }
+        if (step.step_type === "agent_response") {
+          const key = String(step.step_index);
+          if (typeof step.text_delta === "string") replies.set(key, (replies.get(key) ?? "") + step.text_delta);
+          if (step.state !== "DONE") return [];
+          const text = replies.get(key);
+          replies.delete(key);
+          return note(text);
+        }
+        return [];
       }
     }
   };
