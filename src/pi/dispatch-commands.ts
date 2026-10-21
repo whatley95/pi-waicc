@@ -2,7 +2,7 @@ import { loadSession, readText } from "../files.ts";
 import { join } from "node:path";
 import { configureSvnIgnore } from "../ignore.ts";
 import { commandText } from "../dispatch.ts";
-import { initAgentConfig, profilesView, projectConfigPath, resolveDispatch } from "../profiles.ts";
+import { codingAgent, initAgentConfig, profilesView, projectConfigPath, resolveDispatch } from "../profiles.ts";
 import { elapsed } from "../progress.ts";
 import { curate, memoryStates, recall } from "../memory.ts";
 import { projectRoot } from "../source.ts";
@@ -19,7 +19,7 @@ export function registerDispatchCommands(app: App): void {
   const { pi, dispatches, stepLine, selected, bind, coordinator, show, copyManual, command, prompt, loops, loopName, endLoop, launch } = app;
   command(
     "waicc-dispatch",
-    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] [--continue|-c|--no-continue] [--loop [cycles]] [--develop [--review|--review-with <profile>]] [--auto] [--plan-with <profile>] | --progress | --profiles | --init-profiles | --stop",
+    "Run the waiting handoff in a headless agent: [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check \"<command>\"]... [--check-timeout <minutes>] [--continue|-c|--no-continue] [--loop [cycles]] [--develop [--review|--review-with <profile>]] [--auto] [--plan-with <profile>] [--code-with [<profile>]] [--review-once] | --progress | --profiles | --init-profiles | --stop",
     async (args, ctx) => {
       if (args === "--profiles") {
         show(ctx, profilesView(ctx.cwd));
@@ -58,6 +58,8 @@ export function registerDispatchCommands(app: App): void {
         ensure(waiting?.mode === "planning", "--develop starts development when a plan is accepted, so it needs a waiting planning handoff.");
         ensure(resolved.options.continue !== false, "--develop needs the continue step; drop --no-continue.");
       }
+      // The coding agent is checked now, not after the plan is accepted.
+      if (resolved.options.codeWith) codingAgent(ctx.cwd, typeof resolved.options.codeWith === "string" ? resolved.options.codeWith : undefined);
       if (resolved.options.loop) ensure(waiting?.mode === "planning" || (waiting?.mode === "review" && waiting.review?.kind === "code"),
         "--loop needs a waiting planning handoff (plan → assess → revise) or code review (review → fix → re-review).");
       if (resolved.options.loop && waiting?.mode === "review") {
@@ -82,6 +84,8 @@ export function registerDispatchCommands(app: App): void {
           mode: waiting!.mode === "planning" ? "planning" : "review", develop: Boolean(resolved.options.develop),
           phase: "reviewing", requestId: "", findings: null,
           ...(resolved.options.review ? { review: { profile: resolved.options.reviewWith } } : {}),
+          ...(resolved.options.codeWith ? { code: { profile: typeof resolved.options.codeWith === "string" ? resolved.options.codeWith : undefined } } : {}),
+          ...(resolved.options.reviewOnce ? { reviewMax: 1 } : {}),
         });
       try {
         launch(ctx, id, resolved.options, resolved.profile);
