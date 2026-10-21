@@ -102,6 +102,9 @@ export function gitPrefix(root: string): string | null {
   return prefix === null ? null : prefix.trim().replaceAll("\\", "/");
 }
 
+/** Files read one by one up to `direct`; a Git project above that uses Git's own fingerprints, up to `git`. */
+export const sourceLimits = { direct: 10_000, git: 100_000 };
+
 export function snapshot(root: string): SourceSnapshot {
   // A sub-project of a Git repository is fingerprinted as that subtree only.
   const prefix = existsSync(join(root, ".svn")) && !existsSync(join(root, ".git")) ? null : gitPrefix(root);
@@ -114,6 +117,7 @@ export function snapshot(root: string): SourceSnapshot {
   let revision: string | null = null;
   let vcsState: string | undefined;
   const tracked = new Set<string>();
+  const blobs = new Map<string, { mode: string; blob: string }>();
   const omit = (path: string): boolean =>
     /^\.pi\/pi-waicc(?:\/|$)/i.test(path) ||
     (excluded(path) && !tracked.has(path));
@@ -138,9 +142,13 @@ export function snapshot(root: string): SourceSnapshot {
     index
       .split("\0")
       .filter(Boolean)
-      .forEach((entry) =>
-        tracked.add(entry.slice(entry.indexOf("\t") + 1).replaceAll("\\", "/")),
-      );
+      .forEach((entry) => {
+        const path = entry.slice(entry.indexOf("\t") + 1).replaceAll("\\", "/");
+        tracked.add(path);
+        // "mode blob stage\tpath": the blob is Git's own fingerprint of the indexed content.
+        const [mode, blob] = entry.slice(0, entry.indexOf("\t")).split(" ");
+        blobs.set(path, { mode, blob });
+      });
     vcsState = digest(index);
   } else {
     if (vcs === "svn") {
@@ -202,7 +210,7 @@ export function snapshot(root: string): SourceSnapshot {
         if (item.isDirectory()) walk(path);
         else paths.push(path);
         ensure(
-          paths.length <= 10_000,
+          paths.length <= sourceLimits.direct,
           "Source exceeds 10,000 files. In a monorepo, run /waicc-init (CLI: waicc init) inside the service folder to make it its own WAICC project.",
         );
       }
@@ -212,9 +220,52 @@ export function snapshot(root: string): SourceSnapshot {
   paths = [...new Set(paths.map((path) => path.replaceAll("\\", "/")))]
     .filter((path) => !omit(path))
     .sort();
-  ensure(paths.length <= 10_000, `Source exceeds 10,000 files (${paths.length}). In a monorepo, run /waicc-init (CLI: waicc init) inside the service folder to make it its own WAICC project.`);
+  // A large Git project (a whole monorepo) is fingerprinted with Git's own blob IDs instead of
+  // reading every file: only what the working folder changed or Git does not track is hashed,
+  // by git itself, so every value means the same thing. Smaller projects keep reading each file.
+  const large = vcs === "git" && paths.length > sourceLimits.direct;
+  ensure(paths.length <= (vcs === "git" ? sourceLimits.git : sourceLimits.direct),
+    `Source exceeds ${(vcs === "git" ? sourceLimits.git : sourceLimits.direct).toLocaleString("en")} files (${paths.length}). In a monorepo, run /waicc-init (CLI: waicc init) inside the service folder to make it its own WAICC project.`);
   const files: Record<string, string> = Object.create(null);
   let bytes = 0;
+  if (large) {
+    const changed = command("git", ["diff-files", "--name-only", "-z", "--relative"], root);
+    ensure(changed !== null, "Cannot list the files changed in the Git working folder");
+    const dirty = new Set(changed.split("\0").filter(Boolean).map((path) => path.replaceAll("\\", "/")));
+    const toHash: string[] = [];
+    for (const path of paths) {
+      const indexed = blobs.get(path);
+      // Links and submodules are refused here as when every file is read.
+      ensure(!indexed || indexed.mode.startsWith("100"), `Unsupported source entry: ${path}`);
+      // Unchanged since the index: Git vouches for it without touching the disk (a deleted
+      // tracked file is listed as changed, so it is checked below).
+      if (indexed && !dirty.has(path)) {
+        files[path] = `git:${indexed.blob}`;
+        continue;
+      }
+      if (!existsSync(safePath(root, path))) files[path] = "DELETED";
+      else toHash.push(path);
+    }
+    for (const path of toHash) {
+      const stat = lstatSync(safePath(root, path));
+      ensure(stat.isFile() && !stat.isSymbolicLink(), `Unsupported source entry: ${path}`);
+      ensure(!path.includes("\n"), `Unsupported file name: ${JSON.stringify(path)}`);
+      bytes += stat.size;
+      ensure(bytes <= 128_000_000, "Changed and untracked files exceed 128 MB; commit or ignore some, or use a smaller project root");
+    }
+    if (toHash.length) {
+      const hashed = execFileSync("git", ["hash-object", "--stdin-paths"], {
+        cwd: root, input: `${toHash.join("\n")}\n`, encoding: "utf8", windowsHide: true, timeout: 120_000, maxBuffer: 64_000_000, stdio: ["pipe", "pipe", "pipe"],
+      }).split(/\r?\n/).filter(Boolean);
+      ensure(hashed.length === toHash.length, "Cannot fingerprint the changed Git files");
+      toHash.forEach((path, i) => (files[path] = `git:${hashed[i]}`));
+    }
+    return {
+      vcs, revision, vcsState,
+      fingerprint: digest(JSON.stringify({ vcs, revision, vcsState, files })),
+      files,
+    };
+  }
   for (const path of paths) {
     const full = safePath(root, path);
     if (!existsSync(full)) {
