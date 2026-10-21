@@ -18,7 +18,7 @@ import { type ChatBinding, recipientGuidance, sessionCommandInput, developInstru
 import type { App } from "./app.ts";
 import { fetchMergeRequest } from "../revision.ts";
 import { pickMergeRequest, resolveGitlabHost } from "./merge-requests.ts";
-import { gitlabClient, gitlabProject, mergeRequestInfo } from "../gitlab.ts";
+import { canonicalProject, gitlabClient, gitlabProject, mergeRequestInfo } from "../gitlab.ts";
 
 /** Contract commands: planning, development, decisions, review, continue, handoff and session management. */
 export function registerCommands(app: App): void {
@@ -247,7 +247,7 @@ export function registerCommands(app: App): void {
         // With your GitLab host set up, its title and description tell the main agent what it is for.
         let about = "WAICC cannot read the request's title or description (no GitLab host is set up for it in your user file); if its purpose is unclear from the commits and code, ask the human.";
         try {
-          const project = m.provider === "gitlab" && m.url ? gitlabProject(m.url) : null;
+          const project = m.provider === "gitlab" && m.url ? await (services.gitlabOrigin ?? canonicalProject)(gitlabProject(m.url)) : null;
           const host = project ? resolveGitlabHost(ctx.cwd, project.host) : null;
           if (project && host?.token) {
             const info = await mergeRequestInfo((services.gitlab ?? gitlabClient)(project, host), m.number);

@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { listSessions, loadSession } from "../files.ts";
-import { gitlabClient, gitlabProject, mergeRequestInfo, openMergeRequests, reviewComments, saveWindowsUserVariable, summaryNote, tokenPageUrl, type GitLabHost, type GitLabProject, type ReviewComment } from "../gitlab.ts";
+import { canonicalProject, gitlabClient, gitlabProject, mergeRequestInfo, openMergeRequests, reviewComments, saveWindowsUserVariable, summaryNote, tokenPageUrl, type GitLabHost, type GitLabProject, type ReviewComment } from "../gitlab.ts";
 import { addGitlabHost, gitlabHost, userConfigPath } from "../profiles.ts";
 import { chooseRemote, remoteMergeRequests, repositoryPrefix } from "../revision.ts";
 import { projectRoot } from "../source.ts";
@@ -117,6 +117,8 @@ export async function pickMergeRequest(app: App, ctx: ExtensionCommandContext, w
   try {
     project = provider === "gitlab" && url ? gitlabProject(url) : null;
   } catch { /* an unusual remote URL: list with git only */ }
+  // The server's real address, which a remote's http address may only redirect to.
+  if (project) project = await (services.gitlabOrigin ?? canonicalProject)(project);
   let host = project ? resolveGitlabHost(ctx.cwd, project.host) : null;
   // GITLAB_TOKEN is there but the host is not listed: with your yes, list it and use the token.
   if (project && !host && ctx.hasUI && process.env.GITLAB_TOKEN?.trim()
@@ -175,7 +177,7 @@ export function registerMergeRequestCommands(app: App): void {
       ensure(round?.review?.kind === "code" && round.review.revision,
         "No assessed review to post yet: /waicc-dispatch the review, then /waicc-continue so the main agent checks its findings");
       ensure(mr.url, "The merge request's remote URL was not recorded; fetch it again with /waicc-review --mr");
-      const project = gitlabProject(mr.url);
+      const project = await (services.gitlabOrigin ?? canonicalProject)(gitlabProject(mr.url));
       const host = resolveGitlabHost(ctx.cwd, project.host)?.token ? resolveGitlabHost(ctx.cwd, project.host)! : await setupGitlabHost(app, ctx, project);
       if (!host) return;
       const call = (services.gitlab ?? gitlabClient)(project, host);

@@ -291,7 +291,10 @@ On macOS or Linux, add `export GITLAB_TOKEN="glpat-..."` to your shell profile (
 `~/.bashrc`). `/waicc-dispatch --profiles` then shows `from GITLAB_TOKEN` for the host.
 
 `tokenEnv` names an environment variable that holds the token; `token` holds it in the file
-itself. A host reached over plain `http://` needs `"allowHttp": true`, because the token would
+itself. If your remote's address only redirects to the real server (for example
+`http://10.0.0.5` forwarding to `https://gitlab.example.com`), WAICC finds that out first with
+one request that carries no token, and then uses and asks about the server it lands on, so the
+token goes encrypted to the real host. It never follows a redirect with your token. A host reached over plain `http://` needs `"allowHttp": true`, because the token would
 travel unencrypted. WAICC trusts the system's certificates as well as Node's, so an internal
 GitLab that git and your browser trust works. With the host set up, `/waicc-review --mr` also
 reads the merge request's title and description, so the main agent knows what it is meant to

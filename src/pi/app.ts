@@ -1,5 +1,5 @@
 import { recipientAssignment } from "../recipient.ts";
-import type { GitLabCall, GitLabHost, GitLabProject } from "../gitlab.ts";
+import type { GitLabCall, GitLabHost, GitLabProject, OriginProbe } from "../gitlab.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
@@ -28,6 +28,8 @@ export interface Services {
   notifyDesktop?: (title: string, body: string) => boolean;
   /** GitLab's API client, replaceable in tests. */
   gitlab?: (project: GitLabProject, host: GitLabHost) => GitLabCall;
+  /** Finds where a GitLab server really answers (redirects followed, no token), replaceable in tests. */
+  gitlabOrigin?: OriginProbe;
   /** Saves a Windows user environment variable (what setx does), replaceable in tests. */
   saveUserVariable?: (name: string, value: string) => boolean;
 }
