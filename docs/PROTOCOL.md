@@ -1134,7 +1134,13 @@ sub-project of a larger repository. A sub-project inside a Git work tree (no `.g
 own) is fingerprinted with Git from that folder: `ls-files` and the index listing cover only
 its subtree, and the revision is the subtree's own tree (`HEAD:<prefix>`), not the
 repository's commit, so commits elsewhere do not change its fingerprint. Git is consulted
-only when a parent folder has a `.git`. Isolated worktrees of a sub-project start from the
+only when a parent folder has a `.git`. A Git project of more than 10,000 fingerprinted paths
+(at most 100,000) records each file as `git:<blob id>`: from `ls-files --stage` when the file
+is tracked and not listed by `diff-files --name-only --relative`, otherwise (changed, staged or
+untracked) from `git hash-object --stdin-paths`, which applies the same filters a commit would;
+a tracked path `diff-files` lists that no longer exists is `DELETED`. Only those hashed files
+count toward the 128 MB limit; links and submodules (index modes other than `100…`) are
+refused as before. Projects up to 10,000 paths keep a SHA-256 of each file's bytes. Isolated worktrees of a sub-project start from the
 repository's last commit with the sub-project's entries replaced by its fingerprinted files;
 the rest is checked out as context, the sub-project's files are copied byte for byte, and the
 agent works in the sub-project's folder inside the worktree. Changes are listed relative to
