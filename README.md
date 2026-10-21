@@ -1300,6 +1300,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-memory confirm\|revoke [<id>\|all]`       | Human curation: a specific entry, all candidates after one dialog, or pick from a list with no ID |
 | `/waicc-ignore`                                  | Configure SVN ignore rules explicitly; Git is automatic                                               |
 | `/waicc-init`                                    | Make the current folder its own WAICC project, such as one service in a monorepo |
+| `/waicc-worktree [<branch> [--from b] \| remove <branch>]` | One folder per branch (git worktree): create, list, or remove one safely |
 
 Bindings are per Pi chat and repository, persisted in Pi's session entries. Multiple
 sessions are never silently resolved by choosing the newest. `/waicc-use` provides
@@ -1542,6 +1543,29 @@ From then on, Pi started in that folder (or below it) treats it as the WAICC pro
 Work that spans services, such as changing a producer in another service, belongs in that
 service's own session (run `/waicc-init` there too), or in a shared parent folder initialized
 the same way if one contract must cover both and it stays under the file limit.
+
+### Several branches at once: one folder per branch
+
+In a monorepo, switching branch switches every service at once. Instead, give each branch its
+own folder with `/waicc-worktree`; they share one repository (no second clone), and each folder
+keeps its own WAICC sessions and tracker card, so switching work means switching terminal:
+
+```text
+/waicc-worktree feature/sync              # a folder for the branch, beside the repository
+/waicc-worktree fix/status --from develop # a new branch, from develop
+/waicc-worktree                           # list them: branch, open sessions, changes, unpushed
+/waicc-worktree remove feature/sync       # remove the folder; the branch is kept
+```
+
+The folder is `<repository folder>-<branch>`, for example `C:\dev\monorepo-feature-sync`
+(`--path` chooses another). WAICC uses your local branch if there is one, otherwise the
+remote's (tracking it), otherwise it creates the branch from `--from` or the remote's default
+branch. If you run it from a service set up with `/waicc-init`, that service is set up the same
+way in the new folder, and Pi starts there; on Windows it offers to open a new terminal there
+with Pi running. Removing refuses a folder with uncommitted changes, and asks first when it has
+unpushed commits or open WAICC sessions, which live in that folder. It never removes the main
+folder, the folder this chat works in, or WAICC's own temporary folders for delegated coding.
+Git does not check out one branch in two folders, so each branch has at most one.
 
 ## Project storage and version control
 
