@@ -14,7 +14,6 @@ import { elapsed, type ProgressEvent } from "../progress.ts";
 import { checkpointView } from "../checkpoint.ts";
 import { recall } from "../memory.ts";
 import { projectRoot, samePath, snapshot } from "../source.ts";
-import { manualHandoffMessage } from "../render.ts";
 import type { manualHandoff } from "../render.ts";
 import { resolveDecision, readContract, requirementsText, status } from "../workflow.ts";
 import { decodeJsonArguments, ensure } from "../validation.ts";
@@ -252,15 +251,9 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
         result.message,
         result.status === "copied" ? "info" : "warning",
       );
+    // Without a clipboard, a pointer rather than the whole prompt: the chat stays short.
     if (ctx.mode === "tui" && result.status === "unavailable" && !force)
-      pi.sendMessage(
-        {
-          customType: "waicc-clipboard-fallback",
-          content: `${result.message}\n\n${manualHandoffMessage(delivery)}`,
-          display: true,
-        },
-        { triggerTurn: false },
-      );
+      ctx.ui.notify("To hand it off by hand, /waicc-handoff shows the prompt; /waicc-dispatch sends it headless.", "info");
     return result;
   }
   async function result(

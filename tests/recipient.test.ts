@@ -1012,7 +1012,7 @@ test("new interactive handoffs auto-copy only the prompt; status does not overwr
   assert.equal(h.clipboard.length, 3); // A recipient response is never a new manual handoff.
 });
 
-test("clipboard failure does not roll back a valid handoff and leaves a copyable fallback", async (t) => {
+test("clipboard failure does not roll back a valid handoff, keeps the prompt out of the chat, and /waicc-handoff still shows it", async (t) => {
   const { root, id } = fixture(t),
     h = harness(root, true);
   const ctx = { ...h.ctx(), mode: "tui" as const, hasUI: true };
@@ -1031,7 +1031,10 @@ test("clipboard failure does not roll back a valid handoff and leaves a copyable
   );
   assert.equal(result.details.clipboard.status, "unavailable");
   assert.equal(loadSession(root, id).status, "WAITING_FOR_REPLY");
-  assert.ok(h.shown.at(-1)!.includes("Copy ONLY the following block"));
+  assert.ok(!h.shown.some((m) => m.includes("Copy ONLY the following block")), "the prompt is not dropped into the chat");
+  assert.match(h.notices.at(-1)!, /\/waicc-handoff shows the prompt; \/waicc-dispatch sends it headless/);
+  const next = JSON.parse(result.content[0].text).nextSteps;
+  assert.deepEqual(next.map((n: any) => n.command).slice(1), ["/waicc-handoff", "/waicc-continue"], "the next steps are a short list of commands");
   await h.commands.get("waicc-handoff")!.handler("", ctx);
   assert.ok(h.shown.at(-1)!.includes("Copy ONLY the following block"));
   assert.ok(h.shown.at(-1)!.includes("Clipboard unavailable"));
