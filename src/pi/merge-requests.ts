@@ -117,7 +117,19 @@ export async function pickMergeRequest(app: App, ctx: ExtensionCommandContext, w
   try {
     project = provider === "gitlab" && url ? gitlabProject(url) : null;
   } catch { /* an unusual remote URL: list with git only */ }
-  const host = project ? resolveGitlabHost(ctx.cwd, project.host) : null;
+  let host = project ? resolveGitlabHost(ctx.cwd, project.host) : null;
+  // GITLAB_TOKEN is there but the host is not listed: with your yes, list it and use the token.
+  if (project && !host && ctx.hasUI && process.env.GITLAB_TOKEN?.trim()
+    && (project.secure || await ctx.ui.confirm("Send the token over plain http?", `${project.host} is reached over http, so your token would travel unencrypted. Allow that for this host?`))
+    && await ctx.ui.confirm(`Use your GitLab token for ${project.host}?`,
+      `GITLAB_TOKEN is set, but ${project.host} is not listed under "gitlab" in your user file (${userConfigPath()}), and WAICC sends the token only to hosts listed there. Add ${project.host}, reading the token from GITLAB_TOKEN? Then this list shows the open merge requests with their titles.`)) {
+    addGitlabHost(project.host, { allowHttp: !project.secure });
+    host = resolveGitlabHost(ctx.cwd, project.host);
+  }
+  // Why the list is numbers only, in words that say what to do.
+  const missing = !project ? "this remote is not a GitLab project WAICC can read"
+    : !host ? `${project.host} is not listed under "gitlab" in your user file${process.env.GITLAB_TOKEN?.trim() ? "" : " and GITLAB_TOKEN is not set in this Pi"} (/waicc-mr-comments walks you through it)`
+      : `no token for ${project.host} in this Pi (if you just ran setx, restart the terminal and Pi)`;
   let rows: { number: number; label: string }[], title: string;
   ctx.ui.notify(`Listing merge requests on ${remote}…`, "info");
   if (project && host?.token) {
@@ -130,7 +142,7 @@ export async function pickMergeRequest(app: App, ctx: ExtensionCommandContext, w
   } else {
     const refs = await remoteMergeRequests(root, remote);
     rows = refs.map((r) => ({ number: r.number, label: `${sign}${r.number} · head ${short(r.head)}${mark(r.number)}` }));
-    title = `The newest ${refs.length} merge request numbers on ${remote}. Without a GitLab token git cannot tell open from merged ones or show titles; set up "gitlab" in your user file for that`;
+    title = `The newest ${refs.length} merge request numbers on ${remote}, open or merged: no titles because ${missing}`;
   }
   ensure(rows.length, `${remote} has no ${provider === "github" ? "open pull" : "open merge"} requests`);
   if (!ctx.hasUI) {
