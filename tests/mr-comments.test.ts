@@ -69,8 +69,8 @@ function assessedReview(t: TestContext) {
 }
 
 test("the GitLab project comes from the remote URL: https, http, or SSH", () => {
-  assert.deepEqual(gitlabProject("https://vpn-jb-gitlab.tiongnam.com/whatley/donut-lite"), { origin: "https://vpn-jb-gitlab.tiongnam.com", host: "vpn-jb-gitlab.tiongnam.com", path: "whatley/donut-lite", secure: true });
-  assert.deepEqual(gitlabProject("http://10.2.102.84/com/tiongnam/tnet.git"), { origin: "http://10.2.102.84", host: "10.2.102.84", path: "com/tiongnam/tnet", secure: false });
+  assert.deepEqual(gitlabProject("https://gitlab.example.com/team/mobile-app"), { origin: "https://gitlab.example.com", host: "gitlab.example.com", path: "team/mobile-app", secure: true });
+  assert.deepEqual(gitlabProject("http://10.0.0.5/group/platform/services.git"), { origin: "http://10.0.0.5", host: "10.0.0.5", path: "group/platform/services", secure: false });
   assert.deepEqual(gitlabProject("git@gitlab.example.com:group/sub/app.git").path, "group/sub/app");
   assert.equal(gitlabProject("ssh://git@gitlab.example.com:2222/group/app.git").origin, "https://gitlab.example.com", "an SSH port is not the web server's");
   assert.equal(gitlabProject("https://gitlab.example.com:8443/group/app.git").host, "gitlab.example.com:8443");
@@ -81,12 +81,12 @@ test("the GitLab project comes from the remote URL: https, http, or SSH", () => 
 test("GitLab hosts and tokens are set in your user file only, and --profiles never shows a token", (t) => {
   const { agentDir, root } = assessedReview(t);
   assert.equal(gitlabHost(root, "gitlab.example.com"), null, "a host you have not listed gets no token");
-  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-secret-1" }, "10.2.102.84": { tokenEnv: "WAICC_TEST_TOKEN", allowHttp: true } } }));
+  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-secret-1" }, "10.0.0.5": { tokenEnv: "WAICC_TEST_TOKEN", allowHttp: true } } }));
   assert.deepEqual(gitlabHost(root, "GitLab.Example.com"), { token: "glpat-secret-1", allowHttp: false });
-  assert.deepEqual(gitlabHost(root, "10.2.102.84"), { token: null, allowHttp: true }, "the variable is not set");
+  assert.deepEqual(gitlabHost(root, "10.0.0.5"), { token: null, allowHttp: true }, "the variable is not set");
   process.env.WAICC_TEST_TOKEN = "glpat-from-env";
   t.after(() => { delete process.env.WAICC_TEST_TOKEN; });
-  assert.equal(gitlabHost(root, "10.2.102.84")!.token, "glpat-from-env");
+  assert.equal(gitlabHost(root, "10.0.0.5")!.token, "glpat-from-env");
   const shown = JSON.stringify(profilesView(root));
   assert.ok(!shown.includes("glpat"), "no token in --profiles");
   assert.match(shown, /"gitlab\.example\.com":\{"token":"set in your user file"/);
@@ -234,8 +234,8 @@ test("guided setup: list the host, open the token page, check the pasted token w
   assert.ok(!h.notices.join("\n").includes("glpat-pasted"), "the token is never shown");
 
   assert.throws(() => addGitlabHost("GitLab.Example.com"), /already under "gitlab"/, "a host there is never replaced");
-  const added = addGitlabHost("10.2.102.84", { allowHttp: true });
-  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).gitlab["10.2.102.84"], { tokenEnv: "GITLAB_TOKEN", allowHttp: true });
+  const added = addGitlabHost("10.0.0.5", { allowHttp: true });
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).gitlab["10.0.0.5"], { tokenEnv: "GITLAB_TOKEN", allowHttp: true });
   assert.equal(added.tokenSet, false, "GITLAB_TOKEN is not set here");
   writeFileSync(file, "{ not json");
   assert.throws(() => addGitlabHost("other.example.com"), /is not valid JSON, so it was left unchanged/);

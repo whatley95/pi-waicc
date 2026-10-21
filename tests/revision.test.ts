@@ -277,7 +277,7 @@ test("/waicc-review --mr --list: pick a merge request and its review starts; wit
     getAllTools: () => [], getActiveTools: () => [], setActiveTools() {},
     sendMessage: (m: { content: string }) => shown.push(m.content), sendUserMessage: (m: string) => sent.push(m),
   } as unknown as ExtensionAPI, { gitlab: () => async (_method, path) => (api.push(path), [
-    { iid: 7, title: "Sync orders and status", author: { username: "lifeng" }, source_branch: "feature/sync", target_branch: "develop", updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), draft: false },
+    { iid: 7, title: "Sync orders and status", author: { username: "alice" }, source_branch: "feature/sync", target_branch: "develop", updated_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), draft: false },
     { iid: 9, title: "WIP export", author: { username: "ali" }, source_branch: "export", target_branch: "develop", updated_at: new Date().toISOString(), draft: true },
   ]) });
   const ctx = (hasUI: boolean) => ({
@@ -297,7 +297,7 @@ test("/waicc-review --mr --list: pick a merge request and its review starts; wit
   writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-secret-1" } } }));
   await commands.get("waicc-review").handler("--mr list", ctx(false));
   assert.equal(api[0], "/merge_requests?state=opened&order_by=updated_at&sort=desc&per_page=50");
-  assert.match(shown.at(-1)!, /^2 open merge requests on team\/app: pick one to review\n- !7 Sync orders and status · lifeng · feature\/sync → develop · 2h ago · in review: draft\n- !9 \[draft\] WIP export · ali · export → develop · 0m ago$/,
+  assert.match(shown.at(-1)!, /^2 open merge requests on team\/app: pick one to review\n- !7 Sync orders and status · alice · feature\/sync → develop · 2h ago · in review: draft\n- !9 \[draft\] WIP export · ali · export → develop · 0m ago$/,
     "!7 is already in review here");
 });
 

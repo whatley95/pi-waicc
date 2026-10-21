@@ -257,8 +257,8 @@ server):
 
 ```json
 "gitlab": {
-  "vpn-jb-gitlab.tiongnam.com": { "tokenEnv": "GITLAB_TOKEN" },
-  "10.2.102.84": { "token": "glpat-…", "allowHttp": true }
+  "gitlab.example.com": { "tokenEnv": "GITLAB_TOKEN" },
+  "10.0.0.5": { "tokenEnv": "GITLAB_TOKEN", "allowHttp": true }
 }
 ```
 
