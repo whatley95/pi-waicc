@@ -9,10 +9,35 @@ import { acceptedPlanCurrent, authorizationState, defaultRoundLimits, decisionSu
 import { ensure } from "../validation.ts";
 import type { Session, RoundPhase } from "../types.ts";
 import { requireOpen, approvalIsCurrent, contract, skillFiles } from "./shared.ts";
+import { resolveDispatch } from "../profiles.ts";
 
 /** Session status and lists, handoff export and round limits. */
 
 export type SessionListFilter = "open" | "all" | "closed" | "deleted";
+/**
+ * A waiting handoff's next steps: send it headless with the agent its role would use, hand it to
+ * an agent yourself with /waicc-handoff (which shows and copies the prompt), then continue. The
+ * prompt itself is not repeated here: the chat stays short.
+ */
+function nextSteps(root: string, s: Session, r: Session["rounds"][number]) {
+  let headless = "/waicc-dispatch", detail: string;
+  try {
+    const picked = resolveDispatch(root, s.id, "");
+    const agent = `${picked.options.via}${picked.options.model ? ` ${picked.options.model}` : ""}`;
+    if (r.mode === "implementation") headless = "/waicc-dispatch --implement";
+    if (r.mode === "testing" && !picked.options.checks?.length) headless = '/waicc-dispatch --check "<test command>"';
+    detail = `${picked.profile ? `your ${picked.profile} profile (${agent})` : agent}; name another profile to change it`;
+  } catch {
+    headless = "/waicc-dispatch --via <claude|codex|pi|agy>";
+    detail = "no agent is set for this role yet; /waicc-dispatch --profiles shows your profiles";
+  }
+  return [
+    { step: "Send it to an agent, headless", command: headless, detail },
+    { step: "Or give it to an agent yourself", command: "/waicc-handoff", detail: "shows the prompt to paste, and copies it" },
+    { step: "When its reply is in", command: "/waicc-continue", detail: "checks and assesses the reply" },
+  ];
+}
+
 export function status(
   cwd: string,
   id?: string,
@@ -84,6 +109,8 @@ export function status(
     roundBudget: roundUsage(s),
     decisionBriefPath: s.artifacts[`${versionDirectory(s.contractVersion)}/DECISIONS.md`]
       ? join(root, sessionRelative(s.id), versionDirectory(s.contractVersion), "DECISIONS.md") : null,
+    // What the human can do next with a waiting handoff, as a short table; ahead of the large previews.
+    nextSteps: r?.status === "WAITING" && !replyExists ? nextSteps(root, s, r) : null,
     // Keep delivery instructions ahead of potentially large requirements/contract previews.
     manualHandoff:
       r?.status === "WAITING" && !replyExists ? manualHandoff(s, r) : null,
@@ -226,7 +253,7 @@ export function status(
               : r?.status === "WAITING"
                 ? replyExists
                   ? "A reply.json already exists. Return to the coordinator and /waicc-continue to validate it; do not send this request to another worker."
-                  : "Manual handoff: copy manualHandoff.copyPastePrompt (or STARTER.txt CONTENTS) into one separate agent with project access. /waicc-handoff shows the copy block and return steps. After its reply, return here and /waicc-continue."
+                  : "Show the human nextSteps as a short table (step, command): send it headless with the command shown, or hand it off by hand with /waicc-handoff, then /waicc-continue when the reply is in. Do not paste the handoff prompt into the chat; /waicc-handoff shows it and copies it."
                 : r?.status === "RECEIVED"
                   ? "Assess the received reply against the requirements and actual evidence."
                   : s.status === "ADVICE_READY"
