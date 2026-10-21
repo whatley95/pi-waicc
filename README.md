@@ -746,12 +746,27 @@ that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
     testing…) and by session.
   - **Advisor:** the main agent's questions when it was stuck, and the answers.
 
-Costs are what each agent reports about its own run: Claude and Pi report dollars (on a
-subscription, Claude's figure is the API-equivalent price), Codex reports tokens only, shown
-as "tokens only". Failed runs count too. The same figure appears in Pi when a run finishes,
-for example `codex submitted a reply ($0.75 · 443k tokens)`. The main agent's figures are
-every message it sent in that project's Pi chats, WAICC work or not, as Pi records them; they
-are shown as messages rather than runs and never count toward your budget.
+Costs are what each agent reports about its own run, so they are as accurate as its prices:
+
+- **Pi** (the main agent and Pi agents) reports dollars at its provider's prices, part by part
+  (input, output, cache reads). A model with no price set reports $0; the page shows that as
+  "without a price" rather than free.
+- **Claude** reports dollars at API prices. When it runs on your claude.ai subscription (no API
+  key), that is what the run would cost at API rates, not money spent per token, so the page
+  marks it **API-equivalent**.
+- **Codex** reports tokens only, shown as "tokens only".
+- A run stopped before it finished may report nothing (Claude reports its totals at the end).
+
+The same figure appears in Pi when a run finishes, for example
+`codex submitted a reply ($0.75 · 443k tokens)`. The main agent's figures are every message it
+sent in that project's Pi chats, WAICC work or not, as Pi records them; they are shown as
+messages rather than runs and never count toward your budget.
+
+**Speed:** for the main agent, output tokens per second of producing its replies (from when
+each request started to when its reply was saved, so short replies, mostly waiting for the
+first token, weigh little), per Pi chat in the Main agent table and per model on the Spend tab.
+For dispatched agents and the advisor only output per minute of the whole run is shown, since
+their time includes reading files and running commands.
 
 The page is `~/.pi/agent/waicc-tracker/index.html` (beside your profiles). It refreshes itself
 every 3 s and needs no server: each Pi chat writes its project's status into that folder.
