@@ -13,6 +13,7 @@ import { ensure } from "./validation.ts";
 import { applyIsolatedChanges, createIsolation, isolatedChanges, removeIsolation, type Isolation } from "./worktree.ts";
 import { progressParser, type ProgressEvent } from "./progress.ts";
 import { usageMeter } from "./usage.ts";
+import { agyServerName, registerAgyServer, unregisterAgyServer, type AgyServer } from "./agy.ts";
 import type { Mode, RecipientPin } from "./types.ts";
 
 export const agents = ["claude", "codex", "pi", "agy"] as const;
@@ -22,7 +23,7 @@ export const effortLevels: Record<Agent, string[]> = {
   claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
   pi: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-  agy: ["low", "medium", "high"],
+  agy: ["low", "medium", "high", "xhigh", "max"],
 };
 /** Roles whose recipient never edits source. Implementation needs --implement: Pi edits in place
  * within task paths; Claude and Codex edit an isolated worktree whose changes are checked first.
@@ -222,9 +223,11 @@ export interface DispatchPlan {
   logPrefix: string;
   /** Temporary per-run files outside the project, removed after the run. */
   scratch: string[];
+  /** Antigravity only: its pinned WAICC server, registered for the run and removed after it. */
+  agyServer?: AgyServer;
 }
 
-function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env">): Pick<DispatchPlan, "program" | "args" | "scratch" | "env"> {
+function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer">): Pick<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer"> {
   const model = plan.model;
   const effort = plan.effort;
   const isolated = plan.isolation !== null;
@@ -279,18 +282,25 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
         ],
         scratch, env: {},
       };
-    case "agy":
-      // agy reads MCP servers from its own config; see README for the one-time setup.
+    case "agy": {
+      // agy reads MCP servers only from its own config, so this run's pinned server is registered
+      // there for the run (see agy.ts). Its default headless permissions deny file edits and
+      // commands; --sandbox restricts its terminal too. It reaches MCP tools through call_mcp_tool,
+      // which needs the server's name, new every run: the prompt says it.
+      const name = agyServerName(plan.dispatchId);
+      const prompt = `${plan.prompt} The waicc tools are on the MCP server named ${JSON.stringify(name)}: call each one with call_mcp_tool, server ${JSON.stringify(name)} and the tool's name (waicc_receive first). Do not look for them on disk, and do not run commands: you have no shell.`;
       return {
         program: "agy",
         args: [
-          "-p", plan.prompt, "--output-format", "stream-json", "--sandbox",
+          "-p", prompt, "--output-format", "stream-json", "--sandbox",
           "--print-timeout", `${Math.ceil(plan.timeoutMs / 60_000)}m`,
           ...(model ? ["--model", model] : []),
           ...(effort ? ["--effort", effort] : []),
         ],
-        scratch: [], env: {},
+        scratch, env: {},
+        agyServer: { name, command: server.command, args: server.args },
       };
+    }
     case "pi": {
       // Pi loads WAICC itself and pins the request at startup; recipient mode limits its tools.
       // Print mode does not run extension slash commands, so no /waicc-receive here.
@@ -419,6 +429,9 @@ function settleIsolation(plan: DispatchPlan, replySubmitted: boolean) {
 
 const tail = (text: string, limit = 24_000): string => (text.length > limit ? text.slice(-limit) : text);
 
+/** How an Antigravity run's server is registered and removed; replaceable in tests. */
+export const agyRegistry = { register: registerAgyServer, unregister: unregisterAgyServer };
+
 export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgent, signal?: AbortSignal, onProgress?: (event: ProgressEvent) => void) {
   const startedAt = Date.now();
   const parse = progressParser(plan.via, plan.cwd, startedAt);
@@ -434,11 +447,13 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   };
   let result: AgentResult;
   try {
+    if (plan.agyServer) agyRegistry.register(plan.agyServer, recipientTools);
     result = await run(plan.program, plan.args, { cwd: plan.cwd, timeout: plan.timeoutMs, signal, env: plan.env, onLine });
   } catch (error) {
     result = { stdout: "", stderr: error instanceof Error ? error.message : String(error), code: 1, killed: Boolean(signal?.aborted) };
   } finally {
     for (const path of plan.scratch) rmSync(path, { force: true });
+    if (plan.agyServer) agyRegistry.unregister(plan.agyServer.name);
   }
   // A runner that returns stdout without streaming it (older agents, tests) still yields its usage.
   if (!meter.get()) for (const line of result.stdout.split(/\r?\n/)) meter.read(line);
