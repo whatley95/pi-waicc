@@ -1,6 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -23,12 +24,17 @@ const reply = (outcome: string, extra: object = {}) => ({
   coverage: [{ requirementId: "R1", status: "addressed", evidence: "status.txt" }],
   checks: [{ description: "Read status.txt", outcome: "passed", evidence: "Inspected" }], ...extra,
 });
-const completion = (): WorkCompletion => ({
+const completion = (findings: WorkCompletion["findings"] = []): WorkCompletion => ({
   summary: "All work complete", tasks: [{ taskId: "T1", evidence: "status.txt has the field" }],
-  checks: [{ description: "Read status.txt", outcome: "passed", evidence: "Inspected" }], findings: [],
+  checks: [{ description: "Read status.txt", outcome: "passed", evidence: "Inspected" }], findings,
 });
+/** Every finding the reviews so far reported, fixed: what a fix's completion evidence must record. */
+const fixes = (root: string, id: string): WorkCompletion["findings"] => loadSession(root, id).rounds
+  .filter((round) => round.mode === "review")
+  .flatMap((round) => (round.reply?.findings ?? []).map((f) => ({ requestId: round.id, findingId: f.id, disposition: "resolved" as const, evidence: "status.txt rejects empty messages" })));
 const waitFor = async (check: () => boolean, what: string) => {
-  for (let i = 0; i < 300 && !check(); i++) await new Promise((done) => setTimeout(done, 10));
+  // Coding runs snapshot a Git checkout and build a worktree, which can take seconds on Windows.
+  for (const end = Date.now() + 30_000; Date.now() < end && !check();) await new Promise((done) => setTimeout(done, 10));
   assert.ok(check(), `timed out waiting for ${what}`);
 };
 const profiles = {
@@ -38,7 +44,8 @@ const profiles = {
 };
 
 /** A planning handoff waiting, your agent config, and Pi with a scripted planner and reviewer. */
-function run(t: TestContext, replies: object[], decisions?: ContractDecision[], spending?: { budgetUsd: number; costUsd: number }) {
+type Scripted = object | ((root: string, id: string) => object);
+function run(t: TestContext, replies: Scripted[], decisions?: ContractDecision[], spending?: { budgetUsd: number; costUsd: number }, coding?: { roles?: Record<string, string> }) {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   const root = join(base, "project"), agentDir = join(base, "agent");
   mkdirSync(root);
@@ -50,7 +57,9 @@ function run(t: TestContext, replies: object[], decisions?: ContractDecision[], 
     assert.ok(basename(base).startsWith("waicc-test-"));
     rmSync(base, { recursive: true, force: true });
   });
-  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ profiles, roles: { planning: "opus", review: "sol" }, ...(spending ? { budget: { perSessionUsd: spending.budgetUsd } } : {}) }));
+  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ profiles, roles: { planning: "opus", review: "sol", ...coding?.roles }, ...(spending ? { budget: { perSessionUsd: spending.budgetUsd } } : {}) }));
+  // Coding agents work in an isolated copy of a Git checkout; only those tests pay for Git's slower snapshots.
+  if (coding) execFileSync("git", ["init", "--quiet"], { cwd: root, windowsHide: true });
   writeFileSync(join(root, "status.txt"), "status\n");
   const s = createSession(root, "Add a status message field", undefined, "planning");
   prepare(root, s.id, scope(decisions), "planning", "Plan", 0);
@@ -59,8 +68,9 @@ function run(t: TestContext, replies: object[], decisions?: ContractDecision[], 
   const shown: any[] = [], notices: string[] = [], prompts: string[] = [], entries: any[] = [], agents: string[] = [];
   const agent: AgentRunner = async (program, args) => {
     agents.push(`${program} ${args.includes("gpt-6.1-sol") || args.some((a) => a.includes("gpt-6.1-sol")) ? "sol" : ""}${args.some((a) => a.includes("ultra")) ? " ultra" : ""}`.trim());
-    const body = replies[agents.length - 1];
-    if (body) submitRecipientReply(root, receiveHandoff(root, s.id).pin, body);
+    const scripted = replies[agents.length - 1];
+    const body = typeof scripted === "function" ? scripted(root, s.id) : scripted;
+    if (body) submitRecipientReply(root, receiveHandoff(root, s.id, true).pin, body);
     // Each run reports its cost the way Claude does.
     const stdout = spending ? `${JSON.stringify({ type: "result", total_cost_usd: spending.costUsd, usage: { input_tokens: 10, output_tokens: 5 } })}\n` : "";
     return { stdout, stderr: "", code: 0, killed: false };
@@ -81,8 +91,9 @@ function run(t: TestContext, replies: object[], decisions?: ContractDecision[], 
     start: async (args: string) => { await commands.get("waicc-use").handler(s.id, ctx); await commands.get("waicc-dispatch").handler(args, ctx); },
     turnEnds: () => hooks.get("agent_end")({}, ctx),
     // What the main agent does in each turn.
-    assess: (decision: "planned" | "followup" | "ready", rationale = "Checked against source") => assess(root, s.id, { requestId: latest(), decision, rationale, dispositions: [] }),
-    requestReview: () => { writeFileSync(join(root, "status.txt"), "status with message\n"); issue(root, s.id, "review", "Review the whole change", undefined, undefined, { kind: "code", completion: completion() }); },
+    assess: (decision: "planned" | "followup" | "ready" | "needs_changes", rationale = "Checked against source") => assess(root, s.id, { requestId: latest(), decision, rationale, dispositions: [] }),
+    requestCoding: (focus = "Complete ALL work") => { issue(root, s.id, "implementation", focus); },
+    requestReview: () => { writeFileSync(join(root, "status.txt"), "status with message\n"); issue(root, s.id, "review", "Review the whole change", undefined, undefined, { kind: "code", completion: completion(fixes(root, s.id)) }); },
     messages: () => shown.filter((m) => m.customType === "waicc-review-loop").map((m) => m.content as string),
   };
 }
@@ -138,6 +149,95 @@ test("--develop never starts coding while a decision is open, and a plan alone s
   await plain.turnEnds();
   assert.match(plain.messages().at(-1)!, /^Plan accepted after 1 cycle \(PLAN_READY\)\. Run \/waicc-develop to start coding\./);
   assert.equal(loadSession(plain.root, plain.id).status, "PLAN_READY");
+});
+
+const coded = () => (root: string, id: string) => reply("ready", { completion: completion(fixes(root, id)) });
+const finding = () => reply("needs_changes", { findings: [{ id: "F1", severity: "medium", description: "Empty messages are stored", evidence: "status.txt" }] });
+
+test("--auto --code-with: the coding agent codes and fixes the review's findings; the main agent only assesses", async (t) => {
+  const h = run(t, [reply("planned"), coded(), finding(), coded(), reply("ready")], undefined, undefined, {});
+  await h.start("--auto --code-with ultra");
+  await waitFor(() => h.prompts.length === 1, "the plan's assessment");
+  h.assess("planned");
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 2, "the development instruction");
+  assert.match(h.messages().at(-1)!, /preparing ONE coding handoff for the whole plan, which is dispatched to your ultra profile/);
+  assert.equal(loadSession(h.root, h.id).implementationOwner, "delegate");
+
+  await h.turnEnds(); // No coding handoff yet: nothing is dispatched.
+  assert.equal(h.agents.length, 1);
+  h.requestCoding();
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 3, "the implementation's assessment");
+  assert.match(h.prompts[2], /AUTOMATIC RUN, coding round 1 of 3, .*Do NOT edit application code yourself/s);
+  h.assess("ready");
+  h.requestReview();
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 4, "the review's assessment");
+  assert.match(h.prompts[3], /AUTOMATIC RUN, review 1 of 3, .*do NOT fix them yourself/s);
+
+  h.assess("needs_changes");
+  h.requestCoding("Fix ALL review findings");
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 5, "the fix's assessment");
+  assert.match(h.prompts[4], /coding round 2 of 3/);
+  h.assess("ready");
+  h.requestReview();
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 6, "the second review's assessment");
+  assert.deepEqual(h.agents, ["claude", "codex sol ultra", "codex sol", "codex sol ultra", "codex sol"], "coding and fixes by the chosen profile, reviews by the review role");
+
+  h.assess("ready");
+  await h.turnEnds();
+  assert.match(h.messages().at(-1)!, /^Automatic run finished: the review passed \(2 coding rounds by your ultra profile, 2 reviews\)\. Nothing was closed/);
+  assert.equal(loadSession(h.root, h.id).status, "READY_TO_CLOSE");
+});
+
+test("--review-once ends the run after one review, without fixing; --code-with uses the implementation role by default", async (t) => {
+  const h = run(t, [reply("planned"), coded(), finding()], undefined, undefined, { roles: { implementation: "opus" } });
+  await h.start("--auto --code-with --review-once");
+  await waitFor(() => h.prompts.length === 1, "the plan's assessment");
+  h.assess("planned");
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 2, "the development instruction");
+  h.requestCoding();
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 3, "the implementation's assessment");
+  h.assess("ready");
+  h.requestReview();
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 4, "the review's assessment");
+  assert.match(h.prompts[3], /ONE REVIEW, as the human asked with \/waicc-dispatch --review-once/);
+
+  h.assess("needs_changes");
+  h.requestCoding("Fix ALL review findings"); // Even if the main agent asks, the fix is not sent.
+  await h.turnEnds();
+  assert.match(h.messages().at(-1)!, /finished after its one review, as you asked with --review-once .*Nothing was fixed/);
+  assert.deepEqual(h.agents, ["claude", "claude", "codex sol"]);
+});
+
+test("--auto --review-once: the main agent codes, one review runs, and nothing more is dispatched", async (t) => {
+  const h = run(t, [reply("planned"), finding()]);
+  await h.start("--auto --review-once");
+  await waitFor(() => h.prompts.length === 1, "the plan's assessment");
+  h.assess("planned");
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 2, "the development instruction");
+  h.requestReview();
+  await h.turnEnds();
+  await waitFor(() => h.prompts.length === 3, "the review's assessment");
+  assert.match(h.prompts[2], /ONE REVIEW, as the human asked with \/waicc-dispatch --review-once/);
+  h.assess("needs_changes");
+  await h.turnEnds();
+  assert.match(h.messages().at(-1)!, /^Run finished after its one review, as you asked with --review-once/);
+  assert.deepEqual(h.agents, ["claude", "codex sol"]);
+});
+
+test("--code-with is refused before planning when no agent can code", async (t) => {
+  const h = run(t, []);
+  await h.start("--auto --code-with");
+  assert.match(h.notices.at(-1)!, /--code-with needs a coding agent/);
+  assert.equal(h.agents.length, 0);
 });
 
 test("an automatic loop stops once the session reaches your budget; nothing more is dispatched", async (t) => {
