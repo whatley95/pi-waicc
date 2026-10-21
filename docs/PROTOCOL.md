@@ -525,6 +525,24 @@ authorization and main ownership, and launched as a review loop; another handoff
 the run; no waiting handoff keeps waiting. Review-role checks from a project file end the run,
 since they need confirmation.
 
+`--code-with [profile]` (needs `--develop`) is checked before the first dispatch: the profile,
+or the `implementation` role's when none is named, must exist and must not be `via: agy`.
+When the plan is accepted, `beginDevelopment` records implementation owner `delegate`, and
+the main agent is asked for ONE whole-plan implementation handoff. On each `agent_end`, a
+WAITING implementation round is dispatched with that profile plus `--implement --continue`
+(isolated worktree), and a WAITING whole-change code review with the review profile plus
+`--continue`. Coding rounds and reviews are each limited to the loop's cycles. The
+implementation note forbids the main agent to edit application code; the review note asks it
+to request ONE implementation handoff covering ALL actionable findings, or nothing when a
+finding needs the human. The run ends at `READY_TO_CLOSE` or a passing code review, when the
+main agent asks for nothing new, on any other handoff type, on implementation-role or
+review-role checks that need confirmation, and on the budget.
+
+`--review-once` (needs `--develop` and `--review`) limits the run to one code review. Its
+review note asks the main agent to assess and stop, without fixes or another handoff; the
+run then ends. With `--code-with`, an implementation handoff requested after that review is
+left WAITING for the human, never dispatched.
+
 Decisions may carry `risk` (low|medium|high) and `reversible` (boolean), rated by the
 planner. The user file may set `policies` (at most 20 rules of 1–500 characters) and
 `autoDecide` (`off` | `low-risk`); a project file setting either is rejected. Policies are

@@ -333,6 +333,16 @@ export function sessionBudget(cwd: string): number | null {
   return loadAgentConfig(cwd).budget.perSessionUsd;
 }
 
+/** The agent --code-with would code with: the named profile, or the implementation role's; refused early if it cannot. */
+export function codingAgent(cwd: string, profile?: string): { profile: string; via: string; model: string | null } {
+  const config = loadAgentConfig(cwd);
+  const name = profile ?? config.roles.implementation?.profile;
+  ensure(name, `--code-with needs a coding agent: name a profile (--code-with codex), or set "implementation" under "roles" in ${config.files.user}`);
+  const chosen = config.profiles[name];
+  ensure(chosen, `No agent profile named ${JSON.stringify(name)}; /waicc-dispatch --profiles lists yours`);
+  ensure(chosen.via !== "agy", `${name} uses Antigravity, which cannot code yet; pick a Claude, Codex or Pi profile for --code-with`);
+  return { profile: name, via: chosen.via, model: chosen.model ?? null };
+}
 /** How checks are sandboxed. A broken config throws: a check must not silently lose a required sandbox. */
 /** A GitLab host's token and http permission, from your user file only; null when the host is not listed. */
 export function gitlabHost(cwd: string, host: string): { token: string | null; allowHttp: boolean } | null {

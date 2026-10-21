@@ -61,6 +61,9 @@ the review passes (at most 3 cycles each). It stops and tells you when something
 a decision, a blocker, the same findings twice, or your budget. It never closes the contract;
 you still run `/waicc-close`.
 
+Add `--code-with <profile>` to have another agent write the code and fix the review's findings
+while the main agent only checks its work, or `--review-once` to stop after the first review.
+
 ## 5. Worked example: Claude plans, Codex codes in a worktree, a third model reviews
 
 ```text

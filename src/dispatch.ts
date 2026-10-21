@@ -52,6 +52,10 @@ export interface DispatchOptions {
   review?: boolean;
   /** The profile for that review; otherwise the review role's profile. */
   reviewWith?: string;
+  /** Pi only, with develop: the coding goes to this profile headless (true: the implementation role's), and so do the review fixes. */
+  codeWith?: string | true;
+  /** Pi only, with develop and review: stop after the first code review instead of looping. */
+  reviewOnce?: boolean;
 }
 /** Default and largest number of automatic review cycles. */
 export const loopCycles = { default: 3, max: 8 };
@@ -100,9 +104,18 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   }
   for (let i = first; i < words.length; i += 2) {
     const [flag, value] = [words[i], words[i + 1]];
-    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review" || flag === "--auto") {
+    if (flag === "--code-with") {
+      // An optional profile follows; otherwise the implementation role's.
+      const named = value !== undefined && !value.startsWith("-");
+      if (named) ensure(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value), "--code-with takes an agent profile name");
+      options.codeWith = named ? value : true;
+      if (!named) i -= 1;
+      continue;
+    }
+    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review" || flag === "--auto" || flag === "--review-once") {
       if (flag === "--implement") options.implement = true;
       else if (flag === "--auto") auto = true;
+      else if (flag === "--review-once") options.reviewOnce = true;
       else if (flag === "--develop") options.develop = true;
       else if (flag === "--review") options.review = true;
       else options.continue = flag !== "--no-continue"; // -c is short for --continue.
@@ -145,13 +158,15 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   if (commands.length) options.checks = checkCommands(commands, checkMinutes);
   // --auto: plan until accepted, develop, then review until it passes; a typed --loop keeps its count.
   if (auto) Object.assign(options, { develop: true, review: true, loop: options.loop ?? loopCycles.default });
+  ensure(!options.codeWith || options.develop, "--code-with hands the coding to an agent once the plan is accepted, so it needs --auto or --develop");
+  ensure(!options.reviewOnce || (options.develop && options.review), "--review-once stops an automatic run after its first code review, so it needs --auto (or --develop --review)");
   return { profile, options, checkMinutes };
 }
 
 /** Explicit settings only: --via is required and no agent profile is consulted. */
 export function dispatchOptions(input: string | string[]): DispatchOptions {
   const { profile, options } = parseDispatchArgs(input);
-  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]] [--develop [--review|--review-with <profile>]] [--auto] [--plan-with <profile>]`);
+  ensure(!profile && options.via, `Usage: --via ${agents.join("|")} [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>] [--continue|-c] [--loop [cycles]] [--develop [--review|--review-with <profile>]] [--auto] [--plan-with <profile>] [--code-with [<profile>]] [--review-once]`);
   return options as DispatchOptions;
 }
 
