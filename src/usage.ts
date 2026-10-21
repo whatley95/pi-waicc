@@ -6,11 +6,16 @@ export interface Usage {
   inputTokens: number;
   cachedTokens: number;
   outputTokens: number;
-  /** Dollars as the agent reports them (Claude, Pi); null when it reports none (Codex). */
+  /** Dollars as the agent reports them (Claude, Pi); null when it reports none (Codex) or $0 for real tokens (no price set). */
   costUsd: number | null;
+  /** "api-equivalent" when the agent priced a subscription run at API list prices (Claude signed in with claude.ai). */
+  costBasis?: "api-equivalent";
 }
 
 const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0);
+/** A reported price, or null when there is none, or it is $0 for tokens that were used: a model with no price set, not a free run. */
+export const reportedCost = (cost: unknown, tokens: number): number | null =>
+  typeof cost === "number" && Number.isFinite(cost) && cost >= 0 && !(cost === 0 && tokens > 0) ? cost : null;
 
 /**
  * Reads usage from an agent's streamed JSON lines. Claude reports its total once at the end;
@@ -19,6 +24,9 @@ const count = (value: unknown): number => (typeof value === "number" && Number.i
  */
 export function usageMeter(via: Agent) {
   let usage: Usage | null = null;
+  // Claude says how it is signed in when it starts: no API key means a claude.ai subscription,
+  // whose reported cost is what the run would cost at API prices, not money spent.
+  let subscription = false;
   const add = (input: number, cached: number, output: number, cost: number | null) => {
     usage ??= { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: null };
     usage.inputTokens += input;
@@ -36,19 +44,21 @@ export function usageMeter(via: Agent) {
       }
       if (!j || typeof j !== "object") return;
       if (via === "claude" || via === "agy") {
+        if (j.type === "system" && j.subtype === "init" && typeof j.apiKeySource === "string") subscription = j.apiKeySource === "none";
         // The final result carries the whole run's totals, so it replaces anything seen before.
         if (j.type !== "result" || (j.usage === undefined && j.total_cost_usd === undefined)) return;
         const u = j.usage ?? {};
         usage = null;
-        add(count(u.input_tokens) + count(u.cache_creation_input_tokens) + count(u.cache_read_input_tokens), count(u.cache_read_input_tokens),
-          count(u.output_tokens), typeof j.total_cost_usd === "number" ? j.total_cost_usd : null);
+        const input = count(u.input_tokens) + count(u.cache_creation_input_tokens) + count(u.cache_read_input_tokens);
+        add(input, count(u.cache_read_input_tokens), count(u.output_tokens), reportedCost(j.total_cost_usd, input + count(u.output_tokens)));
+        if (subscription && usage) (usage as Usage).costBasis = "api-equivalent";
       } else if (via === "codex") {
         if (j.type !== "turn.completed" || !j.usage) return;
         add(count(j.usage.input_tokens), count(j.usage.cached_input_tokens), count(j.usage.output_tokens), null);
       } else if (j.type === "message_end" && j.message?.role === "assistant" && j.message.usage) {
         const u = j.message.usage;
-        add(count(u.input) + count(u.cacheRead) + count(u.cacheWrite), count(u.cacheRead), count(u.output),
-          typeof u.cost?.total === "number" ? u.cost.total : null);
+        const input = count(u.input) + count(u.cacheRead) + count(u.cacheWrite);
+        add(input, count(u.cacheRead), count(u.output), reportedCost(u.cost?.total, input + count(u.output)));
       }
     },
     get: (): Usage | null => (usage ? { ...usage } : null),
@@ -56,8 +66,8 @@ export function usageMeter(via: Agent) {
 }
 
 /** Sums runs; cost stays null only when no run reported one. */
-export function totalUsage(runs: (Usage | null | undefined)[]): Usage & { runs: number; unpricedRuns: number } {
-  const total = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: null as number | null, runs: 0, unpricedRuns: 0 };
+export function totalUsage(runs: (Usage | null | undefined)[]): Usage & { runs: number; unpricedRuns: number; apiEquivalentUsd: number } {
+  const total = { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: null as number | null, runs: 0, unpricedRuns: 0, apiEquivalentUsd: 0 };
   for (const run of runs) {
     if (!run) continue;
     total.runs++;
@@ -66,6 +76,7 @@ export function totalUsage(runs: (Usage | null | undefined)[]): Usage & { runs: 
     total.outputTokens += run.outputTokens;
     if (run.costUsd === null) total.unpricedRuns++;
     else total.costUsd = (total.costUsd ?? 0) + run.costUsd;
+    if (run.costBasis === "api-equivalent" && run.costUsd !== null) total.apiEquivalentUsd += run.costUsd;
   }
   return total;
 }
@@ -79,7 +90,13 @@ export function usageText(usage: Usage | null | undefined): string | null {
 }
 
 /** The main agent's use in one model for one hour of a Pi chat. */
-export interface ChatHour { at: string; model: string; messages: number; usage: Usage }
+export interface ChatHour {
+  at: string; model: string; messages: number; usage: Usage;
+  /** Seconds the model spent producing its replies (request to finished message), and the output tokens of those timed replies. */
+  seconds?: number; timedOutput?: number;
+  /** Replies that came with no price, or $0 for real tokens: a model with no price set. */
+  unpriced?: number;
+}
 /**
  * The main agent's use, from a Pi chat's saved entries: every assistant message on every branch,
  * since each one was paid for. Grouped by model and hour so a long chat stays small.
@@ -95,13 +112,23 @@ export function chatUsage(entries: readonly unknown[]): ChatHour[] {
     const model = typeof m.provider === "string" && m.provider ? `${m.provider}/${m.model}` : m.model;
     const id = `${at.toISOString()}\0${model}`;
     let hour = hours.get(id);
-    if (!hour) hours.set(id, (hour = { at: at.toISOString(), model, messages: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: null } }));
+    if (!hour) hours.set(id, (hour = { at: at.toISOString(), model, messages: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: null }, seconds: 0, timedOutput: 0, unpriced: 0 }));
     const u = m.usage;
+    const input = count(u.input) + count(u.cacheRead) + count(u.cacheWrite), output = count(u.output);
     hour.messages++;
-    hour.usage.inputTokens += count(u.input) + count(u.cacheRead) + count(u.cacheWrite);
+    hour.usage.inputTokens += input;
     hour.usage.cachedTokens += count(u.cacheRead);
-    hour.usage.outputTokens += count(u.output);
-    if (typeof u.cost?.total === "number" && Number.isFinite(u.cost.total)) hour.usage.costUsd = (hour.usage.costUsd ?? 0) + u.cost.total;
+    hour.usage.outputTokens += output;
+    const cost = reportedCost(u.cost?.total, input + output);
+    if (cost === null) hour.unpriced!++;
+    else hour.usage.costUsd = (hour.usage.costUsd ?? 0) + cost;
+    // The message is stamped when the request starts and saved when the reply ends.
+    const started = typeof m.timestamp === "number" ? m.timestamp : Date.parse(String(m.timestamp ?? ""));
+    const seconds = (Date.parse(String(entry.timestamp ?? "")) - started) / 1000;
+    if (output > 0 && seconds > 0 && seconds < 1800) {
+      hour.seconds! += seconds;
+      hour.timedOutput! += output;
+    }
   }
   return [...hours.values()].sort((a, b) => a.at.localeCompare(b.at));
 }
