@@ -579,10 +579,11 @@ The agent suggests running a WAICC command
   None of these
 ```
 
-Pick one with the arrow keys and Enter. WAICC puts it in your input box; press Enter again
-to run it, or change it first. It runs as if you had typed it, so anything it approves is still
-your approval. Only real `/waicc-*` commands can be offered, and if you were already typing
-something, your text is kept and WAICC shows the command in a notice instead.
+Pick one with the arrow keys and Enter, and it runs once, exactly as if you had typed it, so
+anything it approves is still your approval. Nothing is put in your input box, so an extra
+Enter does nothing, and anything you were typing is kept. Escape or *None of these* runs
+nothing. Only real `/waicc-*` commands can be offered. You can still type any command
+yourself, for example to change a flag first.
 
 Run this in the coordinating Pi chat whenever you need clear copy/paste instructions:
 

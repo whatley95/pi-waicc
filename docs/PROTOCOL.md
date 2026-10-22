@@ -592,10 +592,12 @@ offers WAICC commands to the human. Each command must be one line of at most 500
 whose first word is `/` plus the name of a command this extension registered; otherwise
 the call fails and lists them. Without UI it fails and tells the agent to write the commands
 in its reply. With UI it shows Pi's select dialog with `<command>  ·  <why>` rows and
-`None of these`. On a pick, an empty input box is set to the command with `setEditorText`,
-and it runs only if the human submits it, as their own command; an input box with unsent
-text is left unchanged and the human is notified instead. Nothing is recorded, and the
-result tells the agent the command has not run.
+`None of these`. On a pick, the command's registered handler runs at once with the rest of
+the line as its arguments, through the same wrapper as a typed command (trust and
+coordinator checks, errors shown to the human), with the tool's context; no WAICC command
+uses the command-only context methods. The input box is not touched. The result tells the
+agent which command ran and, if it failed, the error the human saw; its output goes to the
+human only. Escape or `None of these` runs nothing.
 
 The tracker is a read-only view outside the project. After each WAICC tool and command,
 `agent_end`, `session_start` and each dispatch or consult progress tick, a coordinator chat in

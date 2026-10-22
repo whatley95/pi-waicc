@@ -42,8 +42,8 @@ export interface Services {
 export function createApp(pi: ExtensionAPI, services: Services = {}) {
   const bindings = new Map<string, ChatBinding>();
   const copied = new Map<string, string>();
-  /** Every /waicc-* command, so the main agent can only suggest real ones. */
-  const commandNames = new Set<string>();
+  /** Every /waicc-* command by name, as typed: waicc_suggest_command runs the one the human picks. */
+  const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<string | null>>();
   const compactedRuns = new Set<string>();
   const automaticRequests = new AutoPlanningRequests();
   // Every WAICC tool accepts nested arguments sent as JSON text (see decodeJsonArguments).
@@ -297,10 +297,8 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     description: string,
     handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>,
   ): void {
-    commandNames.add(name);
-    pi.registerCommand(name, {
-      description,
-      handler: async (args, ctx) => {
+    // Resolves to the error the human was shown, or null: waicc_suggest_command reports it.
+    const run = async (args: string, ctx: ExtensionCommandContext): Promise<string | null> => {
         try {
           trusted(ctx);
           automaticRequests.clear(ctx); // Human commands supersede any pending startup decision.
@@ -327,16 +325,17 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
               await copyManual(ctx, view.manualHandoff);
             }
           }
+          return null;
         } catch (error) {
-          ctx.ui.notify(
-            error instanceof Error ? error.message : String(error),
-            "error",
-          );
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(message, "error");
+          return message;
         } finally {
           track(ctx);
         }
-      },
-    });
+    };
+    commands.set(name, run);
+    pi.registerCommand(name, { description, handler: async (args, ctx) => void (await run(args, ctx)) });
   }
   /** Your standing policies for the main agent's instructions; a broken config is reported elsewhere. */
   function policiesFor(ctx: ExtensionContext): string {
@@ -393,7 +392,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, commandNames, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt };
+  return { pi, services, bindings, copied, commands, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;
