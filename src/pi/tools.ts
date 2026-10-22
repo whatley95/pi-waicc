@@ -9,7 +9,7 @@ import { consultAdvisor } from "../consult.ts";
 import { learnPattern, recurringFindings } from "../learning.ts";
 import { elapsed, type ProgressEvent } from "../progress.ts";
 import { checkpointView, frozenCheckpointView } from "../checkpoint.ts";
-import { propose, recall } from "../memory.ts";
+import { propose, proposeDecision, recall } from "../memory.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { assess, decisionsView, resolveDecision, readContract, createAutoPlanningSession, issue, prepare, requirementsText, status, saveContext } from "../workflow.ts";
 import { ensure } from "../validation.ts";
@@ -245,17 +245,20 @@ export function registerTools(app: App): void {
     name: "waicc_learn_pattern",
     label: "Propose a lesson from findings that recur across sessions",
     description:
-      "Coordinator only: when review findings in two or more sessions of this project are the same kind of problem, propose one lesson for future plans. Cite the findings (sessionId, requestId, findingId) from waicc_assess's recurringFindings. WAICC checks each is an assessed, undisputed review finding and that no other lesson uses it. The lesson stays a candidate until the human confirms it with /waicc-memory confirm; once confirmed it reaches every planning handoff.",
+      "Coordinator only: when review findings in two or more sessions of this project are the same kind of problem, propose one lesson for future plans. Cite the findings (sessionId, requestId, findingId) from waicc_assess's recurringFindings. WAICC checks each is an assessed, undisputed review finding and that no other lesson uses it. When an existing lesson already covers the pattern, pass its lessonId and only the new findings: that adds support instead of a second lesson. A lesson stays a candidate until the human confirms it with /waicc-memory confirm, or until findings from 3 sessions back it if the human turned on their corroboration rule; once confirmed it reaches every planning handoff.",
     parameters: Type.Object({
-      lesson: Type.String({ description: "Advice for future plans: what to plan or check up front" }),
-      findings: Type.Array(Type.Object({ sessionId: Type.String(), requestId: Type.String(), findingId: Type.String() }), { minItems: 2, maxItems: 10 }),
+      lesson: Type.Optional(Type.String({ description: "Advice for future plans: what to plan or check up front (not needed with lessonId)" })),
+      findings: Type.Array(Type.Object({ sessionId: Type.String(), requestId: Type.String(), findingId: Type.String() }), { minItems: 1, maxItems: 10 }),
+      lessonId: Type.Optional(Type.String({ description: "An existing lesson that already covers this pattern: the findings are added to it as more support" })),
     }),
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      const entry = learnPattern(ctx.cwd, params.lesson, params.findings);
-      ctx.ui.notify(`Lesson candidate from recurring review findings: ${entry.text.slice(0, 160)} (/waicc-memory to confirm)`, "info");
+      const entry = learnPattern(ctx.cwd, params.lesson, params.findings, params.lessonId);
+      ctx.ui.notify(params.lessonId
+        ? `Lesson strengthened by recurring review findings: ${entry.text.slice(0, 160)} (${entry.source})`
+        : `Lesson candidate from recurring review findings: ${entry.text.slice(0, 160)} (/waicc-memory to confirm)`, "info");
       return result({
         proposed: entry,
         nextAction: "Tell the human you proposed this lesson and why. It is a candidate only: they review it with /waicc-memory and confirm it with /waicc-memory confirm. Never confirm it yourself.",
@@ -391,12 +394,14 @@ export function registerTools(app: App): void {
     name: "waicc_memory",
     label: "WAICC project memory",
     description:
-      "Recall confirmed project knowledge or propose a source-linked candidate. Candidates require human confirmation before automatic recall.",
+      "Recall confirmed project knowledge or propose a source-linked candidate. Candidates are recalled only once confirmed: by the human, or by WAICC's corroboration rule if the human turned it on. For a fact, quote the exact source lines it rests on: an entry without a quote is never confirmed automatically, and one whose quote is still in the file stays current when the rest of the file changes. Proposing the same claim about the same file in a later session supports the earlier entry. To remember a decision the human answered with /waicc-decide, pass kind decision and its decisionId (no claim or source): WAICC records the question and the human's exact answer.",
     parameters: Type.Object({
       action: Type.Union([Type.Literal("recall"), Type.Literal("propose")]),
       query: Type.Optional(Type.String()),
       claim: Type.Optional(Type.String()),
       source: Type.Optional(Type.String()),
+      quote: Type.Optional(Type.String({ description: "The exact lines of the source file the claim rests on, copied from the file" })),
+      decisionId: Type.Optional(Type.String({ description: "With kind decision: a decision in the bound session that the human answered with /waicc-decide" })),
       kind: Type.Optional(
         Type.Union([
           Type.Literal("fact"),
@@ -411,11 +416,16 @@ export function registerTools(app: App): void {
         return result(recall(ctx.cwd, params.query));
       trusted(ctx);
       coordinator(ctx);
+      const by = { sessionId: bindings.get(key(ctx))?.sessionId ?? null, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null };
+      if (params.decisionId) {
+        ensure(by.sessionId, "Bind the session the decision belongs to with /waicc-use first");
+        return result(proposeDecision(ctx.cwd, by.sessionId, params.decisionId, by));
+      }
       ensure(
         params.claim && params.source,
         "Proposing memory requires claim and a project-relative evidence file",
       );
-      return result(propose(ctx.cwd, params.claim, params.source, params.kind));
+      return result(propose(ctx.cwd, params.claim, params.source, params.kind, params.quote, by));
     },
   });
 }

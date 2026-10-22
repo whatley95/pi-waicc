@@ -4,7 +4,7 @@ import { configureSvnIgnore } from "../ignore.ts";
 import { commandText } from "../dispatch.ts";
 import { codingAgent, initAgentConfig, profilesView, projectConfigPath, resolveDispatch } from "../profiles.ts";
 import { elapsed } from "../progress.ts";
-import { curate, memoryStates, recall } from "../memory.ts";
+import { auditMemory, curate, memoryStates, recall } from "../memory.ts";
 import { projectRoot } from "../source.ts";
 import type { manualHandoff } from "../render.ts";
 import { amend, readContract, cancel, closeSession, exportHandoff, forceCloseSession, reopenSession, setRoundLimit, status } from "../workflow.ts";
@@ -219,9 +219,13 @@ export function registerDispatchCommands(app: App): void {
   );
   command(
     "waicc-memory",
-    "List candidates, or confirm/revoke entries: confirm|revoke [<id>|all]; with no ID, pick from a list",
+    "List candidates, or confirm/revoke entries: confirm|revoke [<id>|all]; with no ID, pick from a list. audit: replay the corroboration rule against what you confirmed and revoked",
     async (args, ctx) => {
       const [action, id, ...extra] = args.split(/\s+/);
+      if (action === "audit" && !id) {
+        show(ctx, auditMemory(ctx.cwd));
+        return;
+      }
       if (action !== "confirm" && action !== "revoke") {
         show(ctx, recall(ctx.cwd, args, true));
         return;
