@@ -726,7 +726,7 @@ empty array for question-only advice. Other contract requirements are context, n
 implicitly reviewed or certified.
 
 Advisor handoffs/exports include `memory.json`, captured at issue from relevant,
-active human-confirmed memory only. Each entry retains its source and digest.
+active memory only: confirmed by the human, or by the opt-in corroboration rule below. Each entry retains its source and digest.
 Conversation history carries advice, scope and assessments into subsequent rounds.
 Neither memory nor prior replies are independent proof or authorization.
 
@@ -743,7 +743,49 @@ review finding cited once. It refuses any finding already cited by a lesson, whe
 active or revoked, and creates an unconfirmed candidate. Confirmation stays
 `/waicc-memory confirm`. `recall` always includes active pattern lessons, ranked first, whatever
 the query, so they reach every handoff's memory snapshot. Pending pattern lessons appear in the
-tracker's needs-you list.
+tracker's needs-you list. `waicc_learn_pattern {lessonId, findings (1–10)}` instead adds
+findings to an existing, unrevoked lesson: at least one must come from a session the lesson
+does not rest on yet, none may back any lesson, and the lesson must still be current. Its
+source text and digest are then recomputed.
+
+`waicc_memory propose` takes an optional `quote` (12–1200 characters) that must appear in
+the source exactly, ignoring line endings and trailing spaces. An entry with a quote is
+current while the quote is in the file; without one, while the file's digest is unchanged.
+The proposal records `proposedIn {sessionId, model}` from the bound session and the main
+agent's model. A later proposal of the same kind about the same file from another session,
+with the same text or a Jaccard overlap of at least 0.6 with a current entry, is appended to
+that entry's `corroborations` (one per session) instead of creating an entry.
+`waicc_memory propose {kind: decision, decisionId}` reads the bound session's current
+contract and its decision records: the decision must be resolved and its latest matching
+record `recordedBy: human-command`. The entry's text is the question plus the recorded
+answer, its `decision {sessionId, decisionId, record}` points at the record artifact, and
+its digest covers that record. `/waicc-memory confirm` also sets `confirmedBy: human`.
+
+With `"memory": {"autoApprove": true}` in the user file (rejected in a project file; read
+from the user file only, an unreadable one counting as off), `memoryStates` reports a
+current candidate as `active` with `approvedBy: waicc-rule` when `judge`
+(src/memory-rule.ts) approves it. The verdict is computed on every read, never stored.
+
+- Any kind is blocked by a Jaccard overlap of at least 0.5 with another, revoked entry.
+- A decision entry is approved unless blocked.
+- A lesson is approved at 3 or more distinct evidence sessions.
+- Kinds other than `fact` are otherwise blocked. A fact is blocked without a quote, when its
+  source cannot be read or no longer holds the quote, when a code name in its text is
+  missing from the source, or when an undisputed, non-info review finding in any session
+  overlaps it by at least 0.5. Code names are backticked spans, camelCase and snake_case
+  words and path-like words; a path also matches the end of the source path or its file name
+  in the source.
+- A fact needs 4 points: corroboration from another session +2; at least two distinct models
+  among the proposer and those sessions +2; each session whose code `reviewApproval` was
+  assessed after the entry was created and whose approved round's `changedPaths` include the
+  source +1, at most 2; created at least 7 days ago with the quote still there +1.
+
+`recall(…, includeCandidates)`, the human's `/waicc-memory` list, adds each candidate's
+verdict `rule {approved, points, needed, reasons, blocked}`. `auditMemory`
+(`/waicc-memory audit`, CLI `waicc memory audit`) judges every entry, revoked and confirmed
+ones included, and reports how many human confirmations the rule agrees with, the revoked
+entries it would have approved, and the candidates it approves now. With the rule on,
+`pendingLessons` leaves out lessons it approves.
 
 ## Assessment
 

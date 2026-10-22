@@ -254,6 +254,16 @@ export interface MemoryEntry {
   revoked: boolean;
   /** A lesson learned from review findings that recur across sessions: the findings it rests on. */
   evidence?: FindingRef[];
+  /** The exact lines of the source the claim rests on; while they are there, the entry is current. */
+  quote?: string;
+  /** Who confirmed it; older entries confirmed before this field are the human's. */
+  confirmedBy?: "human";
+  /** Where it was proposed: the WAICC session and the main agent's model. */
+  proposedIn?: { sessionId: string | null; model: string | null };
+  /** The same claim proposed again in later sessions: independent support for it. */
+  corroborations?: { sessionId: string; model: string | null; at: string }[];
+  /** A decision the human answered with /waicc-decide: the entry restates it. */
+  decision?: { sessionId: string; decisionId: string; record: string };
 }
 /** A Git commit or range, or SVN revisions, resolved when the review was requested. */
 export interface RevisionReview {
