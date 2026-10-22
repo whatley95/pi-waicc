@@ -20,7 +20,7 @@ import type { App } from "./app.ts";
 
 /** The main agent's and recipients' WAICC tools. */
 export function registerTools(app: App): void {
-  const { pi, services, bindings, automaticRequests, registerTool, advising, stepLine, key, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
+  const { pi, services, bindings, commandNames, automaticRequests, registerTool, advising, stepLine, key, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
   const consulting = new Set<string>();
   registerTool({
     name: "waicc_ask_advisor",
@@ -426,6 +426,47 @@ export function registerTools(app: App): void {
         "Proposing memory requires claim and a project-relative evidence file",
       );
       return result(propose(ctx.cwd, params.claim, params.source, params.kind, params.quote, by));
+    },
+  });
+  registerTool({
+    name: "waicc_suggest_command",
+    label: "Suggest a WAICC command to the human",
+    description:
+      "Coordinator only: when the human needs to run a /waicc-* command (you cannot run slash commands), offer up to 4 of them in a picker instead of asking the human to type one. The human picks with the keyboard; WAICC puts the picked command in their input box, and it runs only when they press Enter, so it stays their action. Only real /waicc-* commands are accepted.",
+    promptSnippet: "Offer the human /waicc-* commands to run, in a picker, instead of asking them to type one",
+    promptGuidelines: [
+      "Whenever you would ask the human to run a /waicc-* command, including when you are stuck or a WAICC result says the human must run one, call waicc_suggest_command with the exact command and a short reason instead of writing it in the chat. Then end your turn: the command has not run yet.",
+      "Never claim the human approved or ran a command because of this tool's result; WAICC records what they actually run.",
+    ],
+    parameters: Type.Object({
+      commands: Type.Array(Type.Object({
+        command: Type.String({ description: "The exact command line, for example /waicc-worktree list" }),
+        why: Type.String({ description: "One short line: what it does for the human now" }),
+      }), { minItems: 1, maxItems: 4 }),
+      question: Type.Optional(Type.String({ description: "The picker's title, for example what you are stuck on" })),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      coordinator(ctx);
+      signal?.throwIfAborted();
+      const offered = params.commands.map(({ command, why }) => {
+        const line = command.trim();
+        ensure(!/[\r\n]/.test(line) && line.length <= 500, `Give ${JSON.stringify(line.slice(0, 60))} as one command line of at most 500 characters`);
+        const name = /^\/(\S+)/.exec(line)?.[1];
+        ensure(name && commandNames.has(name), `${JSON.stringify(line.slice(0, 60))} is not a WAICC command. Only these can be offered: ${[...commandNames].sort().map((n) => `/${n}`).join(", ")}`);
+        return { line, label: `${line}  ·  ${why.replace(/\s+/g, " ").trim().slice(0, 160)}` };
+      });
+      ensure(ctx.hasUI, `No picker here. Write the command${offered.length === 1 ? "" : "s"} in your reply for the human to type: ${offered.map((o) => o.line).join(", ")}`);
+      const none = "None of these";
+      const picked = await ctx.ui.select(params.question?.trim().slice(0, 200) || "The agent suggests running a WAICC command", [...offered.map((o) => o.label), none], { signal });
+      const chosen = offered.find((o) => o.label === picked);
+      if (!chosen) return { content: [{ type: "text" as const, text: "The human chose none of these. Ask them what they would like instead, or go on without it." }], details: undefined };
+      const draft = ctx.ui.getEditorText?.().trim();
+      if (draft) {
+        ctx.ui.notify(`Type ${chosen.line} when you are ready; your unsent text was kept.`, "info");
+        return { content: [{ type: "text" as const, text: `The human chose ${chosen.line}. They had unsent text, so it was not put in their input box; they will type it. It has not run yet. End your turn now and wait.` }], details: undefined };
+      }
+      ctx.ui.setEditorText(chosen.line);
+      return { content: [{ type: "text" as const, text: `The human chose ${chosen.line}. It is in their input box and runs when they press Enter; it has not run yet. End your turn now and wait for its result.` }], details: undefined };
     },
   });
 }

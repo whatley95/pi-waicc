@@ -570,6 +570,16 @@ requirements preview. The user file's `autoAdvisor` (`true` = 3, `false` = off, 
 Pi chat, counted by `waicc-advisor-consult` entries on the chat branch, appended before the
 run so failed or stopped consults count. One consult runs at a time per chat.
 
+`waicc_suggest_command {commands: [{command, why}] (1–4), question?}` (coordinator only)
+offers WAICC commands to the human. Each command must be one line of at most 500 characters
+whose first word is `/` plus the name of a command this extension registered; otherwise
+the call fails and lists them. Without UI it fails and tells the agent to write the commands
+in its reply. With UI it shows Pi's select dialog with `<command>  ·  <why>` rows and
+`None of these`. On a pick, an empty input box is set to the command with `setEditorText`,
+and it runs only if the human submits it, as their own command; an input box with unsent
+text is left unchanged and the human is notified instead. Nothing is recorded, and the
+result tells the agent the command has not run.
+
 The tracker is a read-only view outside the project. After each WAICC tool and command,
 `agent_end`, `session_start` and each dispatch or consult progress tick, a coordinator chat in
 a trusted project schedules (at most once per 2 s, timer unref'd) a summary of its project:
