@@ -42,6 +42,8 @@ export interface Services {
 export function createApp(pi: ExtensionAPI, services: Services = {}) {
   const bindings = new Map<string, ChatBinding>();
   const copied = new Map<string, string>();
+  /** Every /waicc-* command, so the main agent can only suggest real ones. */
+  const commandNames = new Set<string>();
   const compactedRuns = new Set<string>();
   const automaticRequests = new AutoPlanningRequests();
   // Every WAICC tool accepts nested arguments sent as JSON text (see decodeJsonArguments).
@@ -295,6 +297,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     description: string,
     handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>,
   ): void {
+    commandNames.add(name);
     pi.registerCommand(name, {
       description,
       handler: async (args, ctx) => {
@@ -390,7 +393,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt };
+  return { pi, services, bindings, copied, commandNames, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;

@@ -567,6 +567,23 @@ prompt itself:
 | Or give it to an agent yourself | `/waicc-handoff` (shows the prompt to paste, and copies it) |
 | When its reply is in | `/waicc-continue` |
 
+### Pick a command instead of typing it
+
+The main agent cannot run slash commands. When it needs you to run a WAICC command, such as
+the steps above or `/waicc-develop` when it is stuck, it offers them in a picker:
+
+```text
+The agent suggests running a WAICC command
+> /waicc-dispatch  ·  send the plan review to your opus profile
+  /waicc-handoff  ·  show the prompt to give an agent yourself
+  None of these
+```
+
+Pick one with the arrow keys and Enter. WAICC puts it in your input box; press Enter again
+to run it, or change it first. It runs as if you had typed it, so anything it approves is still
+your approval. Only real `/waicc-*` commands can be offered, and if you were already typing
+something, your text is kept and WAICC shows the command in a notice instead.
+
 Run this in the coordinating Pi chat whenever you need clear copy/paste instructions:
 
 ```text
