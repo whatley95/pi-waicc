@@ -1109,7 +1109,7 @@ To write it yourself, create either file, or both:
 ```json
 {
   "profiles": {
-    "opus":     { "via": "claude", "model": "claude-opus-5-5", "effort": "medium" },
+    "opus":     { "via": "claude", "model": "claude-opus-5-5", "effort": "medium", "fallback": "codex" },
     "sonnet":   { "via": "claude", "model": "sonnet" },
     "codex":    { "via": "codex",  "model": "gpt-6.1-sol", "effort": "medium", "timeoutMinutes": 45 },
     "deepseek": { "via": "pi",     "model": "deepseek/deepseek-v4-pro", "effort": "high" }
@@ -1125,9 +1125,17 @@ To write it yourself, create either file, or both:
 ```
 
 - A **profile** has `via` (`claude`, `codex`, `pi` or `agy`), and optionally `model`,
-  `effort` and `timeoutMinutes` (1–120). A **role** is `planning`, `review`, `advisor`,
+  `effort`, `timeoutMinutes` (1–120) and `fallback`. A **role** is `planning`, `review`, `advisor`,
   `implementation` or `testing`, set to a profile name or to `{ profile, checks,
   checkTimeoutMinutes }`.
+- **`fallback`** names the profile that takes over when this one cannot work: it hit its
+  usage or rate limit, is not signed in, or is not installed. In Pi, a dispatch that ends
+  without a reply for one of those reasons is retried once, the same handoff with the
+  fallback's agent, model and effort, and the chat says so. In a `--loop` or `--auto` run,
+  the fallback is used for the rest of the run. Any other failure (a crash, a timeout, a
+  rejected reply, `--stop`) is not retried, nor is a fallback that is limited too. A coding
+  run that had already changed files in place is not retried on top of them. Each run's
+  `result.json` records its `limit`, and the retry its `fallbackFrom`.
 - **`effort`** is passed as each agent's own reasoning setting, checked against that agent's
   levels before anything runs. A model may support fewer levels than its agent (Codex
   lists each model's levels in its models cache). Omit it to use the agent's default.

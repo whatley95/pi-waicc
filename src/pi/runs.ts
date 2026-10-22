@@ -1,12 +1,13 @@
 import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession, readText } from "../files.ts";
 import { join } from "node:path";
-import { prepareDispatch, runDispatch, type DispatchOptions } from "../dispatch.ts";
-import { alertSettings, sessionBudget, resolveDispatch } from "../profiles.ts";
+import { prepareDispatch, runDispatch, type DispatchOptions, type DispatchPlan } from "../dispatch.ts";
+import { alertSettings, fallbackDispatch, sessionBudget, resolveDispatch } from "../profiles.ts";
+import { limitText } from "../limits.ts";
 import { quietMinutes, sessionSpend } from "../tracker.ts";
 import { usageText } from "../usage.ts";
 import { elapsed, type ProgressEvent } from "../progress.ts";
-import { projectRoot } from "../source.ts";
+import { projectRoot, snapshot } from "../source.ts";
 import { beginDevelopment, readContract, ingest, status } from "../workflow.ts";
 import { ensure } from "../validation.ts";
 import type { Session } from "../types.ts";
@@ -25,6 +26,8 @@ export type Loop = {
   code?: { profile?: string };
   /** With code: coding and review dispatches so far, and the most code reviews (1 with --review-once). */
   codings?: number; reviews?: number; reviewMax?: number;
+  /** Profiles that hit a limit in this run: their fallback is used for the rest of it. */
+  limited?: string[];
 };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -86,11 +89,20 @@ export function createRuns(app: Core) {
       return null;
     }
   };
-  function launch(ctx: ExtensionCommandContext, id: string, options: DispatchOptions, profile: string | null): void {
-    const plan = prepareDispatch(ctx.cwd, id, options);
+  function launch(ctx: ExtensionCommandContext, id: string, options: DispatchOptions, profile: string | null, fallbackFrom?: DispatchPlan["fallbackFrom"]): void {
     const loop = loops.get(id);
+    // A profile that hit a limit earlier in this run is not tried again: its fallback runs instead.
+    const swap = !fallbackFrom && profile && loop?.limited?.includes(profile) ? fallbackDispatch(ctx.cwd, options, profile) : null;
+    if (swap) {
+      fallbackFrom = { profile: profile!, dispatchId: null, reason: `${profile} hit a limit earlier in this run` };
+      ({ options, profile } = swap);
+    }
+    const plan = prepareDispatch(ctx.cwd, id, options);
+    if (fallbackFrom) plan.fallbackFrom = fallbackFrom;
+    // Coding in place can leave edits behind; a retry then starts only if nothing changed.
+    const before = plan.mode === "implementation" && !plan.isolation ? snapshot(plan.root).fingerprint : null;
     const controller = new AbortController();
-    const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
+    const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${fallbackFrom ? ` · fallback for ${fallbackFrom.profile}` : ""}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
     const { quietMs } = alertSettings(ctx.cwd);
     const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root, lastActivityAt: Date.now(), quietAfterMs: quietMs };
     let quietWarned = false;
@@ -116,7 +128,11 @@ export function createRuns(app: Core) {
     const ticker = setInterval(render, 5_000);
     ticker.unref?.();
     render();
+    let released = false;
+    // Once only: a retry started from this run's result must keep its own panel.
     const release = () => {
+      if (released) return;
+      released = true;
       clearInterval(ticker);
       ctx.ui.setWidget?.("waicc-dispatch", undefined);
       ctx.ui.setStatus?.("waicc-dispatch", undefined);
@@ -142,6 +158,27 @@ export function createRuns(app: Core) {
         const cost = usageText(outcome.usage);
         notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}${cost ? `, ${cost}` : ""}.`);
         pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
+        if (!outcome.replySubmitted && outcome.limit && profile && !fallbackFrom && !controller.signal.aborted) {
+          const next = fallbackDispatch(ctx.cwd, options, profile);
+          const reason = `${profile} (${plan.via}) ${limitText(outcome.limit)}`;
+          if (next && before !== null && snapshot(plan.root).fingerprint !== before)
+            notice(ctx, "warning", `${reason}, but it had already changed files, so your ${next.profile} profile was not started on top of them. Check the changes, then dispatch again.`);
+          else if (next) {
+            const running = loops.get(id);
+            if (running) running.limited = [...new Set([...(running.limited ?? []), profile])];
+            const message = `${reason}: "${outcome.limit.text}". Retrying the same handoff once with your ${next.profile} profile (${next.options.via}${next.options.model ? ` ${next.options.model}` : ""})${running ? "; the rest of this run uses it too" : ""}.`;
+            ctx.ui.notify(message, "warning");
+            notice(ctx, "warning", message);
+            pi.sendMessage({ customType: "waicc-dispatch-fallback", content: message, display: true }, { triggerTurn: false });
+            try {
+              return launch(ctx, id, next.options, next.profile, { profile, dispatchId: outcome.dispatchId, reason });
+            } catch (error) {
+              const why = `Your ${next.profile} profile could not start: ${error instanceof Error ? error.message : String(error)}`;
+              if (loops.has(id)) return endLoop(ctx, id, `${loopName(loops.get(id)!)} stopped: ${why}`, "error");
+              return ctx.ui.notify(why, "error");
+            }
+          }
+        }
         const current = loops.get(id);
         if (current && !outcome.replySubmitted) return endLoop(ctx, id, `${loopName(current)} stopped at cycle ${current.cycle}/${current.max}: ${plan.via} submitted no reply. See the dispatch log.`, "warning");
         if (!continuing) return;
@@ -172,7 +209,7 @@ export function createRuns(app: Core) {
     state.done = done;
     dispatches.set(id, state);
     show(ctx, {
-      dispatching: true, profile, via: plan.via, model: plan.model ?? "agent default", effort: plan.effort ?? "agent default", sessionId: plan.sessionId,
+      dispatching: true, profile, ...(fallbackFrom ? { fallbackFor: fallbackFrom.profile, why: fallbackFrom.reason } : {}), via: plan.via, model: plan.model ?? "agent default", effort: plan.effort ?? "agent default", sessionId: plan.sessionId,
       requestId: plan.requestId, mode: plan.mode, timeoutMinutes: plan.timeoutMs / 60_000,
       ...(options.continue ? { continueAutomatically: true } : {}),
       ...(loop ? { reviewLoop: { cycle: loop.cycle, max: loop.max } } : {}),

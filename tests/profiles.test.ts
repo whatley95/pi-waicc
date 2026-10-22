@@ -92,7 +92,7 @@ test("agent configs are validated strictly, and can never grant --implement", (t
     ["{ not json", /is not valid JSON/],
     [{ agents: {} }, /only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed/],
     [{ profiles: { x: { via: "gemini" } } }, /profile x: via must be one of claude, codex, pi, agy/],
-    [{ profiles: { x: { via: "codex", implement: true } } }, /profile x allows only via, model, effort and timeoutMinutes/],
+    [{ profiles: { x: { via: "codex", implement: true } } }, /profile x allows only via, model, effort, timeoutMinutes and fallback/],
     [{ profiles: { "bad name": { via: "codex" } } }, /profile name "bad name"/],
     [{ profiles, roles: { coding: "codex" } }, /role "coding" must be one of planning, review, advisor, implementation, testing/],
     [{ profiles, roles: { implementation: { profile: "codex", implement: true } } }, /role implementation allows only profile, checks and checkTimeoutMinutes/],
