@@ -18,6 +18,8 @@ export interface AgentProfile {
   /** The agent's own effort or thinking level, such as medium. */
   effort?: string;
   timeoutMinutes?: number;
+  /** The profile that retries a handoff, once, when this one hits a usage or rate limit, is not signed in or not installed. */
+  fallback?: string;
 }
 export interface RoleChoice {
   profile: string;
@@ -193,13 +195,15 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   for (const [key, value] of Object.entries(record(config.profiles ?? {}, at("profiles")))) {
     ensure(name.test(key), at(`profile name ${JSON.stringify(key)} uses characters other than letters, digits, - and _`));
     const profile = record(value, at(`profile ${key}`));
-    ensure(Object.keys(profile).every((field) => ["via", "model", "effort", "timeoutMinutes"].includes(field)), at(`profile ${key} allows only via, model, effort and timeoutMinutes`));
+    ensure(Object.keys(profile).every((field) => ["via", "model", "effort", "timeoutMinutes", "fallback"].includes(field)), at(`profile ${key} allows only via, model, effort, timeoutMinutes and fallback`));
+    ensure(profile.fallback === undefined || (typeof profile.fallback === "string" && name.test(profile.fallback)), at(`profile ${key}: fallback must be another profile's name`));
     ensure((agents as readonly unknown[]).includes(profile.via), at(`profile ${key}: via must be one of ${agents.join(", ")}`));
     into.profiles[key] = {
       via: profile.via as Agent,
       ...(profile.model === undefined ? {} : { model: modelName(profile.model) }),
       ...(profile.effort === undefined ? {} : { effort: agentEffort(profile.via as Agent, effortName(profile.effort), at(`profile ${key}: effort`)) }),
       ...(profile.timeoutMinutes === undefined ? {} : { timeoutMinutes: minutes(profile.timeoutMinutes, 120, at(`profile ${key}: timeoutMinutes`)) }),
+      ...(profile.fallback === undefined ? {} : { fallback: profile.fallback as string }),
       source,
     };
   }
@@ -226,7 +230,35 @@ export function loadAgentConfig(cwd: string): AgentConfig {
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
     ensure(config.profiles[choice!.profile], `Role ${role} uses profile ${JSON.stringify(choice!.profile)}, which no agent config defines`);
+  for (const [key, profile] of Object.entries(config.profiles))
+    if (profile.fallback) {
+      ensure(profile.fallback !== key, `Profile ${key} cannot be its own fallback`);
+      ensure(config.profiles[profile.fallback], `Profile ${key} falls back to ${JSON.stringify(profile.fallback)}, which no agent config defines`);
+    }
   return config;
+}
+
+/**
+ * The same dispatch with a profile's fallback, or null when it has none. The agent, model and
+ * effort are the fallback's, since a model or effort belongs to one agent; everything else
+ * (--implement, checks, continue and the run's flags) is kept.
+ */
+export function fallbackDispatch(cwd: string, options: DispatchOptions, profile: string): { options: DispatchOptions; profile: string } | null {
+  const config = loadAgentConfig(cwd);
+  const name = config.profiles[profile]?.fallback;
+  if (!name) return null;
+  const next = config.profiles[name];
+  const { model: _model, effort: _effort, ...kept } = options;
+  return {
+    profile: name,
+    options: {
+      ...kept,
+      via: next.via,
+      ...(next.model ? { model: next.model } : {}),
+      ...(next.effort ? { effort: next.effort } : {}),
+      ...(next.timeoutMinutes ? { timeoutMinutes: next.timeoutMinutes } : {}),
+    },
+  };
 }
 
 export interface ResolvedDispatch {

@@ -486,7 +486,7 @@ before `start.json` is written. `start.json` and `result.json` record
 
 Agent profiles are read from `$PI_CODING_AGENT_DIR/waicc-agents.json` (default
 `~/.pi/agent`) and then `<project>/.pi/waicc-agents.json`, which wins for any profile or role
-both define. The only keys are `profiles` (`name → {via, model?, effort?, timeoutMinutes?}`, effort mapped to Claude `--effort`, Codex `model_reasoning_effort`, Pi `--thinking` or Antigravity `--effort` and checked against that agent's levels) and
+both define. The only keys are `profiles` (`name → {via, model?, effort?, timeoutMinutes?, fallback?}`, effort mapped to Claude `--effort`, Codex `model_reasoning_effort`, Pi `--thinking` or Antigravity `--effort` and checked against that agent's levels) and
 `roles` (`planning|review|advisor|implementation|testing → name | {profile, checks?,
 checkTimeoutMinutes?}`); anything else, an unknown agent or an undefined profile is
 rejected with its file. Dispatch arguments may start with a profile name; with no name
@@ -494,6 +494,23 @@ and no `--via`, the waiting round's mode selects the role's profile. Typed setti
 override the profile, and typed `--check` replaces the role's checks. A config cannot
 grant `--implement`. Role checks from the project file must be confirmed: Pi shows them
 in a dialog and refuses without UI; the CLI requires `--confirm-checks`.
+
+A profile's `fallback` must name another defined profile, not itself. Every dispatch
+`result.json` (and the Pi outcome message) records `limit: {kind, text} | null`, set only
+when no reply was submitted and the run was not killed: `kind` is `signin`, `usage`, `rate`
+or `missing` (the last only when stdout is empty), from the first matching line of the last
+4000 characters of stderr and, from the last 40 stdout lines, plain-text lines and error
+fields of JSON events (Claude `result` with `is_error`, `*error*`/`*failed*` event types, a
+Pi assistant `stopReason: "error"`, `error`/`errorMessage` fields); tool results and the
+agent's own messages are not read. In Pi, when a run launched with a profile ends that way,
+was not stopped, and was not itself a fallback, the same options are dispatched again with
+the fallback's `via`, `model` and `effort` (and its `timeoutMinutes` if set), announced as a
+`waicc-dispatch-fallback` message and run notice. The retry's plan and `result.json` carry
+`fallbackFrom: {profile, dispatchId, reason}`, and its live label adds `fallback for
+<profile>`. A loop adds the profile to its `limited` list, and each later launch in that run
+with a listed profile uses its fallback directly (`dispatchId: null`). An in-place
+implementation run (no isolation) is retried only if the source fingerprint is unchanged
+since its launch. The CLI and advisor consults do not retry.
 
 `--continue` (or a user-file `"autoContinue": true`; `--no-continue` overrides; a project
 file that sets it is rejected) runs the ordinary continue step after a dispatch whose reply
