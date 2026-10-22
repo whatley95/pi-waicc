@@ -29,7 +29,7 @@ export function registerWorktreeCommands(app: App): void {
   const { pi, services, command } = app;
   command(
     "waicc-worktree",
-    "One folder per branch: /waicc-worktree <branch> [--from <base>] creates it, /waicc-worktree lists them, /waicc-worktree remove <branch> removes one",
+    "One folder per branch: /waicc-worktree <branch> [--from <base>] creates it, /waicc-worktree [list] lists them, /waicc-worktree remove <branch> removes one",
     async (args, ctx) => {
       const words = args.trim().split(/\s+/).filter(Boolean);
       const at = here(ctx.cwd);
