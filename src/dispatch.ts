@@ -13,6 +13,7 @@ import { ensure } from "./validation.ts";
 import { applyIsolatedChanges, createIsolation, isolatedChanges, removeIsolation, type Isolation } from "./worktree.ts";
 import { progressParser, type ProgressEvent } from "./progress.ts";
 import { usageMeter } from "./usage.ts";
+import { agentLimit, limitText } from "./limits.ts";
 import { agyServerName, registerAgyServer, unregisterAgyServer, type AgyServer } from "./agy.ts";
 import type { Mode, RecipientPin } from "./types.ts";
 
@@ -240,6 +241,8 @@ export interface DispatchPlan {
   scratch: string[];
   /** Antigravity only: its pinned WAICC server, registered for the run and removed after it. */
   agyServer?: AgyServer;
+  /** This run retries the handoff with a profile's fallback after that profile hit a limit. */
+  fallbackFrom?: { profile: string; dispatchId: string | null; reason: string };
 }
 
 function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer">): Pick<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer"> {
@@ -475,10 +478,12 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   const usage = meter.get();
   const replySubmitted = existsSync(plan.replyPath);
   const isolation = plan.isolation ? settleIsolation(plan, replySubmitted) : null;
+  const limit = replySubmitted ? null : agentLimit(result);
   const report = {
     schemaVersion: 1, dispatchId: plan.dispatchId, sessionId: plan.sessionId, requestId: plan.requestId,
     mode: plan.mode, via: plan.via, model: plan.model, effort: plan.effort, finishedAt: now(), durationMs: Date.now() - startedAt,
-    code: result.code, killed: result.killed, replySubmitted, isolation, usage,
+    code: result.code, killed: result.killed, replySubmitted, isolation, usage, limit,
+    ...(plan.fallbackFrom ? { fallbackFrom: plan.fallbackFrom } : {}),
     // What the agent did, step by step, and the last thing it said.
     progress, lastMessage: progress.findLast((event) => event.kind === "note")?.text ?? null,
     stdout: tail(result.stdout), stderr: tail(result.stderr),
@@ -492,15 +497,16 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
     return true;
   });
   return {
-    dispatched: true, via: plan.via, model: plan.model, effort: plan.effort, sessionId: plan.sessionId, requestId: plan.requestId,
-    replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs, usage,
+    dispatched: true, dispatchId: plan.dispatchId, via: plan.via, model: plan.model, effort: plan.effort, sessionId: plan.sessionId, requestId: plan.requestId,
+    replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs, usage, limit,
+    ...(plan.fallbackFrom ? { fallbackFrom: plan.fallbackFrom } : {}),
     isolation, lastMessage: report.lastMessage, steps: progress.length,
     log: saved ? join(plan.root, sessionRelative(plan.sessionId), logPath) : null,
     nextAction: isolation && !isolation.applied && replySubmitted
       ? `A reply was submitted but its code was NOT applied: ${isolation.reason} The agent's copy is kept at ${isolation.worktree}. Inspect it, then /waicc-cancel this handoff (the reply describes changes that are not in your checkout) or apply in-scope work yourself.`
       : replySubmitted
         ? `A validated reply was submitted${!isolation ? "" : isolation.changes.length ? ` and ${isolation.changes.length} changed file(s) were applied to your checkout` : ", but the agent changed no files; read its reply for why"}. Run /waicc-continue to assess it; dispatch did not assess, accept or advance the contract.`
-        : `No reply was submitted (exit ${result.code}${result.killed ? ", stopped" : ""}). The handoff is still waiting${isolation ? ` and nothing was applied; the agent's copy is kept at ${isolation.worktree}` : ""}: read the log, then dispatch again, use another agent, or hand it off manually.`,
+        : `No reply was submitted (exit ${result.code}${result.killed ? ", stopped" : ""})${limit ? `: ${plan.via} ${limitText(limit)} ("${limit.text}")` : ""}. The handoff is still waiting${isolation ? ` and nothing was applied; the agent's copy is kept at ${isolation.worktree}` : ""}: read the log, then dispatch again, use another agent, or hand it off manually.`,
   };
 }
 
