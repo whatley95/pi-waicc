@@ -6,6 +6,7 @@ import { loadSession } from "./files.ts";
 import type { SandboxMode, SandboxSettings } from "./sandbox.ts";
 import { agentEffort, agents, checkCommands, effortName, minutes, modelName, parseDispatchArgs, type Agent, type DispatchOptions } from "./dispatch.ts";
 import { projectRoot } from "./source.ts";
+import { userConfigPath } from "./user-file.ts";
 import { ensure, record } from "./validation.ts";
 import { consultLimit } from "./consult.ts";
 import type { Mode } from "./types.ts";
@@ -32,6 +33,8 @@ export interface AgentConfig {
   policies: string[];
   /** User file only: accept recommendations for low-risk, reversible, non-sensitive decisions. */
   autoDecide: "off" | "low-risk";
+  /** User file only: whether WAICC's corroboration rule may confirm memory candidates without you. */
+  memory: { autoApprove: boolean };
   /** User file only: how many times per Pi chat the main agent may ask the advisor on its own; 0 is off. */
   autoAdvisor: number;
   /** User file only: automatic runs stop once a session's reported cost reaches this many dollars. */
@@ -50,9 +53,7 @@ export interface AgentConfig {
 const roles: Mode[] = ["planning", "review", "advisor", "implementation", "testing"];
 const name = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
-/** Personal settings for every project. Pi's own agent directory, honouring PI_CODING_AGENT_DIR. */
-export const userConfigPath = (): string =>
-  join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "waicc-agents.json");
+export { userConfigPath };
 /** Shared with everyone who uses the repository; tracked like any other project file. */
 export const projectConfigPath = (root: string): string => join(root, ".pi", "waicc-agents.json");
 /** The default agent setup shipped with the package; src/ and dist/ sit at the same depth. */
@@ -108,9 +109,9 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox" and "gitlab" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed'));
   // Settings that let WAICC act for you, reach you outside Pi, loosen what checks may touch or hold your tokens are yours alone: a repository must not set them.
-  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab"])
+  for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
   if (config.policies !== undefined) {
     ensure(Array.isArray(config.policies) && config.policies.length <= 20, at('"policies" must be a list of at most 20 rules'));
@@ -168,6 +169,12 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
       allowWrite: (allowWrite as string[] | undefined) ?? into.sandbox.allowWrite,
     };
   }
+  if (config.memory !== undefined) {
+    const memory = record(config.memory, at('"memory"'));
+    ensure(Object.keys(memory).every((key) => key === "autoApprove"), at('"memory" takes only "autoApprove"'));
+    ensure(memory.autoApprove === undefined || typeof memory.autoApprove === "boolean", at('"memory.autoApprove" must be true or false'));
+    into.memory = { autoApprove: (memory.autoApprove as boolean | undefined) ?? false };
+  }
   if (config.autoAdvisor !== undefined) {
     const value = config.autoAdvisor;
     const count = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>).maxPerChat : undefined;
@@ -214,7 +221,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", memory: { autoApprove: false }, autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -275,6 +282,7 @@ export function profilesView(cwd: string) {
     autoContinue: config.autoContinue,
     policies: config.policies,
     autoDecide: config.autoDecide,
+    memory: config.memory,
     budget: config.budget.perSessionUsd === null ? "none" : { perSessionUsd: config.budget.perSessionUsd },
     alerts: config.alerts,
     sandbox: { checks: config.sandbox.mode, network: config.sandbox.network, allowWrite: config.sandbox.allowWrite },

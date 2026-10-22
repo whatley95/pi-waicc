@@ -1153,6 +1153,8 @@ Safety rules:
 - **`"autoAdvisor"`** (user file only) caps how often the main agent may ask the advisor
   on its own: 3 per chat by default, `{ "maxPerChat": n }` (0–20), or `false` for off; see
   [When the main agent is stuck](#when-the-main-agent-is-stuck-it-asks-the-advisor).
+- **`"memory": { "autoApprove": true }`** (user file only) lets WAICC's corroboration rule
+  confirm memory candidates; see [Let WAICC confirm what keeps being backed up](#let-waicc-confirm-what-keeps-being-backed-up-opt-in).
 - **A config can never authorize coding.** There is no `implement` field; type
   `--implement` on each coding dispatch.
 - **Checks from the project file are confirmed before they run.** Anyone who can change
@@ -1343,6 +1345,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-limit [phase] <2–20>`                   | Explicitly change one phase budget or the overall cap; no resets |
 | `/waicc-memory [query]`                          | Inspect candidate/active/stale memory                                                                 |
 | `/waicc-memory confirm\|revoke [<id>\|all]`       | Human curation: a specific entry, all candidates after one dialog, or pick from a list with no ID |
+| `/waicc-memory audit`                            | Replay the corroboration rule against what you confirmed and revoked                             |
 | `/waicc-ignore`                                  | Configure SVN ignore rules explicitly; Git is automatic                                               |
 | `/waicc-init`                                    | Make the current folder its own WAICC project, such as one service in a monorepo |
 | `/waicc-worktree [<branch> [--from b] \| remove <branch>]` | One folder per branch (git worktree): create, list, or remove one safely |
@@ -1674,14 +1677,16 @@ its inputs. Review project content before sharing an export.
 
 The model can recall confirmed knowledge and propose facts, decisions or lessons
 through `waicc_memory`. Each entry pins a project-relative evidence file and digest.
-Candidates do not enter automatic recall until a human confirms them. Changed or
+Candidates do not enter automatic recall until they are confirmed: by you, or by the
+opt-in corroboration rule below. Changed or
 missing evidence makes an entry stale; reading or repeating it never renews it.
 File existence is not semantic verification. Keep speculative fixes and unfinished
 work in the session, not durable memory.
 
-Confirming stays a human step on purpose: a confirmed entry goes into every future
+Confirming is a human step by default: a confirmed entry goes into every future
 handoff in the project, for every agent, so a wrong agent conclusion would quietly
-mislead all later work. It is quick:
+mislead all later work. You can let WAICC confirm what independent work keeps backing up
+(below). Confirming yourself is quick:
 
 ```text
 /waicc-memory                  # review candidates: text, kind and source file
@@ -1689,10 +1694,55 @@ mislead all later work. It is quick:
 /waicc-memory confirm all      # one dialog listing every candidate, then confirm them together
 /waicc-memory confirm <id>     # a specific entry
 /waicc-memory revoke           # the same choices for removing an entry
+/waicc-memory audit            # what the corroboration rule would confirm, against your choices
 ```
 
 A wrong or missing ID lists the candidates instead of failing. Stale candidates, whose
 source file changed, are not offered: propose a fresh one from the current source.
+
+**A fact can quote its source.** The main agent copies the exact lines a fact rests on. While
+those lines are in the file, the entry stays current, even when the rest of the file changes;
+line endings and trailing spaces do not count. Without a quote, any change to the file makes
+the entry stale, as before.
+
+### Let WAICC confirm what keeps being backed up (opt-in)
+
+With `"memory": { "autoApprove": true }` in your user file (a project file cannot set it),
+WAICC confirms some candidates itself. It never judges whether a claim is true; it checks
+that the claim is pinned to the source and keeps being backed by independent work. No model
+is called and nothing leaves your machine.
+
+- **A decision you answered with `/waicc-decide`** is confirmed at once. The main agent asks
+  for it by decision ID, and WAICC writes the entry itself: the question and your exact
+  answer. Answers from a standing policy or `autoDecide` are not yours word for word, so they
+  are refused.
+- **A lesson from recurring review findings** is confirmed once findings from 3 sessions back
+  it. When the same problem comes back in another session, the main agent adds those findings
+  to the existing lesson instead of proposing a second one.
+- **A fact** is confirmed at 4 points:
+
+  | Support | Points |
+  |---|---|
+  | The same claim about the same file proposed in another session | +2 |
+  | …by a different model than the first time | +2 |
+  | A later code review passed with that file changed and the quote still there | +1 each, at most 2 |
+  | Proposed a week ago, quote still there | +1 |
+
+  A fact proposed once never reaches 4 points on its own.
+- **Some things always wait for you**, however many points: a fact without a quote; a claim
+  naming code (`codingAgent`, `src/profiles.ts`, `memory_rule`) that is not in its source; an
+  entry that resembles one you revoked (so revoking teaches the rule); and a fact that an
+  accepted review finding is about.
+
+`/waicc-memory` shows each candidate's points, reasons and what blocks it. Entries the rule
+confirmed are marked `approvedBy: waicc-rule`, are recalled like yours, and you revoke them
+the same way. The rule is checked each time: if a quote disappears or a blocking finding
+appears, the entry stops being recalled.
+
+**Check it on your own history first.** `/waicc-memory audit` (CLI: `waicc memory audit`)
+replays the rule over every entry beside what you did with it: how many of your confirmations
+it agrees with, and whether it would have confirmed anything you revoked. It works with the
+rule off.
 
 **Lessons from mistakes that keep coming back.** When the main agent assesses a review
 with findings, WAICC shows it earlier sessions' findings that look similar, ranked by
