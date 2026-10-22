@@ -1348,7 +1348,9 @@ model assessment is not proof of tested delivery.
 | `/waicc-memory audit`                            | Replay the corroboration rule against what you confirmed and revoked                             |
 | `/waicc-ignore`                                  | Configure SVN ignore rules explicitly; Git is automatic                                               |
 | `/waicc-init`                                    | Make the current folder its own WAICC project, such as one service in a monorepo |
-| `/waicc-worktree [<branch> [--from b] \| remove <branch>]` | One folder per branch (git worktree): create, list, or remove one safely |
+| `/waicc-worktree <branch> [--from b] [--path p]` | One folder per branch (git worktree): create it, beside the repository |
+| `/waicc-worktree [list]` | List the branch folders: branch, open sessions, changes, unpushed commits |
+| `/waicc-worktree remove <branch>` | Remove a branch's folder safely; the branch is kept |
 
 Bindings are per Pi chat and repository, persisted in Pi's session entries. Multiple
 sessions are never silently resolved by choosing the newest. `/waicc-use` provides
@@ -1601,7 +1603,7 @@ keeps its own WAICC sessions and tracker card, so switching work means switching
 ```text
 /waicc-worktree feature/sync              # a folder for the branch, beside the repository
 /waicc-worktree fix/status --from develop # a new branch, from develop
-/waicc-worktree                           # list them: branch, open sessions, changes, unpushed
+/waicc-worktree list                      # list them: branch, open sessions, changes, unpushed
 /waicc-worktree remove feature/sync       # remove the folder; the branch is kept
 ```
 
