@@ -191,8 +191,12 @@ function storedFiles(root: string, directory: string, ref: string): Record<strin
   }
   return files;
 }
-/** The session as stored: each snapshot's files replaced by a reference, written first if new. */
-function storedSession(root: string, id: string, value: unknown): string {
+/**
+ * JSON for a session's files: each snapshot's files replaced by a reference, written first if
+ * new. Journal entries and every artifact that carries a snapshot (contract, request, code
+ * review, observed source) use it, so agents reading those files never wade through hashes.
+ */
+export function storedJson(root: string, id: string, value: unknown): string {
   return `${JSON.stringify(value, (_key, v) => {
     if (!isSnapshot(v)) return v;
     const content = JSON.stringify(v.files);
@@ -213,6 +217,17 @@ function loadedSnapshots(root: string, directory: string, value: any): void {
   }
   for (const child of Array.isArray(value) ? value : Object.values(value)) loadedSnapshots(root, directory, child);
 }
+/** A parsed artifact of this session with its snapshots' files back, for code that compares them. */
+export function withSnapshots<T>(root: string, id: string, value: T): T {
+  loadedSnapshots(root, sessionRelative(id), value);
+  return value;
+}
+/** The same value with snapshots' file maps left out, inline or referenced: what an agent is shown. */
+export const withoutSnapshotFiles = <T>(value: T): T => JSON.parse(JSON.stringify(value, (_key, v) => {
+  if (!v || typeof v !== "object" || typeof v.fingerprint !== "string" || typeof v.vcs !== "string") return v;
+  const { files: _files, filesRef: _ref, ...rest } = v;
+  return rest;
+})) as T;
 export function loadSession(root: string, id: string): Session {
   return loadStoredSession(root, id, false);
 }
@@ -312,13 +327,13 @@ export function commit(
   const path = safePath(root, `${sessionRelative(s.id)}/journal/${name}`);
   atomicWrite(
     path,
-    storedSession(root, s.id, { schemaVersion: 1, at: s.updatedAt, event, session: s }),
+    storedJson(root, s.id, { schemaVersion: 1, at: s.updatedAt, event, session: s }),
   );
   // Failure of this cache cannot roll back a journal entry already committed.
   try {
     atomicWrite(
       safePath(root, `${sessionRelative(s.id)}/session.json`),
-      storedSession(root, s.id, s),
+      storedJson(root, s.id, s),
     );
   } catch {
     /* recovered from journal on next read */

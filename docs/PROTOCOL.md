@@ -1254,6 +1254,16 @@ by digest (at most 48). Entries written earlier, with maps inline, still load (u
 256 MB); the next commit stores them by reference. Without this, a large project's session
 grew by both snapshots on every code review round, in every later entry.
 
+The artifacts that carry a snapshot are written the same way: `contracts/vNNN/contract.json`
+(`source`), each round's `request.json` (`source`, and a code review's `base`),
+`code-review.json` (`base`) and `observed-source.json`. Reading a contract for the workflow
+puts its map back (a first code review's baseline is the contract's snapshot); the others
+are only read for other fields. So recipients, which are pointed at `request.json` and
+`contract.json`, never page through file hashes. The recipient assignment's `codeReview`
+and an export's `contract.json` drop snapshot maps entirely, including from handoffs
+written earlier with maps inline. A code review's baseline is its revision and fingerprint;
+`changedPaths` lists what changed.
+
 Session `createdAt` is fixed at creation. `updatedAt` matches the latest committed
 journal entry's UTC `at` timestamp and advances only on a session mutation. Reads,
 no-op intake and file modification times do not change it. Older session snapshots

@@ -9,6 +9,7 @@ import {
   safePath,
   sessionRelative,
   withLock,
+  withoutSnapshotFiles,
 } from "./files.ts";
 import { recall } from "./memory.ts";
 import { normalizeReply } from "./reply.ts";
@@ -98,8 +99,9 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
     checkLogs: Object.keys(s.artifacts).filter((path) => path.startsWith(`${dir}/checks/`) && path.endsWith("result.json")),
     taskId: r.taskId,
     reviewKind: r.mode === "review" ? r.review?.kind ?? "contract" : undefined,
+    // The baseline's revision and fingerprint, not its file hashes, which handoffs written before stored inline.
     codeReview: r.review?.kind === "code"
-      ? JSON.parse(artifact(root, s, `${dir}/code-review.json`))
+      ? withoutSnapshotFiles(JSON.parse(artifact(root, s, `${dir}/code-review.json`)))
       : undefined,
     requirements: requirementsText(s),
     contract: {
