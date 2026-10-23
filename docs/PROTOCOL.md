@@ -1245,6 +1245,15 @@ Each request can be received and assessed once. A later attempt gets a new reque
 ID. Source changes, cancellations, amendments and assessments remain in history.
 These are local consistency controls, not a sandbox against the same user account.
 
+Each journal entry (and `session.json`) stores every source snapshot in the session (any
+object with `vcs`, `fingerprint` and a `files` map: each round's `source`, a code review's
+`base`) with `files` replaced by `filesRef`, the SHA-256 of the map's compact JSON, which is
+written once to `snapshots/<filesRef>.json` before the entry. Loading puts each map back,
+refusing one whose content no longer matches its digest; verified maps are kept in memory
+by digest (at most 48). Entries written earlier, with maps inline, still load (up to
+256 MB); the next commit stores them by reference. Without this, a large project's session
+grew by both snapshots on every code review round, in every later entry.
+
 Session `createdAt` is fixed at creation. `updatedAt` matches the latest committed
 journal entry's UTC `at` timestamp and advances only on a session mutation. Reads,
 no-op intake and file modification times do not change it. Older session snapshots

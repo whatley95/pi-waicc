@@ -168,6 +168,51 @@ export const sessionRelative = (id: string): string =>
   `${runtimePath}/sessions/${identifier(id, "Session ID")}`;
 export const deletedSessionRelative = (id: string): string =>
   `${runtimePath}/deleted-sessions/${identifier(id, "Session ID")}`;
+/**
+ * Source snapshots are stored once each, by the digest of their file map, beside the journal.
+ * Every journal entry is the whole session, and each round keeps its own snapshot (two for a
+ * code review), so in a large project inline copies made each entry megabytes larger per round.
+ */
+const snapshotRelative = (directory: string, ref: string): string => `${directory}/snapshots/${ref}.json`;
+const isSnapshot = (value: any): boolean =>
+  Boolean(value) && typeof value === "object" && typeof value.vcs === "string" && typeof value.fingerprint === "string" &&
+  Boolean(value.files) && typeof value.files === "object" && !Array.isArray(value.files);
+/** File maps by digest, frozen: content-addressed, so shared by every session that loads them. */
+const snapshotFiles = new Map<string, Record<string, string>>();
+function storedFiles(root: string, directory: string, ref: string): Record<string, string> {
+  let files = snapshotFiles.get(ref);
+  if (!files) {
+    ensure(/^[a-f0-9]{64}$/.test(ref), "Invalid source snapshot reference");
+    const content = readText(safePath(root, snapshotRelative(directory, ref)), 128_000_000);
+    ensure(digest(content) === ref, `Source snapshot ${ref} was modified`);
+    files = Object.freeze(JSON.parse(content) as Record<string, string>);
+    snapshotFiles.set(ref, files);
+    if (snapshotFiles.size > 48) snapshotFiles.delete(snapshotFiles.keys().next().value!);
+  }
+  return files;
+}
+/** The session as stored: each snapshot's files replaced by a reference, written first if new. */
+function storedSession(root: string, id: string, value: unknown): string {
+  return `${JSON.stringify(value, (_key, v) => {
+    if (!isSnapshot(v)) return v;
+    const content = JSON.stringify(v.files);
+    const ref = digest(content);
+    const path = safePath(root, snapshotRelative(sessionRelative(id), ref));
+    if (!existsSync(path)) atomicWrite(path, content);
+    const { files: _files, ...rest } = v;
+    return { ...rest, filesRef: ref };
+  }, 2)}\n`;
+}
+/** Puts each referenced file map back, wherever it is; entries written before snapshots were stored apart carry them inline. */
+function loadedSnapshots(root: string, directory: string, value: any): void {
+  if (!value || typeof value !== "object") return;
+  if (typeof value.filesRef === "string" && typeof value.fingerprint === "string") {
+    value.files = storedFiles(root, directory, value.filesRef);
+    delete value.filesRef;
+    return;
+  }
+  for (const child of Array.isArray(value) ? value : Object.values(value)) loadedSnapshots(root, directory, child);
+}
 export function loadSession(root: string, id: string): Session {
   return loadStoredSession(root, id, false);
 }
@@ -193,9 +238,11 @@ function loadStoredSession(root: string, id: string, deleted: boolean): Session 
     session: Session;
   }>(
     safePath(root, `${directory}/journal/${commits.at(-1)!}`),
-    32_000_000,
+    // Large for entries written with every snapshot inline; the next commit stores them apart.
+    256_000_000,
   );
   const s = entry.session;
+  loadedSnapshots(root, directory, s);
   ensure(
     entry.schemaVersion === 1 &&
       s.schemaVersion === 1 &&
@@ -265,13 +312,13 @@ export function commit(
   const path = safePath(root, `${sessionRelative(s.id)}/journal/${name}`);
   atomicWrite(
     path,
-    json({ schemaVersion: 1, at: s.updatedAt, event, session: s }),
+    storedSession(root, s.id, { schemaVersion: 1, at: s.updatedAt, event, session: s }),
   );
   // Failure of this cache cannot roll back a journal entry already committed.
   try {
     atomicWrite(
       safePath(root, `${sessionRelative(s.id)}/session.json`),
-      json(s),
+      storedSession(root, s.id, s),
     );
   } catch {
     /* recovered from journal on next read */
