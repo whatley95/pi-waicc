@@ -224,7 +224,8 @@ export function registerTools(app: App): void {
           disposition: Type.Union([
             Type.Literal("resolved"),
             Type.Literal("disputed"),
-          ]),
+            Type.Literal("accepted"),
+          ], { description: "resolved: fixed (say where); disputed: not a real problem (the proof); accepted: a real medium/low finding knowingly not fixed now (the reason). Code-review findings cannot be accepted." }),
           evidence: Type.String(),
         }),
       ),

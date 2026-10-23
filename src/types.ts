@@ -180,7 +180,7 @@ export interface Round {
   rationale?: string;
   dispositions?: {
     findingId: string;
-    disposition: "resolved" | "disputed";
+    disposition: "resolved" | "disputed" | "accepted";
     evidence: string;
   }[];
 }
