@@ -6,59 +6,99 @@ import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 
-test("the main agent offers WAICC commands in a picker; the human's pick runs once, as typed", async (t) => {
+test("the main agent offers WAICC commands in a picker that opens after its turn; the human's pick runs once, as typed", async (t) => {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   t.after(() => {
     assert.ok(basename(root).startsWith("waicc-test-"));
     rmSync(root, { recursive: true, force: true });
   });
-  const tools = new Map<string, any>(), notices: string[] = [], asked: string[] = [], shown: any[] = [];
+  const tools = new Map<string, any>(), handlers = new Map<string, ((event: unknown, ctx: unknown) => Promise<void>)[]>();
+  const notices: string[] = [], asked: string[] = [], shown: any[] = [];
   waicc({
-    registerCommand() {}, registerTool: (tool: any) => tools.set(tool.name, tool), on() {}, appendEntry() {},
+    registerCommand() {}, registerTool: (tool: any) => tools.set(tool.name, tool), appendEntry() {},
+    on: (event: string, handler: any) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
     getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage: (m: any) => shown.push(m), sendUserMessage() {},
   } as unknown as ExtensionAPI);
+  const emit = async (event: string, context: unknown) => { for (const handler of handlers.get(event) ?? []) await handler({ type: event }, context); };
   const typed: string[] = [];
-  const ctx = (pick: (options: string[]) => string | undefined, hasUI = true) => ({
-    cwd: root, mode: "tui", hasUI, isIdle: () => false, isProjectTrusted: () => true,
-    sessionManager: { getSessionId: () => "suggest-chat", getBranch: () => [] },
+  // The picker answers when the test says so, like a human who may take their time.
+  let answer: ((options: string[]) => string | undefined) | undefined, open: { options: string[]; resolve: (value: string | undefined) => void; signal?: AbortSignal } | undefined;
+  const ctx = (hasUI = true) => ({
+    cwd: root, mode: "tui", hasUI, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => "suggest-chat", getBranch: () => [], getEntries: () => [] },
     ui: {
-      notify: (m: string) => notices.push(m),
-      select: async (title: string, options: string[]) => (asked.push(`${title} ${options.join(" | ")}`), pick(options)),
+      notify: (m: string) => notices.push(m), setStatus() {}, setWidget() {},
+      select: (title: string, options: string[], opts?: { signal?: AbortSignal }) => new Promise<string | undefined>((resolve) => {
+        asked.push(`${title} ${options.join(" | ")}`);
+        open = { options, resolve, signal: opts?.signal };
+        opts?.signal?.addEventListener("abort", () => resolve(undefined), { once: true });
+        if (answer) resolve(answer(options));
+      }),
       setEditorText: (text: string) => typed.push(text),
     },
   }) as unknown as ExtensionToolContext;
   const suggest = (commands: { command: string; why: string }[], context: ExtensionToolContext, question?: string) =>
     tools.get("waicc_suggest_command").execute("call", { commands, question }, undefined, undefined, context);
   const text = (outcome: any) => outcome.content[0].text as string;
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
   const offered = [
     { command: "/waicc-dispatch --implement", why: "send the fix to your coding agent" },
     { command: " /waicc-list all ", why: "see every session" },
   ];
+  const chat = ctx();
 
-  // Picked: it runs at once, once, and nothing is left in the input box for a second Enter.
-  const ran = await suggest(offered, ctx((options) => options[1]), "Stuck: which session is this?");
+  // The tool returns at once: nothing waits on the human during the agent's turn.
+  answer = undefined;
+  const result = await suggest(offered, chat, "Stuck: which session is this?");
+  assert.match(text(result), /^Offered to the human in a picker that opens when your turn ends: \/waicc-dispatch --implement, \/waicc-list all\. End your turn now/);
+  assert.equal(asked.length, 0, "no picker during the turn");
+  // The turn ends; the picker opens and may stay open as long as the human likes.
+  await emit("agent_end", chat);
   assert.equal(asked.at(-1), "Stuck: which session is this? /waicc-dispatch --implement  ·  send the fix to your coding agent | /waicc-list all  ·  see every session | None of these");
-  assert.match(text(ran), /^The human ran \/waicc-list all; its output is shown to them\. End your turn now/);
-  assert.equal(shown.length, 1, "the command showed its output once");
+  await emit("agent_end", chat);
+  assert.equal(asked.length, 1, "one picker per offer");
+  open!.resolve(open!.options[1]);
+  await settle();
+  assert.equal(shown.length, 1, "the picked command showed its output once");
   assert.deepEqual(typed, [], "the input box is untouched");
+  await emit("agent_end", chat);
+  assert.equal(asked.length, 1, "an answered offer is not shown again");
 
-  // A command that fails is reported to the agent too.
-  const failed = await suggest(offered, ctx((options) => options[0]));
-  assert.match(text(failed), /^The human ran \/waicc-dispatch --implement, and it failed: /);
-  assert.equal(notices.at(-1), text(failed).replace(/^The human ran \/waicc-dispatch --implement, and it failed: /, ""), "the human sees the same error");
+  // A command that fails shows its error to the human.
+  answer = (options) => options[0];
+  const notified = notices.length;
+  await suggest(offered, chat);
+  await emit("agent_end", chat);
+  await settle();
+  assert.match(notices.slice(notified).join("\n"), /session/i, "the human sees why /waicc-dispatch failed");
+  assert.match(asked.at(-1)!, /^The agent suggests running a WAICC command /);
 
   // None of these, or Escape: nothing runs.
   const before = shown.length;
-  for (const pick of [(options: string[]) => options.at(-1), () => undefined])
-    assert.match(text(await suggest(offered, ctx(pick))), /chose none of these/);
+  for (const pick of [(options: string[]) => options.at(-1), () => undefined]) {
+    answer = pick;
+    await suggest(offered, chat);
+    await emit("agent_end", chat);
+    await settle();
+  }
   assert.equal(shown.length, before);
-  assert.match(asked.at(-1)!, /^The agent suggests running a WAICC command /);
+
+  // When the agent starts again, an open picker is withdrawn and nothing runs.
+  answer = undefined;
+  await suggest(offered, chat);
+  await emit("agent_end", chat);
+  const pending = open!;
+  await emit("agent_start", chat);
+  assert.ok(pending.signal?.aborted, "the open picker was withdrawn");
+  pending.resolve(pending.options[1]);
+  await settle();
+  assert.equal(shown.length, before);
+  await emit("agent_end", chat);
+  assert.equal(open, pending, "a withdrawn offer is not shown again");
 
   // Only real WAICC commands, one line each; no picker without UI.
-  const pickers = asked.length;
-  await assert.rejects(suggest([{ command: "/reload", why: "x" }], ctx(() => undefined)), /"\/reload" is not a WAICC command\. Only these can be offered: .*\/waicc-worktree/);
-  await assert.rejects(suggest([{ command: "waicc-status", why: "x" }], ctx(() => undefined)), /is not a WAICC command/);
-  await assert.rejects(suggest([{ command: "/waicc-status\n/waicc-close done", why: "x" }], ctx(() => undefined)), /one command line/);
-  await assert.rejects(suggest(offered, ctx(() => undefined, false)), /No picker here\. Write the commands in your reply for the human to type: \/waicc-dispatch --implement, \/waicc-list all/);
-  assert.equal(asked.length, pickers);
+  await assert.rejects(suggest([{ command: "/reload", why: "x" }], chat), /"\/reload" is not a WAICC command\. Only these can be offered: .*\/waicc-worktree/);
+  await assert.rejects(suggest([{ command: "waicc-status", why: "x" }], chat), /is not a WAICC command/);
+  await assert.rejects(suggest([{ command: "/waicc-status\n/waicc-close done", why: "x" }], chat), /one command line/);
+  await assert.rejects(suggest(offered, ctx(false)), /No picker here\. Write the commands in your reply for the human to type: \/waicc-dispatch --implement, \/waicc-list all/);
 });
