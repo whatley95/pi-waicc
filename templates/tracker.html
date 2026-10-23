@@ -170,7 +170,7 @@
   };
   const since = (ms) => `<span data-since="${ms}">${dur(Date.now() - ms)}</span>`;
   const money = (usd) => (usd === null || usd === undefined ? "—" : usd > 0 && usd < 0.01 ? "<$0.01" : `$${usd.toFixed(2)}`);
-  const tok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
+  const tok = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
   const stale = (p) => p.live.length && Date.now() - Date.parse(p.updatedAt) > 90_000;
   // A running agent with no new step past your "alerts.quietMinutes": maybe a long build, maybe stuck.
   const quietFor = (run) => (run.quietAfterMs && run.lastActivityAt && Date.now() - run.lastActivityAt >= run.quietAfterMs ? Date.now() - run.lastActivityAt : null);
