@@ -1656,6 +1656,7 @@ myproject/
       amendments/<number>.md
       session.json                # Disposable display cache
       journal/<sequence>-<id>.json # Immutable authoritative transactions
+      snapshots/<digest>.json     # Each source file-hash snapshot, stored once
       checkpoints/<checkpoint-id>/
         CHECKPOINT.md             # Bounded recovery brief, not proof of completion
         checkpoint.json           # Canonical ID/path/evidence index
