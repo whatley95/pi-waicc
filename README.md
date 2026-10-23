@@ -246,7 +246,9 @@ one, post only a summary, or cancel. A last confirmation names the merge request
 anything is sent. Each finding whose evidence starts with a changed file's `path:line` becomes a
 comment on that line; the rest, and any line GitLab will not accept a comment on, go into one
 summary comment with the review's outcome, worst first. Findings the main agent disputed and
-mere notes are never posted. WAICC records what it posted in the session, so after the author
+mere notes are never posted. Every comment opens with a note that it is an automated review
+by AI agents and may be a false alarm, to be checked against the code before acting on it;
+the summary is titled *🤖 Automated WAICC review* and says the same once. WAICC records what it posted in the session, so after the author
 pushes fixes and you review again, only new findings are offered. It refuses when the merge
 request has new commits since the review (fetch and review again first), when it is no longer
 open, or without Pi's interactive screen. Only you can post: it is a command, never a tool the
