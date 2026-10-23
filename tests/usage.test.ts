@@ -41,6 +41,10 @@ test("each agent's own usage report is read: Claude's total, Codex's turns, Pi's
   assert.deepEqual([total.runs, total.unpricedRuns, total.costUsd], [2, 1, 0.75]);
   assert.equal(usageText(claude.get()), "$0.75 · 443k tokens");
   assert.equal(usageText(codex.get()), "390k tokens");
+  // Past a thousand million it reads as billions, not "1281.0M".
+  const big = { inputTokens: 1_277_600_000, outputTokens: 3_400_000, cachedTokens: 0, costUsd: null };
+  assert.equal(usageText(big as Parameters<typeof usageText>[0]), "1.28B tokens");
+  assert.equal(usageText({ ...big, inputTokens: 996_000_000 } as Parameters<typeof usageText>[0]), "999.4M tokens");
 });
 
 const contract: Contract = {
