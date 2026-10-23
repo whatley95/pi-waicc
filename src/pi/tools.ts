@@ -429,15 +429,17 @@ export function registerTools(app: App): void {
       return result(propose(ctx.cwd, params.claim, params.source, params.kind, params.quote, by));
     },
   });
+  // Per chat: the commands the agent last offered, and the picker once it is open.
+  const offers = new Map<string, { title: string; offered: { line: string; name: string; args: string; label: string }[]; picker?: AbortController }>();
   registerTool({
     name: "waicc_suggest_command",
     label: "Suggest a WAICC command to the human",
     description:
-      "Coordinator only: when the human needs to run a /waicc-* command (you cannot run slash commands), offer up to 4 of them in a picker instead of asking the human to type one. Only the human can answer the picker; the one they pick runs at once, exactly as if they had typed it, so it stays their action. Only real /waicc-* commands are accepted.",
+      "Coordinator only: when the human needs to run a /waicc-* command (you cannot run slash commands), offer up to 4 of them in a picker instead of asking the human to type one. The picker opens when your turn ends, and only the human can answer it; the one they pick runs at once, exactly as if they had typed it, so it stays their action. Only real /waicc-* commands are accepted.",
     promptSnippet: "Offer the human /waicc-* commands to run, in a picker, instead of asking them to type one",
     promptGuidelines: [
       "Whenever you would ask the human to run a /waicc-* command, including when you are stuck or a WAICC result says the human must run one, call waicc_suggest_command with the exact command and a short reason instead of writing it in the chat. Then end your turn: what the command starts reaches you as a new message.",
-      "The result says only which command the human picked and whether it failed; its output is shown to the human, not to you. Check state with waicc_status rather than assuming what it did.",
+      "You do not learn what the human picks; its output is shown to them, not to you. Check state with waicc_status rather than assuming what it did.",
     ],
     parameters: Type.Object({
       commands: Type.Array(Type.Object({
@@ -457,16 +459,30 @@ export function registerTools(app: App): void {
         return { line, name, args: line.slice(name.length + 1).trim(), label: `${line}  ·  ${why.replace(/\s+/g, " ").trim().slice(0, 160)}` };
       });
       ensure(ctx.hasUI, `No picker here. Write the command${offered.length === 1 ? "" : "s"} in your reply for the human to type: ${offered.map((o) => o.line).join(", ")}`);
-      const none = "None of these";
-      const picked = await ctx.ui.select(params.question?.trim().slice(0, 200) || "The agent suggests running a WAICC command", [...offered.map((o) => o.label), none], { signal });
-      const chosen = offered.find((o) => o.label === picked);
-      if (!chosen) return { content: [{ type: "text" as const, text: "The human chose none of these. Ask them what they would like instead, or go on without it." }], details: undefined };
-      // The human's pick runs it once, as typed; the input box is left alone, so a second Enter does nothing.
-      // No WAICC command uses the command-only parts of the context (new session, fork, wait for idle).
-      const failed = await commands.get(chosen.name)!(chosen.args, ctx as unknown as ExtensionCommandContext);
-      return { content: [{ type: "text" as const, text: failed
-        ? `The human ran ${chosen.line}, and it failed: ${failed}`
-        : `The human ran ${chosen.line}; its output is shown to them. End your turn now: anything it starts for you arrives as a new message.` }], details: undefined };
+      offers.get(key(ctx))?.picker?.abort();
+      offers.set(key(ctx), { title: params.question?.trim().slice(0, 200) || "The agent suggests running a WAICC command", offered });
+      return { content: [{ type: "text" as const, text: `Offered to the human in a picker that opens when your turn ends: ${offered.map((o) => o.line).join(", ")}. End your turn now; anything the command starts for you arrives as a new message.` }], details: undefined };
     },
   });
+  // The picker waits for the human only once the agent's turn is over, so a forgotten picker holds nothing up.
+  pi.on("agent_end", async (_event, ctx) => {
+    const offer = offers.get(key(ctx));
+    if (!offer || offer.picker) return;
+    const picker = offer.picker = new AbortController();
+    void (async () => {
+      const picked = await ctx.ui.select(offer.title, [...offer.offered.map((o) => o.label), "None of these"], { signal: picker.signal });
+      if (offers.get(key(ctx)) === offer) offers.delete(key(ctx));
+      const chosen = picker.signal.aborted ? undefined : offer.offered.find((o) => o.label === picked);
+      // The human's pick runs it once, as typed; the input box is left alone, so a second Enter does nothing.
+      // No WAICC command uses the command-only parts of the context (new session, fork, wait for idle).
+      if (chosen) await commands.get(chosen.name)!(chosen.args, ctx as unknown as ExtensionCommandContext);
+    })().catch((error) => ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"));
+  });
+  // A new turn may offer something else; an offer from an ended chat is gone with it.
+  const withdraw = (ctx: Parameters<typeof key>[0]) => {
+    offers.get(key(ctx))?.picker?.abort();
+    offers.delete(key(ctx));
+  };
+  pi.on("agent_start", async (_event, ctx) => withdraw(ctx));
+  pi.on("session_shutdown", async (_event, ctx) => withdraw(ctx));
 }

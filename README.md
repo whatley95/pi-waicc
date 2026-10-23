@@ -579,11 +579,14 @@ The agent suggests running a WAICC command
   None of these
 ```
 
-Pick one with the arrow keys and Enter, and it runs once, exactly as if you had typed it, so
+The picker opens once the agent's turn has ended, so leaving it open holds nothing up. Pick
+one with the arrow keys and Enter, and it runs once, exactly as if you had typed it, so
 anything it approves is still your approval. Nothing is put in your input box, so an extra
 Enter does nothing, and anything you were typing is kept. Escape or *None of these* runs
-nothing. Only real `/waicc-*` commands can be offered. You can still type any command
-yourself, for example to change a flag first.
+nothing. If the agent starts working again, for example when a dispatched agent's reply
+arrives, the open picker is withdrawn, since the agent may offer something else. Only real
+`/waicc-*` commands can be offered, and the commands stay listed in the chat. You can still
+type any command yourself, for example to change a flag first.
 
 Run this in the coordinating Pi chat whenever you need clear copy/paste instructions:
 
