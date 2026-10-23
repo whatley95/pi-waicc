@@ -232,7 +232,10 @@ paste the contract, assessment or conversation when those paths are accessible.
 For an unanswered WAITING request, single-session status exposes `manualHandoff`
 before the potentially large requirements/contract. It includes copyPastePrompt,
 whatToSend/notNeeded, differentMachine guidance and separate human return commands.
-`/waicc-handoff [session-id]` renders a clearly delimited copy-only prompt followed
+Pi tool results give the agent only `{requestId, prompt, afterReply,
+resumeCoordinatorCommand, continueCommand}`, where `prompt` says the prompt is not shown
+to it, so the agent cannot paste it into the chat; the clipboard copy and
+`/waicc-handoff` still use the full text. `/waicc-handoff [session-id]` renders a clearly delimited copy-only prompt followed
 by those return steps without inference, new artifacts or a role/session switch.
 It uses the existing selected session unless explicitly given an ID. An explicit
 ID only selects the view, not the coordinator binding; select the correct session

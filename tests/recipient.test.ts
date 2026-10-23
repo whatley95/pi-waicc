@@ -1075,7 +1075,7 @@ test("manual handoff command displays only the existing pinned assignment withou
   assert.equal(reader.prompts.length, 0);
 });
 
-test("copy-ready handoff survives a bounded tool preview for a large contract", async (t) => {
+test("the agent never gets the handoff prompt to paste, even for a large contract", async (t) => {
   const { root, id } = fixture(t),
     h = harness(root);
   cancel(root, id, "Expand the contract context");
@@ -1083,12 +1083,15 @@ test("copy-ready handoff survives a bounded tool preview for a large contract", 
   large.exclusions = ["x".repeat(32_000), "y".repeat(32_000)];
   prepare(root, id, large, "planning", "Inspect search", 1);
   const view = status(root, id) as {
-    manualHandoff: { copyPastePrompt: string };
+    manualHandoff: { copyPastePrompt: string; requestId: string };
   };
   const text = (await h.call("waicc_status", { sessionId: id })).content[0]
     .text;
   assert.ok(text.includes("[Preview bounded;"));
-  assert.ok(text.includes(JSON.stringify(view.manualHandoff.copyPastePrompt)));
+  // /waicc-handoff and the clipboard still have it; the agent gets a pointer.
+  assert.ok(view.manualHandoff.copyPastePrompt.includes("You are the WAICC planning recipient"));
+  assert.ok(!text.includes("copyPastePrompt") && !text.includes("You are the WAICC planning recipient"));
+  assert.ok(text.includes(`"prompt": "Not shown to you. /waicc-handoff shows and copies it for the human; show nextSteps instead."`));
 });
 
 test("Pi recipient is reply-only, denies coordinator/exec tools, and coordinator continues separately", async (t) => {
