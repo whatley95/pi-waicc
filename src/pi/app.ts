@@ -274,10 +274,19 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
             ).manualHandoff,
           )
         : undefined;
+    // The agent never gets the prompt itself, so it cannot paste it into the chat; the human has the clipboard and /waicc-handoff.
+    const delivery = (content as { manualHandoff?: ReturnType<typeof manualHandoff> | null } | null)?.manualHandoff;
+    const shown = delivery
+      ? { ...(content as object), manualHandoff: {
+          requestId: delivery.requestId,
+          prompt: "Not shown to you. /waicc-handoff shows and copies it for the human; show nextSteps instead.",
+          afterReply: delivery.afterReply, resumeCoordinatorCommand: delivery.resumeCoordinatorCommand, continueCommand: delivery.continueCommand,
+        } }
+      : content;
     const serialized = json(
       clipboard
-        ? { handoffClipboard: clipboard, ...(content as object) }
-        : content,
+        ? { handoffClipboard: clipboard, ...(shown as object) }
+        : shown,
     );
     return {
       content: [
