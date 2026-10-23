@@ -179,6 +179,8 @@ export interface ReviewComment {
   location: { path: string; line: number } | null;
   body: string;
 }
+/** Every posted comment opens with this, so no reader takes an AI finding as a person's verified one. */
+export const automatedNotice = "> 🤖 **Automated review by AI agents.** This may be a false alarm: check it against the code before acting on it.";
 const key = (f: Finding, location: ReviewComment["location"]) =>
   `${location ? `${location.path}:${location.line}` : "-"}|${f.description.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 300)}`;
 
@@ -191,12 +193,12 @@ export function reviewComments(s: Session, r: Round, prefix: string, agent: stri
   ensure(r.review?.kind === "code" && r.review.revision && r.reply, "That round is not a merge request review with a reply");
   const disputed = new Set((r.dispositions ?? []).filter((d) => d.disposition === "disputed").map((d) => d.findingId));
   const changed = new Set(r.review.revision.changedPaths);
-  const footer = `\n\n<sub>Found by an independent ${agent ? `${agent} ` : ""}review in WAICC and checked by the main agent; reviewed at ${r.review.revision.to.slice(0, 10)}.</sub>`;
+  const footer = `\n\n<sub>Found by an independent ${agent ? `${agent} ` : ""}AI review in WAICC, then checked by the main AI agent and picked for posting by a person; reviewed at ${r.review.revision.to.slice(0, 10)}.</sub>`;
   return r.reply.findings.filter((f) => !disputed.has(f.id) && f.severity !== "info").map((f) => {
     const m = /^`?([^\s`:]+):(\d+)(?:[-–]\d+)?`?\s*[,;:.)\-–—]?\s*/.exec(f.evidence.trim());
     const location = m && changed.has(m[1]) ? { path: `${prefix}${m[1]}`, line: Number(m[2]) } : null;
     const evidence = (location ? f.evidence.trim().slice(m![0].length) : f.evidence.trim()) || f.evidence.trim();
-    const body = `**${f.severity.toUpperCase()}: ${f.description.trim()}**\n\n${evidence}${f.suggestedFix ? `\n\n**Suggested fix:** ${f.suggestedFix.trim()}` : ""}${footer}`;
+    const body = `${automatedNotice}\n\n**${f.severity.toUpperCase()}: ${f.description.trim()}**\n\n${evidence}${f.suggestedFix ? `\n\n**Suggested fix:** ${f.suggestedFix.trim()}` : ""}${footer}`;
     return { finding: f, key: key(f, location), location, body };
   });
 }
@@ -208,15 +210,17 @@ export function summaryNote(s: Session, r: Round, inline: ReviewComment[], gener
   const counts = [...inline, ...general].reduce<Record<string, number>>((n, c) => ({ ...n, [c.finding.severity]: (n[c.finding.severity] ?? 0) + 1 }), {});
   const order = ["critical", "high", "medium", "low"].filter((sev) => counts[sev]).map((sev) => `${counts[sev]} ${sev}`).join(", ");
   return [
-    `### WAICC review${rev ? ` of ${rev.range} at ${rev.to.slice(0, 10)}` : ""}`,
+    `### 🤖 Automated WAICC review${rev ? ` of ${rev.range} at ${rev.to.slice(0, 10)}` : ""}`,
+    "",
+    "> **These findings come from AI agents.** Any of them may be a false alarm: check each one against the code before changing anything.",
     "",
     r.reply?.summary?.trim() ?? "",
     "",
     inline.length + general.length ? `**${inline.length + general.length} finding${inline.length + general.length === 1 ? "" : "s"}** (${order}).` : "**No issues to report.**",
     inline.length ? `${inline.length} ${inline.length === 1 ? "is" : "are"} commented on ${inline.length === 1 ? "its line" : "their lines"}.` : "",
-    disputedCount ? `${disputedCount} other finding${disputedCount === 1 ? " was" : "s were"} checked and set aside as not a real problem.` : "",
-    ...(general.length ? ["", ...[...general].sort((a, b) => rank(a) - rank(b)).map((c) => `- ${c.body.replace(/\n\n<sub>[\s\S]*<\/sub>$/, "").replace(/\n+/g, " ")}`)] : []),
+    disputedCount ? `${disputedCount} other finding${disputedCount === 1 ? " was" : "s were"} checked by the main agent and set aside as false alarms.` : "",
+    ...(general.length ? ["", ...[...general].sort((a, b) => rank(a) - rank(b)).map((c) => `- ${c.body.replace(`${automatedNotice}\n\n`, "").replace(/\n\n<sub>[\s\S]*<\/sub>$/, "").replace(/\n+/g, " ")}`)] : []),
     "",
-    "<sub>Posted from WAICC after the reviewer's findings were checked by the main agent and confirmed by a person.</sub>",
+    "<sub>Posted from WAICC: an AI reviewer's findings, checked by the main AI agent and picked for posting by a person. Not a human code review.</sub>",
   ].filter((line, i, all) => line !== "" || all[i - 1] !== "").join("\n").trim();
 }

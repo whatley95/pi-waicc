@@ -1096,7 +1096,10 @@ command that requires Pi's UI. It takes the session's last ASSESSED code-review 
 merge request, and refuses unless `diff_refs.head_sha` equals the reviewed head and its state is
 `opened`. Candidates are the reply's findings that are not disputed and not `info`; a finding is
 placed on a line when its evidence starts with `path:line` for a path in
-`revision.changedPaths` (prefixed with `git rev-parse --show-prefix`). Each candidate's key is its
+`revision.changedPaths` (prefixed with `git rev-parse --show-prefix`). Each line comment's body
+starts with `automatedNotice` (a quoted "Automated review by AI agents… may be a false alarm"
+line); the summary note is titled `### 🤖 Automated WAICC review …`, states the same once, and
+omits the notice from the findings it lists. Each candidate's key is its
 location and normalized description; keys already in the session's `mr-comments/*.json` are not
 offered again. After a `select` (all, one by one with `confirm`, summary only, cancel) and a final
 `confirm`, line findings are posted with `POST …/discussions` and a text position

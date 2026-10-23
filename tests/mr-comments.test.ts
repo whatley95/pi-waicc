@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
-import { canonicalProject, gitlabClient, gitlabProject, reviewComments, summaryNote, type GitLabCall } from "../src/gitlab.ts";
+import { automatedNotice, canonicalProject, gitlabClient, gitlabProject, reviewComments, summaryNote, type GitLabCall } from "../src/gitlab.ts";
 import { addGitlabHost, gitlabHost, loadAgentConfig, profilesView } from "../src/profiles.ts";
 import { forgetSessionTokens } from "../src/pi/merge-requests.ts";
 import { mergeRequestUrl, projectStatus } from "../src/tracker.ts";
@@ -110,15 +110,20 @@ test("findings become comments on their lines or in the summary; disputed findin
   const round = s.rounds.at(-1)!;
   const comments = reviewComments(s, round, "", "codex");
   assert.deepEqual(comments.map((c) => [c.finding.id, c.location]), [["F1", { path: "services/status/app.js", line: 2 }], ["F2", null]]);
-  assert.match(comments[0].body, /^\*\*HIGH: sync\(\) throws when x is null\*\*\n\nx\.id is read without a check\n\n\*\*Suggested fix:\*\* Return null when x is null/);
-  assert.match(comments[0].body, /independent codex review in WAICC/);
+  // Every comment says first that it is an AI finding that may be a false alarm.
+  for (const c of comments) assert.ok(c.body.startsWith(`${automatedNotice}\n\n**`), c.body);
+  assert.match(automatedNotice, /Automated review by AI agents\.\*\* This may be a false alarm: check it against the code/);
+  assert.match(comments[0].body, /\*\*HIGH: sync\(\) throws when x is null\*\*\n\nx\.id is read without a check\n\n\*\*Suggested fix:\*\* Return null when x is null/);
+  assert.match(comments[0].body, /independent codex AI review in WAICC, then checked by the main AI agent and picked for posting by a person/);
   assert.equal(reviewComments(s, round, "monorepo/", null)[0].location!.path, "monorepo/services/status/app.js", "paths start at the repository root");
   const note = summaryNote(s, round, [comments[0]], [comments[1]], 1);
-  assert.match(note, /^### WAICC review of !7 at /);
+  assert.match(note, /^### 🤖 Automated WAICC review of !7 at [0-9a-f]+\n\n> \*\*These findings come from AI agents\.\*\* Any of them may be a false alarm/);
   assert.match(note, /\*\*2 findings\*\* \(1 high, 1 medium\)\./);
   assert.match(note, /1 is commented on its line\./);
-  assert.match(note, /1 other finding was checked and set aside as not a real problem\./);
+  assert.match(note, /1 other finding was checked by the main agent and set aside as false alarms\./);
   assert.match(note, /- \*\*MEDIUM: No test covers sync\(\)\*\*/);
+  assert.equal(note.split("Automated review by AI agents").length, 1, "the summary's warning is said once, not per finding");
+  assert.match(note, /Not a human code review\.<\/sub>$/);
   assert.doesNotMatch(note, /Rename status|Nice and small/);
 });
 
