@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { artifact, digest, json, loadSession, now, readText, safePath } from "../files.ts";
+import { artifact, digest, json, loadSession, now, readText, safePath, storedJson, withSnapshots } from "../files.ts";
 import { contractMarkdown, conversation, handoff, replyTemplate, roundDirectory, starterPrompt, versionDirectory } from "../render.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { recall } from "../memory.ts";
@@ -53,10 +53,11 @@ export function contract(
   s: Session,
   version = s.contractVersion,
 ): ContractVersion {
-  return JSON.parse(
-    artifact(root, s, `${versionDirectory(version)}/contract.json`),
-  ) as ContractVersion;
+  return parsedContract(root, s, artifact(root, s, `${versionDirectory(version)}/contract.json`));
 }
+/** A contract.json as written, with its source snapshot's files back: a first code review's baseline. */
+export const parsedContract = (root: string, s: Session, text: string): ContractVersion =>
+  withSnapshots(root, s.id, JSON.parse(text) as ContractVersion);
 export function readContract(cwd: string, id: string): ContractVersion {
   const root = projectRoot(cwd);
   return contract(root, loadSession(root, id));
@@ -76,7 +77,7 @@ export function contractFiles(
     contract: c,
   };
   return {
-    [`${versionDirectory(v.version)}/contract.json`]: json(v),
+    [`${versionDirectory(v.version)}/contract.json`]: storedJson(s.projectRoot, s.id, v),
     [`${versionDirectory(v.version)}/CONTRACT.md`]: contractMarkdown(v),
     [`${versionDirectory(v.version)}/DECISIONS.md`]: `Contract v${v.version}; session ${s.id}.\n\n${decisionBrief(c)}`,
   };
@@ -243,7 +244,7 @@ export function nextRound(
   return {
     round,
     files: {
-      [`${dir}/request.json`]: json({
+      [`${dir}/request.json`]: storedJson(s.projectRoot, s.id, {
         schemaVersion: 1,
         ...round,
         focus,
@@ -255,7 +256,7 @@ export function nextRound(
       [`${dir}/conversation.json`]: json(conversation(s, round)),
       ...Object.fromEntries(Object.entries(context).map(([name, content]) => [`${dir}/${name}`, content])),
       ...(reviewData?.kind === "code"
-        ? { [`${dir}/code-review.json`]: json(reviewData) }
+        ? { [`${dir}/code-review.json`]: storedJson(s.projectRoot, s.id, reviewData) }
         : {}),
       ...(revision ? { [`${dir}/changes.patch`]: revision.patch, [`${dir}/commits.txt`]: revision.commits } : {}),
       ...Object.fromEntries((revision?.parts ?? []).map((part) => [`${dir}/changes/${part.file}`, part.patch])),
