@@ -308,7 +308,17 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   ): void {
     // Resolves to the error the human was shown, or null: waicc_suggest_command reports it.
     const run = async (args: string, ctx: ExtensionCommandContext): Promise<string | null> => {
+        // A line above the input box while the command runs, so a slow one does not look hung.
+        const busy = ctx.hasUI && ctx.mode === "tui";
+        const mark = (lines: string[] | undefined) => {
+          try { ctx.ui.setWidget("waicc-busy", lines); } catch { /* only a hint; the command runs without it */ }
+        };
         try {
+          if (busy) {
+            mark([`⏳ WAICC: running /${name}…`]);
+            // Snapshots and session files are read synchronously: let Pi draw the line before that starts.
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
           trusted(ctx);
           automaticRequests.clear(ctx); // Human commands supersede any pending startup decision.
           if (
@@ -340,6 +350,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
           ctx.ui.notify(message, "error");
           return message;
         } finally {
+          if (busy) mark(undefined);
           track(ctx);
         }
     };

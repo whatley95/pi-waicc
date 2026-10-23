@@ -605,6 +605,11 @@ human), with the event's context; no WAICC command uses the command-only context
 The input box is not touched. The agent is not told what was picked; the command's output
 goes to the human only. Escape or `None of these` runs nothing.
 
+In the interactive screen every WAICC command, typed or picked, sets the `waicc-busy` widget
+to `⏳ WAICC: running /<name>…` and waits 25 ms, so Pi draws it before the command's
+synchronous work (snapshots, session files) starts. The widget is cleared when the command
+ends, including on failure. A UI that cannot show widgets runs the command without it.
+
 The tracker is a read-only view outside the project. After each WAICC tool and command,
 `agent_end`, `session_start` and each dispatch or consult progress tick, a coordinator chat in
 a trusted project schedules (at most once per 2 s, timer unref'd) a summary of its project:
