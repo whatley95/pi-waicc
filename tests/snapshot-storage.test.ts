@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { loadSession, runtimePath } from "../src/files.ts";
-import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
+import { receiveHandoff, recipientAssignment, submitRecipientReply } from "../src/recipient.ts";
 import { snapshot } from "../src/source.ts";
 import { assess, beginDevelopment, cancel, createSession, ingest, issue, prepare } from "../src/workflow.ts";
 import type { Contract, WorkCompletion } from "../src/types.ts";
@@ -64,6 +64,17 @@ test("each source snapshot is stored once beside the journal, so entries stay sm
   assert.deepEqual({ ...loaded.rounds.at(-1)!.source.files }, { ...current.files });
   assert.equal(loaded.rounds.at(-1)!.source.fingerprint, current.fingerprint);
   assert.ok(loaded.rounds.every((r) => Object.keys(r.source.files).length > 1500 && !("filesRef" in r.source)));
+  // The first review's baseline came from the contract's stored snapshot, so its changes are still found.
+  assert.deepEqual(loaded.rounds.filter((r) => r.review?.kind === "code").map((r) => r.review?.kind === "code" && r.review.changedPaths), [["API.txt"], ["API.txt"], ["API.txt"]]);
+
+  // What agents read carries no file maps: contracts, requests, code reviews, observed source, the assignment.
+  const agentFiles = [...readdirSync(join(folder, "rounds")).flatMap((round) => readdirSync(join(folder, "rounds", round)).filter((name) => name.endsWith(".json")).map((name) => join(folder, "rounds", round, name))),
+    join(folder, "contracts", "v001", "contract.json")];
+  assert.ok(agentFiles.some((path) => path.endsWith("code-review.json")) && agentFiles.some((path) => path.endsWith("observed-source.json")));
+  for (const path of agentFiles) assert.doesNotMatch(readFileSync(path, "utf8"), /module-17\.ts/, path);
+  const assignment = JSON.stringify(recipientAssignment(root, receiveHandoff(root, s.id).pin));
+  assert.ok(assignment.length < snapshotBytes / 4, `the reviewer's assignment (${assignment.length} characters) has no hashes`);
+  assert.doesNotMatch(assignment, /module-17\.ts|filesRef/);
 
   // An entry written before this, with every snapshot inline, still loads.
   const inline = JSON.parse(latest);
