@@ -4,6 +4,7 @@ import { roundDirectory } from "../render.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { ensure, text, readyPlan } from "../validation.ts";
+import { acceptedFindings } from "../state.ts";
 import type { Session } from "../types.ts";
 import { requireOpen, resetReview, approvalIsCurrent, contract } from "./shared.ts";
 
@@ -56,6 +57,10 @@ export function amend(cwd: string, id: string, amendment: string): Session {
 function closureFiles(s: Session, detail: string): Record<string, string> {
   ensure(s.closure, "Closure record is required");
   const dir = `lifecycle/${s.closure.id}`;
+  const accepted = acceptedFindings(s);
+  const left = accepted.length
+    ? `\n\n## Findings accepted unfixed\n\n${accepted.map((f) => `- ${f.findingId} (${f.severity}): ${f.description} Reason: ${f.reason}`).join("\n")}`
+    : "";
   return {
     [`${dir}/closure.json`]: json({
       schemaVersion: 1,
@@ -63,10 +68,11 @@ function closureFiles(s: Session, detail: string): Record<string, string> {
       status: s.status,
       contractReview: s.contractReview,
       closure: s.closure,
+      acceptedFindings: accepted,
       deliveryVerified: false,
       verified: false,
     }),
-    [`${dir}/CLOSURE.md`]: `# CLOSED\n\n${s.closure.reason}\n\nClosure kind: ${s.closure.kind ?? "reviewed"}.\nContract v${s.contractVersion}; session ${s.id}.\nClosed at: ${s.closure.closedAt}.\n\n${detail}\n\nThis ends the contract discussion, not code delivery. Delivery verified: false.\n`,
+    [`${dir}/CLOSURE.md`]: `# CLOSED\n\n${s.closure.reason}\n\nClosure kind: ${s.closure.kind ?? "reviewed"}.\nContract v${s.contractVersion}; session ${s.id}.\nClosed at: ${s.closure.closedAt}.\n\n${detail}${left}\n\nThis ends the contract discussion, not code delivery. Delivery verified: false.\n`,
   };
 }
 export function forceCloseSession(

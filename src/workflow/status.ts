@@ -5,7 +5,7 @@ import { artifact, json, listSessions, listDeletedSessions, loadSession, safePat
 import { contractMarkdown, conversation, handoff, manualHandoff, replyTemplate, roundDirectory, starterPrompt, versionDirectory } from "../render.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit, checkpointData } from "../checkpoint.ts";
-import { acceptedPlanCurrent, authorizationState, defaultRoundLimits, decisionSummary, progressState, requirementsText, reviewKindLabel, reviewState, roundPhase, roundUsage, sessionPhase } from "../state.ts";
+import { acceptedFindings, acceptedPlanCurrent,authorizationState, defaultRoundLimits, decisionSummary, progressState, requirementsText, reviewKindLabel, reviewState, roundPhase, roundUsage, sessionPhase } from "../state.ts";
 import { ensure } from "../validation.ts";
 import type { Session, RoundPhase } from "../types.ts";
 import { requireOpen, approvalIsCurrent, contract, skillFiles } from "./shared.ts";
@@ -115,6 +115,8 @@ export function status(
     manualHandoff:
       r?.status === "WAITING" && !replyExists ? manualHandoff(s, r) : null,
     decisionGates: gates,
+    // Real findings knowingly left unfixed: the human should see them before closing.
+    acceptedFindings: acceptedFindings(s),
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
     status: staleApproval ? "STALE" : s.status,

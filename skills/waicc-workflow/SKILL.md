@@ -138,7 +138,10 @@ unverified coverage to addressed, or a decision to resolved without an answer.
 Prefer the canonical template; a valid conversion is not behavioral verification.
 
 Use `waicc_assess` with planned, ready, followup, needs_changes or blocked, a concrete
-rationale, and evidence for resolved/disputed findings. Pass a proposed contract
+rationale, and an evidence-backed disposition for every non-info finding: resolved
+(fixed), disputed (not a real problem) or accepted (a real medium/low finding knowingly
+not fixed now, with the reason; never for code-review findings). Name accepted findings
+(status acceptedFindings) to the human before suggesting closure. Pass a proposed contract
 only after intentionally adopting it. Readiness requires coverage and no unresolved
 specification-blocking questions or failed checks. Default complete planning uses
 planned -> PLAN_READY with no external implementation request. For an authorized

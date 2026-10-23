@@ -1814,7 +1814,11 @@ still reported.
 Contracts retain source quotes and stable requirement IDs. Dependency graphs must
 be acyclic; acceptance criteria reference known requirements. Readiness requires
 every requirement to have planned verification, addressed reply coverage, no open
-questions or failed checks, and explicit dispositions for high/critical findings.
+questions or failed checks, and an evidence-backed disposition for every finding except
+`info`: `resolved` (fixed), `disputed` (not a real problem) or `accepted` (a real medium or
+low finding knowingly not fixed now, with the reason). Accepted findings are listed in
+`/waicc-status` and in the closure record, so you see them before closing. Code-review
+findings cannot be accepted: each is fixed and reviewed again, or disputed with evidence.
 `verified` remains false: schema validity and model agreement do not prove tests ran.
 Advisor `ADVICE_READY` is separate from readiness: it records a completed advice
 exchange, not whole-contract coverage, resolution of findings, or permission to implement.
