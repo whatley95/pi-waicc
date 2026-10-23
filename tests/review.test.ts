@@ -167,6 +167,8 @@ test("low/medium code findings cannot be waved through as fixed without a fresh 
   let current = reply(root, review(root, s), { findings: [{ id: "F1", severity: "low", description: "Possible bug", evidence: "API.txt AC0" }] });
   assert.throws(() => decide(root, current), /Actionable code findings/);
   assert.throws(() => assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Fixed it", dispositions: [{ findingId: "F1", disposition: "resolved", evidence: "Claim without fresh independent review" }] }), /Actionable code findings/);
+  // Knowingly leaving a code finding unfixed is not a way through either.
+  assert.throws(() => assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Minor", dispositions: [{ findingId: "F1", disposition: "accepted", evidence: "Low risk" }] }), /F1 is a code-review finding, which cannot be accepted unfixed/);
   current = assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Independent source evidence disproves finding", dispositions: [{ findingId: "F1", disposition: "disputed", evidence: "Exact call path and existing regression show AC0 is met" }] });
   assert.equal(current.status, "READY_TO_CLOSE");
 });

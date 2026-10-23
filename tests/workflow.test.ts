@@ -1685,6 +1685,33 @@ test("high findings require explicit dispositions; unverified coverage cannot pa
     /coverage gaps/,
   );
 });
+test("every finding gets a disposition; a minor one can be accepted unfixed, and the human sees it", (t) => {
+  const root = fixture(t);
+  const s = planned(root);
+  respond(root, s, (r) => {
+    r.findings.push(
+      { id: "F-001", severity: "medium", description: "Pagination limit is unspecified", evidence: "REQ-001 names no page size" },
+      { id: "F-002", severity: "high", description: "Authorization is unspecified", evidence: "REQ-002 lacks a concrete identity boundary" },
+      { id: "F-003", severity: "info", description: "Search already has an index", evidence: "Source note" },
+    );
+  });
+  const received = ingest(root, s.id);
+  const id = received.rounds.at(-1)!.id;
+  const resolved = { findingId: "F-002", disposition: "resolved" as const, evidence: "The plan's task now names the identity boundary" };
+  // A medium finding is no longer silently dropped; info needs nothing.
+  assert.throws(() => assess(root, s.id, { ...assessment(received), dispositions: [resolved] }), /Every finding except info needs one of these evidence-backed dispositions.*Missing: F-001$/);
+  // Only medium/low findings can be accepted unfixed.
+  assert.throws(() => assess(root, s.id, { ...assessment(received), dispositions: [{ ...resolved, disposition: "accepted" }] }),
+    /F-002 is high; only medium\/low findings can be accepted unfixed/);
+  const accepted = { findingId: "F-001", disposition: "accepted" as const, evidence: "Out of scope: the human chose the default page size for now" };
+  const done = assess(root, s.id, { ...assessment(received), dispositions: [resolved, accepted] });
+  const view = status(root, done.id) as { acceptedFindings: unknown[] };
+  assert.deepEqual(view.acceptedFindings, [{ requestId: id, findingId: "F-001", severity: "medium", description: "Pagination limit is unspecified", reason: accepted.evidence }]);
+  const closed = forceCloseSession(root, s.id, "Stopping here");
+  const closure = artifact(root, closed, `lifecycle/${closed.closure!.id}/CLOSURE.md`);
+  assert.match(closure, /## Findings accepted unfixed\n\n- F-001 \(medium\): Pagination limit is unspecified Reason: Out of scope/);
+  assert.equal(JSON.parse(artifact(root, closed, `lifecycle/${closed.closure!.id}/closure.json`)).acceptedFindings.length, 1);
+});
 test("journal survives an interrupted or corrupt session cache", (t) => {
   const root = fixture(t);
   const s = planned(root);
