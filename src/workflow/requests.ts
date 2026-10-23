@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { artifact, digest, json, loadSession, readText, safePath, sessionRelative, withLock } from "../files.ts";
+import { artifact, digest, json, loadSession, readText, safePath, sessionRelative, storedJson, withLock } from "../files.ts";
 import { roundDirectory, proposedContractExample, versionDirectory } from "../render.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { normalizeReply, replyNormalizerVersion } from "../reply.ts";
@@ -8,7 +8,7 @@ import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { authorizationState, requirementsText } from "../state.ts";
 import { Collector, ensure, text, validateContract, validateReply } from "../validation.ts";
 import type { ContractVersion, Mode, Reply, Round, Session } from "../types.ts";
-import { requireOpen, contract, contractFiles, stableIds, nextRound } from "./shared.ts";
+import { requireOpen, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
 import { requireAcceptedPlan } from "./sessions.ts";
 
 /** Preparing and issuing handoffs, and taking in and validating their replies. */
@@ -42,9 +42,7 @@ export function prepare(
     s.planApproval = null;
     s.contractVersion++;
     const files = contractFiles(s, c);
-    const v = JSON.parse(
-      files[`${versionDirectory(s.contractVersion)}/contract.json`],
-    ) as ContractVersion;
+    const v = parsedContract(root, s, files[`${versionDirectory(s.contractVersion)}/contract.json`]);
     const next = nextRound(
       s, v, mode, text(focus, "Assignment focus"), undefined, undefined, review,
     );
@@ -137,7 +135,7 @@ export function ingest(cwd: string, id: string): Session {
     if (stale && r.mode === "review") s.contractReview = "STALE";
     return commit(root, s, stale ? "reply.stale" : "reply.received", {
       [`${dir}/received.json`]: raw,
-      [`${dir}/observed-source.json`]: json(source),
+      [`${dir}/observed-source.json`]: storedJson(root, s.id, source),
       ...(normalized.changes.length
         ? {
             [`${dir}/received.normalized.json`]: json(reply),

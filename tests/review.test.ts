@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { artifact, json, loadSession, sessionRelative } from "../src/files.ts";
+import { artifact, json, loadSession, sessionRelative, withoutSnapshotFiles } from "../src/files.ts";
 import { roundDirectory } from "../src/render.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { snapshot } from "../src/source.ts";
@@ -213,7 +213,10 @@ test("code-review export carries full completion/baseline context and immutable 
   const { root, s: initial } = acceptedPlan(t);
   const s = review(root, initial), r = s.rounds.at(-1)!;
   const exported = exportHandoff(root, s.id);
-  assert.deepEqual(JSON.parse(readFileSync(join(exported, "code-review.json"), "utf8")), r.review);
+  // Everything but the baseline's file hashes, which stay beside the journal.
+  const exportedReview = JSON.parse(readFileSync(join(exported, "code-review.json"), "utf8"));
+  assert.deepEqual(withoutSnapshotFiles(exportedReview), withoutSnapshotFiles(r.review));
+  assert.equal(exportedReview.base.files, undefined);
   const portable = readFileSync(join(exported, "HANDOFF.md"), "utf8");
   assert.match(portable, /code-review.json beside this file/);
   assert.equal(portable.includes(root), false);

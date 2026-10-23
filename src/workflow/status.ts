@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { artifact, json, listSessions, listDeletedSessions, loadSession, safePath, sessionRelative, withLock } from "../files.ts";
+import { artifact, json, listSessions, listDeletedSessions, loadSession, safePath, sessionRelative, withLock, withoutSnapshotFiles } from "../files.ts";
 import { contractMarkdown, conversation, handoff, manualHandoff, replyTemplate, roundDirectory, starterPrompt, versionDirectory } from "../render.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit, checkpointData } from "../checkpoint.ts";
@@ -289,7 +289,7 @@ export function exportHandoff(cwd: string, id: string): string {
     const dir = `exports/${exportId}`;
     const files: Record<string, string> = {
       [`${dir}/requirements.md`]: requirementsText(s),
-      [`${dir}/contract.json`]: json(v),
+      [`${dir}/contract.json`]: json(withoutSnapshotFiles(v)),
       [`${dir}/CONTRACT.md`]: contractMarkdown(v),
       [`${dir}/HANDOFF.md`]: handoff(s, r, v, request.focus, true),
       [`${dir}/STARTER.txt`]: starterPrompt(s, r, true),

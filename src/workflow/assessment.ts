@@ -5,7 +5,7 @@ import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { acceptedPlanCurrent, requirementsText } from "../state.ts";
 import { ensure, identifier, list, record, text, validateContract, readyContract, readyPlan } from "../validation.ts";
 import type { Contract, ContractVersion, Session } from "../types.ts";
-import { requireOpen, resetReview, contract, contractFiles, stableIds, nextRound } from "./shared.ts";
+import { requireOpen, resetReview, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
 
 /** Assessing a reply: the owner's decision, adopted revisions, dispositions and the next state. */
 
@@ -191,9 +191,7 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     } else if (a.decision === "ready" && r.mode === "planning") {
       s.planApproval = { contractVersion: s.contractVersion, requirementsDigest: digest(requirementsText(s)), requestId: r.id };
       const v = a.contract
-        ? (JSON.parse(
-            files[`${versionDirectory(s.contractVersion)}/contract.json`],
-          ) as ContractVersion)
+        ? parsedContract(root, s, files[`${versionDirectory(s.contractVersion)}/contract.json`])
         : contract(root, s);
       const next = nextRound(
         s,
@@ -224,9 +222,7 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
       }
     } else if (a.decision === "followup") {
       const v = a.contract
-        ? (JSON.parse(
-            files[`${versionDirectory(s.contractVersion)}/contract.json`],
-          ) as ContractVersion)
+        ? parsedContract(root, s, files[`${versionDirectory(s.contractVersion)}/contract.json`])
         : contract(root, s);
       Object.assign(
         files,
