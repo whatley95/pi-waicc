@@ -588,6 +588,10 @@ arrives, the open picker is withdrawn, since the agent may offer something else.
 `/waicc-*` commands can be offered, and the commands stay listed in the chat. You can still
 type any command yourself, for example to change a flag first.
 
+While any WAICC command runs, picked or typed, a line above the input box says so, for
+example `⏳ WAICC: running /waicc-continue…`. On a large project, reading its files can take
+a few seconds; the line stays until the command is done.
+
 Run this in the coordinating Pi chat whenever you need clear copy/paste instructions:
 
 ```text

@@ -40,7 +40,8 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   const suggest = (commands: { command: string; why: string }[], context: ExtensionToolContext, question?: string) =>
     tools.get("waicc_suggest_command").execute("call", { commands, question }, undefined, undefined, context);
   const text = (outcome: any) => outcome.content[0].text as string;
-  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  // A picked command first lets Pi draw its running line (25 ms), then runs.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
   const offered = [
     { command: "/waicc-dispatch --implement", why: "send the fix to your coding agent" },
     { command: " /waicc-list all ", why: "see every session" },
@@ -101,4 +102,34 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   await assert.rejects(suggest([{ command: "waicc-status", why: "x" }], chat), /is not a WAICC command/);
   await assert.rejects(suggest([{ command: "/waicc-status\n/waicc-close done", why: "x" }], chat), /one command line/);
   await assert.rejects(suggest(offered, ctx(false)), /No picker here\. Write the commands in your reply for the human to type: \/waicc-dispatch --implement, \/waicc-list all/);
+});
+
+test("every WAICC command shows a running line before its work starts and clears it after, even when it fails", async (t) => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const commands = new Map<string, any>(), events: string[] = [];
+  waicc({
+    registerCommand: (name: string, command: any) => commands.set(name, command), registerTool() {}, on() {}, appendEntry() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage: () => events.push("output"), sendUserMessage() {},
+  } as unknown as ExtensionAPI);
+  const ctx = {
+    cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => "busy-chat", getBranch: () => [], getEntries: () => [] },
+    ui: {
+      notify: (m: string) => events.push(`notice ${m.slice(0, 20)}`), setStatus() {},
+      setWidget: (key: string, lines: string[] | undefined) => { if (key === "waicc-busy") events.push(lines ? lines.join() : "cleared"); },
+    },
+  };
+  await commands.get("waicc-list").handler("all", ctx);
+  assert.deepEqual(events, ["⏳ WAICC: running /waicc-list…", "output", "cleared"]);
+  events.length = 0;
+  await commands.get("waicc-dispatch").handler("", ctx);
+  assert.equal(events[0], "⏳ WAICC: running /waicc-dispatch…");
+  assert.match(events[1], /^notice /, "the failure is shown");
+  assert.equal(events.at(-1), "cleared");
+  // Without the interactive screen there is no line; a UI without widgets still runs the command.
+  events.length = 0;
+  await commands.get("waicc-list").handler("all", { ...ctx, mode: "rpc" });
+  await commands.get("waicc-list").handler("all", { ...ctx, ui: { notify() {}, setStatus() {} } });
+  assert.deepEqual(events, ["output", "output"]);
 });
