@@ -51,6 +51,13 @@ export function roundUsage(s: Session) {
       return [phase, { used, limit, remaining: limit === null ? null : Math.max(0, limit - used) }];
     })) };
 }
+/** Real findings the main agent knowingly left unfixed, with its reason, so the human sees them before closing. */
+export const acceptedFindings = (s: Session) => s.rounds.flatMap((r) => (r.dispositions ?? [])
+  .filter((d) => d.disposition === "accepted")
+  .flatMap((d) => {
+    const f = r.reply?.findings.find((finding) => finding.id === d.findingId);
+    return f ? [{ requestId: r.id, findingId: f.id, severity: f.severity, description: f.description.slice(0, 400), reason: d.evidence }] : [];
+  }));
 export function sessionPhase(s: Session): string {
   if (s.status === "CLOSED") return "closed";
   const pending = s.rounds.findLast((r) => ["WAITING", "RECEIVED"].includes(r.status));

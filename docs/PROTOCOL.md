@@ -839,8 +839,13 @@ The primary Pi agent uses `waicc_assess`; CLI users can supply an assessment JSO
 an explicitly adopted revision, except on a ready review: changed contracts need
 a fresh review round. Adopt a reviewer's proposal with followup or needs_changes.
 Each disposition is `{findingId,disposition,evidence}`
-with disposition resolved or disputed. High/critical findings require dispositions
-before readiness. Dispositions are recorded claims with evidence, not independent
+with disposition resolved, disputed or accepted; evidence is always required, and for
+accepted it is the reason the finding is knowingly left unfixed. Only medium/low findings
+may be accepted, and never in a code review or delegated whole-work round. On ready or
+planned, every non-info finding needs a disposition (code review keeps its stricter rule:
+each non-info finding must be disputed, otherwise fixed and reviewed again). Status
+`acceptedFindings` lists `{requestId, findingId, severity, description, reason}` for every
+accepted finding, and `closure.json`/`CLOSURE.md` repeat them. Dispositions are recorded claims with evidence, not independent
 proof. Structural checks do not establish the quality of Pi's judgment.
 
 For advisor, ready, planned and contract are forbidden. Use noted only for a ready advisor

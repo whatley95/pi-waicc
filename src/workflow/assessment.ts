@@ -17,7 +17,8 @@ export interface Assessment {
   contract?: Contract;
   dispositions: {
     findingId: string;
-    disposition: "resolved" | "disputed";
+    /** accepted: a real medium/low finding knowingly not fixed now; its evidence is the reason. */
+    disposition: "resolved" | "disputed" | "accepted";
     evidence: string;
   }[];
 }
@@ -91,11 +92,18 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
       identifier(d.findingId);
       text(d.evidence, "Disposition evidence");
       ensure(
-        ["resolved", "disputed"].includes(d.disposition as string) &&
+        ["resolved", "disputed", "accepted"].includes(d.disposition as string) &&
           r.reply.findings.some((f) => f.id === d.findingId) &&
           !seen.has(d.findingId as string),
         "Invalid or duplicate finding disposition",
       );
+      if (d.disposition === "accepted") {
+        const finding = r.reply.findings.find((f) => f.id === d.findingId)!;
+        ensure(r.review?.kind !== "code" && !r.wholeWork,
+          `${finding.id} is a code-review finding, which cannot be accepted unfixed: fix it, or dispute it with evidence`);
+        ensure(!["critical", "high"].includes(finding.severity),
+          `${finding.id} is ${finding.severity}; only medium/low findings can be accepted unfixed. Resolve it, or dispute it with evidence`);
+      }
       seen.add(d.findingId as string);
     }
     const files: Record<string, string> = {};
@@ -156,13 +164,15 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
           (a.decision === "planned" && r.reply.outcome === "planned"),
         "Reply did not report readiness; resolve it in a follow-up round",
       );
-      ensure(
-        r.reply.findings
-          .filter((f) => ["critical", "high"].includes(f.severity))
-          .every((f) => seen.has(f.id)),
-        "High/critical findings need explicit evidence-backed dispositions",
-      );
-      if (r.review?.kind === "code" || r.wholeWork)
+      // No finding is silently dropped: each is fixed, shown false, or knowingly left with a reason.
+      // Code findings meet the stricter rule below instead: only a dispute passes without a fresh review.
+      const unanswered = r.reply.findings.filter((f) => f.severity !== "info" && !seen.has(f.id)).map((f) => f.id);
+      if (r.review?.kind !== "code" && !r.wholeWork)
+        ensure(
+          unanswered.length === 0,
+          `Every finding except info needs one of these evidence-backed dispositions: resolved (fixed; say where), disputed (not a real problem; the proof) or accepted (medium/low, knowingly not fixed now; the reason). Missing: ${unanswered.join(", ")}`,
+        );
+      else
         ensure(
           r.reply.findings
             .filter((finding) => finding.severity !== "info")
