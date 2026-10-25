@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  type Stats,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { canonicalPath, digest, runtimePath, safePath } from "./files.ts";
@@ -104,6 +105,23 @@ export function gitPrefix(root: string): string | null {
 
 /** Files read one by one up to `direct`; a Git project above that uses Git's own fingerprints, up to `git`. */
 export const sourceLimits = { direct: 10_000, git: 100_000 };
+
+// A file's digest, kept while its size, times and identity stay the same, so a snapshot
+// re-reads only what changed. As in Git's "racy" rule, a file modified in the 2 s before the
+// snapshot began is never kept: a second same-size edit within one timestamp tick would look
+// unchanged.
+const digests = new Map<string, { key: string; digest: string }>();
+function fileDigest(full: string, stat: Stats, startedAt: number): string {
+  const key = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}:${stat.dev}`;
+  const known = digests.get(full);
+  if (known?.key === key) return known.digest;
+  const value = digest(readFileSync(full));
+  if (stat.mtimeMs < startedAt - 2_000 && stat.ctimeMs < startedAt - 2_000) {
+    if (digests.size >= 200_000) digests.clear();
+    digests.set(full, { key, digest: value });
+  } else digests.delete(full);
+  return value;
+}
 
 export function snapshot(root: string): SourceSnapshot {
   // A sub-project of a Git repository is fingerprinted as that subtree only.
@@ -266,13 +284,16 @@ export function snapshot(root: string): SourceSnapshot {
       files,
     };
   }
+  const pass = { folders: new Set<string>() };
+  const startedAt = Date.now();
   for (const path of paths) {
-    const full = safePath(root, path);
-    if (!existsSync(full)) {
+    const full = safePath(root, path, pass);
+    // This lstat is the file's own link check: a link, broken or not, is refused below.
+    const stat = lstatSync(full, { throwIfNoEntry: false });
+    if (!stat) {
       files[path] = "DELETED";
       continue;
     }
-    const stat = lstatSync(full);
     ensure(
       stat.isFile() && !stat.isSymbolicLink(),
       `Unsupported source entry: ${path}`,
@@ -282,7 +303,7 @@ export function snapshot(root: string): SourceSnapshot {
       bytes <= 128_000_000,
       "Source fingerprint exceeds 128 MB; use a smaller project root",
     );
-    files[path] = digest(readFileSync(full));
+    files[path] = fileDigest(full, stat, startedAt);
   }
   return {
     vcs,
