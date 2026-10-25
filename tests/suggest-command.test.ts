@@ -127,9 +127,12 @@ test("every WAICC command shows a running line before its work starts and clears
   assert.equal(events[0], "⏳ WAICC: running /waicc-dispatch…");
   assert.match(events[1], /^notice /, "the failure is shown");
   assert.equal(events.at(-1), "cleared");
-  // Without the interactive screen there is no line; a UI without widgets still runs the command.
+  // An RPC client gets the line too; with no UI there is none, and a UI without widgets still runs the command.
   events.length = 0;
   await commands.get("waicc-list").handler("all", { ...ctx, mode: "rpc" });
+  assert.deepEqual(events, ["⏳ WAICC: running /waicc-list…", "output", "cleared"]);
+  events.length = 0;
+  await commands.get("waicc-list").handler("all", { ...ctx, mode: "print", hasUI: false });
   await commands.get("waicc-list").handler("all", { ...ctx, ui: { notify() {}, setStatus() {} } });
   assert.deepEqual(events, ["output", "output"]);
 });
