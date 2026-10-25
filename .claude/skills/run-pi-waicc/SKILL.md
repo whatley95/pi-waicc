@@ -31,7 +31,28 @@ node .claude/skills/run-pi-waicc/driver.mjs roundtrip --keep   # keep the temp p
 ```
 
 Expected stages: `DRAFT` → `WAITING_FOR_REPLY` → (`reply.json` written) `AWAITING_ASSESSMENT`
-→ (assess ready) `READY_FOR_HANDOFF`, with a new `implementation` round waiting.
+→ (assess ready) `PLAN_READY` → (contract review requested) `WAITING_FOR_REPLY`, with a
+`review` round waiting.
+
+## Live check with a scripted model (no provider, no cost)
+
+`live-picker.mjs` runs the real Pi 1.2.0 in RPC mode against a local fake OpenAI-compatible
+server that answers with a script: `waicc_status`, then `waicc_suggest_command`, then a short
+reply. It uses its own temporary `PI_CODING_AGENT_DIR`, so the user's `~/.pi` is untouched.
+
+```sh
+P=$(node .claude/skills/run-pi-waicc/driver.mjs roundtrip --keep | grep -E "^(project|session):" | awk '{print $2}' | tr '\n' ' ')
+set -- $P; node .claude/skills/run-pi-waicc/live-picker.mjs "$PWD" "$1" "$2"; rm -rf "$1"
+```
+
+It prints `ok`/`FAIL` for:
+- the running line around a typed and a picked command,
+- the picker opening after the turn and the agent staying idle while it waits,
+- the pick running the command once with no extra model turn,
+- `waicc_status` giving the model no handoff prompt text.
+
+Pi runs extension `agent_end` hooks before it reports `agent_end`, so the picker's request
+arrives in the same instant, just before that event.
 
 To drive real Pi against a project (use a `--keep` project, or any repo):
 

@@ -605,7 +605,7 @@ human), with the event's context; no WAICC command uses the command-only context
 The input box is not touched. The agent is not told what was picked; the command's output
 goes to the human only. Escape or `None of these` runs nothing.
 
-In the interactive screen every WAICC command, typed or picked, sets the `waicc-busy` widget
+With a UI (the interactive screen or an RPC client) every WAICC command, typed or picked, sets the `waicc-busy` widget
 to `⏳ WAICC: running /<name>…` and waits 25 ms, so Pi draws it before the command's
 synchronous work (snapshots, session files) starts. The widget is cleared when the command
 ends, including on failure. A UI that cannot show widgets runs the command without it.

@@ -71,8 +71,12 @@ function roundtrip(keep) {
   writeFileSync(assessment, JSON.stringify({ requestId: round, decision: "ready", rationale: "Coverage complete.", dispositions: [] }));
   const a = waicc(root, "assess", s.id, assessment);
   rmSync(assessment);
-  expect("assess status", a.status, "READY_FOR_HANDOFF");
-  expect("next round mode", a.rounds.at(-1).mode, "implementation");
+  // A complete plan stops at PLAN_READY; nothing is handed off until a human asks.
+  expect("assess status", a.status, "PLAN_READY");
+  // Leave a waiting handoff, as most Pi checks want one: a contract review of the plan.
+  const r = waicc(root, "request", s.id, "review", "--contract", "Review the plan before coding");
+  expect("review request status", r.status, "WAITING_FOR_REPLY");
+  expect("next round mode", r.rounds.at(-1).mode, "review");
   const st = waicc(root, "status", s.id);
   console.log(`status: ${st.status}, rounds ${st.rounds}/${st.maxRounds}, verified=${st.verified}`);
   console.log(`export: ${waicc(root, "export", s.id).exportPath}`);
