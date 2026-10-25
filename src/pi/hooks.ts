@@ -12,12 +12,13 @@ import { authorizationState } from "../state.ts";
 import { autoPlanningInstructions } from "../auto-planning.ts";
 import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
-import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
+import { type ChatBinding, compactionInstructions, recipientReads, recipientGuidance } from "./shared.ts";
+import { loadAgentConfig } from "../profiles.ts";
 import type { App } from "./app.ts";
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
-  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching } = app;
+  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops } = app;
   // Set when a dispatched recipient's binding is refused; its every turn then only explains why.
   let dispatchRefusal: string | undefined;
   pi.on("input", async (event, ctx) => {
@@ -39,9 +40,56 @@ export function registerHooks(app: App): void {
     if (turn) clearInterval(turn.ticker);
     mainTurns.delete(key(ctx));
   };
+  // Automatic compaction: a turn that assessed a round is a natural break. Once the main agent's
+  // chat is over the user's autoCompactTokens, it is compacted then, so later turns stop
+  // re-sending the whole history. Never while a dispatched agent or an automatic loop runs.
+  const assessedAtStart = new Map<string, number | null>();
+  const assessedRounds = (ctx: Parameters<typeof track>[0]): number | null => {
+    const binding = bindings.get(key(ctx));
+    if (binding?.role !== "coordinator") return null;
+    try {
+      return loadSession(projectRoot(ctx.cwd), binding.sessionId).rounds.filter((r) => r.status === "ASSESSED").length;
+    } catch {
+      return null;
+    }
+  };
+  const autoCompact = (ctx: Parameters<typeof track>[0], before: number | null | undefined) => {
+    const binding = bindings.get(key(ctx));
+    if (binding?.role !== "coordinator" || before == null || !ctx.hasUI || typeof ctx.compact !== "function") return;
+    const after = assessedRounds(ctx);
+    if (after === null || after <= before) return;
+    let limit: number;
+    try {
+      limit = loadAgentConfig(ctx.cwd).autoCompactTokens;
+    } catch {
+      return; // A broken user file is reported where it is used; compaction just waits.
+    }
+    const tokens = ctx.getContextUsage()?.tokens;
+    if (!limit || tokens == null || tokens < limit) return;
+    const id = binding.sessionId;
+    let tries = 0;
+    // Pi marks the chat idle just after agent_end: wait for that, and give up if a new turn runs on.
+    const attempt = () => {
+      if (bindings.get(key(ctx))?.sessionId !== id || dispatches.has(id) || loops.has(id)) return;
+      if (!ctx.isIdle()) return void (++tries < 50 && setTimeout(attempt, 200));
+      try {
+        const recovery = refreshCheckpoint(ctx.cwd, id);
+        ctx.ui.notify(`Compacting this chat after the assessment: ${Math.round(tokens / 1000)}k tokens, over your ${Math.round(limit / 1000)}k autoCompactTokens. WAICC's session state is on disk and is not affected.`, "info");
+        ctx.compact({
+          customInstructions: compactionInstructions(recovery),
+          onComplete: () => ctx.ui.notify("Chat compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.", "info"),
+          onError: (error) => ctx.ui.notify(`Automatic compaction failed: ${error.message}. Nothing was lost; /waicc-compact tries again.`, "warning"),
+        });
+      } catch (error) {
+        ctx.ui.notify(`Automatic compaction skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
+      }
+    };
+    setTimeout(attempt, 0);
+  };
   pi.on("agent_start", async (_event, ctx) => {
     // A dispatched recipient's own Pi is not this project's main agent.
     if (bindings.get(key(ctx))?.role === "recipient") return;
+    assessedAtStart.set(key(ctx), assessedRounds(ctx));
     endMain(ctx);
     // Refreshed while it thinks without using tools, so the page does not take it for gone.
     const ticker = setInterval(() => track(ctx), 20_000);
@@ -55,11 +103,14 @@ export function registerHooks(app: App): void {
     if (event.isError) feedMain(ctx, { type: "tool_execution_end", toolName: event.toolName, isError: true, result: event.result });
   });
   pi.on("agent_end", async (_event, ctx) => {
+    const before = assessedAtStart.get(key(ctx));
+    assessedAtStart.delete(key(ctx));
     endMain(ctx);
     automaticRequests.clear(ctx);
     advanceLoop(ctx);
     track(ctx);
     warnOutdated(ctx);
+    autoCompact(ctx, before);
   });
   // The main agent's own use and model, as it works.
   pi.on("message_end", async (event, ctx) => {
