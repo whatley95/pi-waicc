@@ -522,7 +522,16 @@ since its launch. The CLI and advisor consults do not retry.
 file that sets it is rejected) runs the ordinary continue step after a dispatch whose reply
 exists: intake validation, then the main agent's assessment prompt, delivered as a
 follow-up after any current turn. The dispatch is released before that prompt is sent and
-the prompt is not awaited, so the main agent's turn runs on its own. `--loop [1–8]`
+the prompt is not awaited, so the main agent's turn runs on its own. With `autoContinue`
+true, each Pi chat with a UI also polls every 3 s, while its coordinator binding's session
+has no running dispatch and the agent is idle: the WAITING round is re-read every 30 s; when
+its `reply.json` is at least 3 s old (by mtime) and that path/mtime was not tried, it
+re-checks that the round is still WAITING, notifies, and runs the same continue step. A failed
+intake is notified and retried only after the file changes. The timers are kept per chat in
+one process-wide map (so `/reload` replaces a chat's watcher) and stopped on
+`session_shutdown`. Status `nextSteps` adds `--continue` to the headless command unless
+`autoContinue` is on, and, for a WAITING code review with development authorization and
+implementation owner main, puts `/waicc-dispatch --loop` first. `--loop [1–8]`
 (default 3; implies `--continue`; Pi only) requires a waiting code review. Each assessment
 prompt carries a loop note: fix ALL actionable findings inside authorized scope, run checks,
 request ONE fresh whole-change code review in the same turn, or explain and stop when a

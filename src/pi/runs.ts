@@ -1,8 +1,10 @@
 import type { ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { json, loadSession, readText } from "../files.ts";
+import { json, loadSession, readText, sessionRelative } from "../files.ts";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { prepareDispatch, runDispatch, type DispatchOptions, type DispatchPlan } from "../dispatch.ts";
-import { alertSettings, fallbackDispatch, sessionBudget, resolveDispatch } from "../profiles.ts";
+import { alertSettings, fallbackDispatch, loadAgentConfig, sessionBudget, resolveDispatch } from "../profiles.ts";
+import { roundDirectory } from "../render.ts";
 import { limitText } from "../limits.ts";
 import { quietMinutes, sessionSpend } from "../tracker.ts";
 import { usageText } from "../usage.ts";
@@ -60,6 +62,47 @@ export function createRuns(app: Core) {
         "Resume the task from its original requirements. Prepare a revised contract/handoff using waicc_prepare; preserve prior requirement IDs.",
       );
     else show(ctx, status(ctx.cwd, s.id));
+  }
+  // A handoff given out by hand: with autoContinue on, its reply.json is taken in once it has
+  // stopped changing and the main agent is idle, as a headless run with --continue would.
+  // Timers live in one process-wide map, so a /reload replaces this chat's watcher, never adds one.
+  const watching: Map<string, ReturnType<typeof setInterval>> =
+    ((globalThis as Record<symbol, unknown>)[Symbol.for("pi-waicc.reply-watchers")] ??= new Map()) as Map<string, ReturnType<typeof setInterval>>;
+  function watchReplies(ctx: ExtensionContext): void {
+    stopWatching(ctx);
+    const chat = key(ctx);
+    let tried: string | undefined, reply: { requestId: string; path: string; checkedAt: number } | undefined;
+    const timer = setInterval(() => {
+      try {
+        const binding = bindings.get(chat);
+        if (binding?.role !== "coordinator" || !ctx.isIdle() || dispatches.has(binding.sessionId)) return;
+        const root = projectRoot(ctx.cwd);
+        const waiting = () => loadSession(root, binding.sessionId).rounds.find((r) => r.status === "WAITING");
+        // Which reply to look for is re-read every 30 s; the check in between is one stat.
+        if (!reply || Date.now() - reply.checkedAt > 30_000) {
+          if (!loadAgentConfig(ctx.cwd).autoContinue) return void (reply = undefined);
+          const r = waiting();
+          reply = { requestId: r?.id ?? "", path: r ? join(root, sessionRelative(binding.sessionId), roundDirectory(r), "reply.json") : "", checkedAt: Date.now() };
+        }
+        const stat = reply.path ? statSync(reply.path, { throwIfNoEntry: false }) : undefined;
+        // Still being written, or this version already tried: wait.
+        if (!stat || Date.now() - stat.mtimeMs < 3_000 || tried === `${reply.path}:${stat.mtimeMs}`) return;
+        tried = `${reply.path}:${stat.mtimeMs}`;
+        const requestId = reply.requestId;
+        reply = undefined;
+        // Something else (a headless run with --continue, a typed /waicc-continue) may have taken it in already.
+        if (waiting()?.id !== requestId) return;
+        ctx.ui.notify("A reply to your handoff arrived; continuing automatically (autoContinue).", "info");
+        continueSession(ctx as unknown as ExtensionCommandContext).catch((error) =>
+          ctx.ui.notify(`The reply could not be taken in: ${error instanceof Error ? error.message : String(error)}. Fix reply.json, or run /waicc-continue.`, "error"));
+      } catch { /* a session being written or removed is checked again on the next tick */ }
+    }, 3_000);
+    timer.unref?.();
+    watching.set(chat, timer);
+  }
+  function stopWatching(ctx: ExtensionContext): void {
+    clearInterval(watching.get(key(ctx)));
+    watching.delete(key(ctx));
   }
   const loops = new Map<string, Loop>();
   const loopName = (loop: Loop) => (loop.code && loop.mode !== "planning" ? "Automatic run" : loop.mode === "planning" ? "Planning loop" : "Review loop");
@@ -374,6 +417,6 @@ export function createRuns(app: Core) {
       endLoop(ctx, id, `Run stopped before the review: ${error instanceof Error ? error.message : String(error)} Dispatch the review yourself.`, "error");
     }
   }
-  return { continueSession, loops, loopName, endLoop, loopNote, findingsOf, launch, overBudget, advanceLoop, advanceCoded, startDevelopment, startReview };
+  return { continueSession, watchReplies, stopWatching, loops, loopName, endLoop, loopNote, findingsOf, launch, overBudget, advanceLoop, advanceCoded, startDevelopment, startReview };
 }
 export type Runs = ReturnType<typeof createRuns>;
