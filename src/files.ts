@@ -40,7 +40,12 @@ export function samePath(a: string, b: string): boolean {
   }
 }
 
-export function safePath(root: string, child: string): string {
+/**
+ * `root/child`, refusing escapes, links and junctions on the way. A `pass` over many files
+ * checks each folder once, and leaves the last part to the caller, which must lstat it and
+ * refuse a link (the source snapshot does).
+ */
+export function safePath(root: string, child: string, pass?: { folders: Set<string> }): string {
   ensure(
     !isAbsolute(child) && !/^[A-Za-z]:|[\x00-\x1f]/.test(child),
     "Invalid storage path",
@@ -59,8 +64,11 @@ export function safePath(root: string, child: string): string {
     "Path escapes root",
   );
   let current = root;
-  for (const part of parts) {
+  for (const [i, part] of parts.entries()) {
     current = join(current, part);
+    const folder = i < parts.length - 1;
+    if (pass && (!folder || pass.folders.has(current))) continue;
+    if (folder) pass?.folders.add(current);
     if (existsSync(current))
       ensure(
         !lstatSync(current).isSymbolicLink(),

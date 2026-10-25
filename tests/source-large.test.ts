@@ -1,7 +1,8 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { snapshot, sourceLimits } from "../src/source.ts";
@@ -68,4 +69,41 @@ test("projects within the direct limit are still read file by file, as before", 
   sourceLimits.direct = 10_000;
   const s = snapshot(root);
   assert.ok(Object.values(s.files).every((value) => /^[a-f0-9]{64}$/.test(value)), "content digests, not Git IDs");
+});
+
+test("cached file digests keep fingerprints and miss no change, even one that keeps size and modified time", async (t) => {
+  const root = largeRepo(t);
+  sourceLimits.direct = 10_000;
+  const file = join(root, "services", "orders", "app.js");
+  const content = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+  // Same values as reading every file: existing sessions keep their fingerprints.
+  const first = snapshot(root);
+  assert.equal(first.files["services/orders/app.js"], content(file));
+
+  // Edited within the 2 s window: never trusted from a cache, however the times line up.
+  const { mtime } = statSync(file);
+  writeFileSync(file, "SERVICES/orders/app.js\n");
+  utimesSync(file, mtime, mtime);
+  assert.equal(snapshot(root).files["services/orders/app.js"], content(file));
+
+  // Once files are old enough to be kept, a same-size edit that restores the modified time
+  // still changes the file's change time, so it is read again.
+  await new Promise((resolve) => setTimeout(resolve, 2_100));
+  const kept = snapshot(root);
+  assert.equal(kept.files["services/orders/app.js"], content(file));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  writeFileSync(file, "services/ORDERS/app.js\n");
+  utimesSync(file, mtime, mtime);
+  const after = snapshot(root);
+  assert.equal(after.files["services/orders/app.js"], content(file));
+  assert.notEqual(after.fingerprint, kept.fingerprint);
+  // A deleted file and a link are still seen as such.
+  unlinkSync(join(root, "a.txt"));
+  assert.equal(snapshot(root).files["a.txt"], "DELETED");
+  try {
+    symlinkSync(join(root, "b.txt"), join(root, "link.txt"));
+  } catch {
+    return; // Windows without the right to make links.
+  }
+  assert.throws(() => snapshot(root), /Unsupported source entry: link\.txt|Source symlink/);
 });

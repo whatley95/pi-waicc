@@ -1248,7 +1248,11 @@ is tracked and not listed by `diff-files --name-only --relative`, otherwise (cha
 untracked) from `git hash-object --stdin-paths`, which applies the same filters a commit would;
 a tracked path `diff-files` lists that no longer exists is `DELETED`. Only those hashed files
 count toward the 128 MB limit; links and submodules (index modes other than `100…`) are
-refused as before. Projects up to 10,000 paths keep a SHA-256 of each file's bytes. Isolated worktrees of a sub-project start from the
+refused as before. Projects up to 10,000 paths keep a SHA-256 of each file's bytes. Within one
+process the digest is reused while the file's size, `mtimeMs`, `ctimeMs`, `ino` and `dev` are
+unchanged; a file whose modified or change time is within 2 s of the snapshot's start is
+always read (Git's "racy" rule). Each folder is checked for links once per snapshot, and each
+file by its own `lstat`. The values are the same as reading every file. Isolated worktrees of a sub-project start from the
 repository's last commit with the sub-project's entries replaced by its fingerprinted files;
 the rest is checked out as context, the sub-project's files are copied byte for byte, and the
 agent works in the sub-project's folder inside the worktree. Changes are listed relative to
