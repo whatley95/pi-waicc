@@ -133,6 +133,11 @@ instead of relaying a questionnaire.
    `needs_changes` before editing, fixes ALL findings, completes checks and requests
    ONE fresh whole-change review. Repeat until no actionable findings remain—not
    one handoff per fix. Real blockers and the explicit round limit still stop the loop.
+   Each review after the first is a *follow-up*: the first one already covered the whole
+   change, so the reviewer checks every earlier fix, reviews in full the files changed since
+   the last review, and elsewhere reports only high or critical problems. This keeps the loop
+   from finding new small issues in unchanged code every round. Ask the main agent for a
+   *full review* when you want the whole change reviewed again.
 8. **Close explicitly.** A passing whole-change assessment shows `READY_TO_CLOSE`
    and `contractReview: PASS`. Run `/waicc-close <reason>` only when you decide the
    contract discussion is finished. This does not certify code delivery.

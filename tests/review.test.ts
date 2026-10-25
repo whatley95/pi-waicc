@@ -191,6 +191,35 @@ test("every code-review cycle retains ALL older findings beyond three conversati
   assert.equal((status(root, s.id) as any).codeReviewFindings.length, 4);
 });
 
+test("a later code review is a follow-up: it starts from what changed since the last review, unless a full one is asked for", (t) => {
+  const { root, s: initial } = acceptedPlan(t);
+  writeFileSync(join(root, "API.txt"), "implemented API");
+  writeFileSync(join(root, "CLIENT.txt"), "implemented client");
+  let s = review(root, initial);
+  const first = s.rounds.at(-1)!;
+  assert.equal(first.review?.kind === "code" && first.review.followUp, undefined, "the first review covers the whole change");
+  const handoff = (round: typeof first) => artifact(root, s, `${roundDirectory(round)}/HANDOFF.md`);
+  assert.match(handoff(first), /Review the entire implementation and all prior fixes/);
+  s = decide(root, reply(root, s, { outcome: "needs_changes", findings: [{ id: "F1", severity: "medium", description: "API misses a check", evidence: "API.txt" }] }), "needs_changes");
+
+  // The fix touches one file: the next review is told exactly that.
+  writeFileSync(join(root, "API.txt"), "implemented API with the check");
+  const report = completion();
+  report.findings = [{ requestId: first.id, findingId: "F1", disposition: "resolved", evidence: "API.txt now checks; regression added" }];
+  s = review(root, s, report);
+  const second = s.rounds.at(-1)!;
+  assert.deepEqual(second.review?.kind === "code" && second.review.followUp, { previousRequestId: first.id, cycle: 2, changedSinceReview: ["API.txt"] });
+  assert.match(handoff(second), new RegExp(`FOLLOW-UP code review cycle 2: review ${first.id} already covered the whole change[\\s\\S]*followUp\\.changedSinceReview \\(1 path\\)[\\s\\S]*report only critical or high findings`));
+  assert.deepEqual(JSON.parse(artifact(root, s, `${roundDirectory(second)}/code-review.json`)).followUp.changedSinceReview, ["API.txt"]);
+
+  // Asked for a full review: the whole change again, as the first time.
+  cancel(root, s.id, "The human wants a full review");
+  s = issue(root, s.id, "review", "Full review", undefined, undefined, { kind: "code", completion: report, full: true });
+  const full = s.rounds.at(-1)!;
+  assert.equal(full.review?.kind === "code" && full.review.followUp, undefined);
+  assert.match(handoff(full), /Review the entire implementation and all prior fixes/);
+});
+
 test("standalone code review captures its scope atomically and records unavailable checks honestly", (t) => {
   const { root, id } = fixture(t), original = loadSession(root, id);
   assert.throws(() => prepare(root, id, scope, "review", "No completion evidence", 0, { kind: "code" }), /completion report/);

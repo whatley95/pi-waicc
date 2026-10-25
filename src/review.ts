@@ -24,6 +24,8 @@ function supported(value: Record<string, unknown>, fields: string[]): void {
 export interface ReviewRequest {
   kind: "code" | "contract";
   completion?: unknown;
+  /** A code review of the whole change again, as on the first review, when the human asks for one. */
+  full?: boolean;
 }
 
 export function reviewContext(
