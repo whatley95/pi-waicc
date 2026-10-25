@@ -1838,7 +1838,8 @@ from before this normalization may need a fresh request after upgrading. Common
 untracked build/dependency directories and WAICC output are excluded; tracked source
 is retained even under a build-named directory. Symlinks/junctions fail closed rather
 than expanding scope.
-Limits: 10,000 files read one by one (a Git project above that uses Git's blob IDs, up to
+Limits: 10,000 files read one by one, though an unchanged file is not read again within the
+same Pi session (a Git project above that uses Git's blob IDs, up to
 100,000 files), 128 MB of source content read (for such a Git project, of changed and untracked
 files only), 128,000-character contracts and 256 KB replies. Per-subtree fingerprint
 configuration and cross-repository scheduling are future work. There is no automatic
