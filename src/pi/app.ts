@@ -309,7 +309,8 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     // Resolves to the error the human was shown, or null: waicc_suggest_command reports it.
     const run = async (args: string, ctx: ExtensionCommandContext): Promise<string | null> => {
         // A line above the input box while the command runs, so a slow one does not look hung.
-        const busy = ctx.hasUI && ctx.mode === "tui";
+        // RPC clients can show widgets too; print mode has no UI.
+        const busy = ctx.hasUI;
         const mark = (lines: string[] | undefined) => {
           try { ctx.ui.setWidget("waicc-busy", lines); } catch { /* only a hint; the command runs without it */ }
         };
