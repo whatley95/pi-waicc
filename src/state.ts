@@ -51,6 +51,23 @@ export function roundUsage(s: Session) {
       return [phase, { used, limit, remaining: limit === null ? null : Math.max(0, limit - used) }];
     })) };
 }
+/**
+ * A plain warning once the latest round's phase, or the whole session, has 2 rounds or fewer
+ * left, so the human can decide before the agent is stopped by the limit.
+ */
+export function budgetWarning(s: Session): string | null {
+  const usage = roundUsage(s), last = s.rounds.at(-1);
+  const phase = last ? last.phase ?? roundPhase(last.mode, last.review?.kind) : null;
+  const budget = phase ? usage.phases[phase] : null;
+  const left = (n: number) => `${n} round${n === 1 ? "" : "s"} left`;
+  const parts = [
+    ...(phase && budget && budget.remaining !== null && budget.remaining <= 2
+      ? [`${left(budget.remaining)} in ${phase} (${budget.used} of ${budget.limit} used); /waicc-limit ${phase} <limit> changes it`] : []),
+    ...(usage.overall.remaining <= 2
+      ? [`${left(usage.overall.remaining)} in the session (${usage.overall.used} of ${usage.overall.limit} used); /waicc-limit <limit> changes it`] : []),
+  ];
+  return parts.length ? `Round budget: ${parts.join("; ")}.` : null;
+}
 /** Real findings the main agent knowingly left unfixed, with its reason, so the human sees them before closing. */
 export const acceptedFindings = (s: Session) => s.rounds.flatMap((r) => (r.dispositions ?? [])
   .filter((d) => d.disposition === "accepted")
