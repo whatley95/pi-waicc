@@ -5,7 +5,7 @@ import { artifact, json, listSessions, listDeletedSessions, loadSession, safePat
 import { contractMarkdown, conversation, handoff, manualHandoff, replyTemplate, roundDirectory, starterPrompt, versionDirectory } from "../render.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit, checkpointData } from "../checkpoint.ts";
-import { acceptedFindings, acceptedPlanCurrent,authorizationState, defaultRoundLimits, decisionSummary, progressState, requirementsText, reviewKindLabel, reviewState, roundPhase, roundUsage, sessionPhase } from "../state.ts";
+import { acceptedFindings, acceptedPlanCurrent, authorizationState, budgetWarning, defaultRoundLimits, decisionSummary, progressState, requirementsText, reviewKindLabel, reviewState, roundPhase, roundUsage, sessionPhase } from "../state.ts";
 import { ensure } from "../validation.ts";
 import type { Session, RoundPhase } from "../types.ts";
 import { requireOpen, approvalIsCurrent, contract, skillFiles } from "./shared.ts";
@@ -107,6 +107,8 @@ export function status(
     openGates: gates?.openGates ?? 0,
     progress: progressState(root, s, currentContract, currentSource),
     roundBudget: roundUsage(s),
+    // Two rounds or fewer left: tell the human, who decides whether to raise the limit.
+    budgetWarning: budgetWarning(s),
     decisionBriefPath: s.artifacts[`${versionDirectory(s.contractVersion)}/DECISIONS.md`]
       ? join(root, sessionRelative(s.id), versionDirectory(s.contractVersion), "DECISIONS.md") : null,
     // What the human can do next with a waiting handoff, as a short table; ahead of the large previews.
