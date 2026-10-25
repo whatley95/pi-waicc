@@ -458,7 +458,9 @@ New Pi/CLI sessions start planning-only with an overall 20-round cap and phase c
 (specification 8, implementation 6, testing 4, code_review 8, advisor 4). Both limits
 apply. `/waicc-limit code_review 10` changes that phase explicitly; `/waicc-limit 20`
 changes only the overall limit. Existing caps are retained; transitions/answers
-never reset usage or silently raise limits. The low-level API retains legacy behavior
+never reset usage or silently raise limits. When a new handoff leaves 2 rounds or fewer in
+its phase or the session, Pi warns you, and the main agent offers the `/waicc-limit` command
+in the picker, so you decide before the limit stops it. The low-level API retains legacy behavior
 when objective is omitted for backward compatibility; new integrations should pass it.
 
 The grant does not create OS isolation, production authority or shell permissions.
