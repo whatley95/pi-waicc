@@ -515,9 +515,17 @@ references remain recoverable. Full history and test logs stay on disk, not in e
 
 Pi still owns chat compaction and its normal automatic threshold. WAICC validates
 recovery evidence before Pi compacts and supplies a compact checkpoint on the next
-model request (including mid-run overflow retries), or after session reload. It does not install a second threshold,
+model request (including mid-run overflow retries), or after session reload. It does not
 delete history, create another handoff, change ownership or automatically approve work.
 Corrupt recovery evidence cancels compaction with an error instead of hiding it.
+
+Pi's own threshold is near the model's full context window, so with a large-context model
+the main agent's chat can grow very large first, and every turn re-sends all of it. WAICC
+therefore also compacts the main agent's chat **right after a turn in which it assessed a
+round**, once the chat is over 150,000 tokens. That's a natural break, and the session's state is on
+disk, not in the chat. It never compacts while a dispatched agent or an automatic loop is
+running for the session, and it tells you when it does. Set `"autoCompactTokens"` in your
+user agent config to change the size, or `0` to turn it off.
 
 For an immediate manual compaction in the selected chat:
 
@@ -1181,7 +1189,10 @@ Safety rules:
 - **`"policies"`** and **`"autoDecide": "low-risk"`** (user file only) answer routine
   decisions for you; see [Fewer decisions to answer](#fewer-decisions-to-answer-standing-policies-and-low-risk-auto-accept).
 - **`"autoContinue": true`** (user file only) runs the continue step after every dispatch
-  that returns a valid reply; a project file that sets it is rejected.
+  that returns a valid reply, and takes in replies to handoffs you gave out by hand; a
+  project file that sets it is rejected.
+- **`"autoCompactTokens": 150000`** (user file only; the default) compacts the main agent's
+  chat after it assesses a round, once its context is over that many tokens; `0` turns it off.
 - **`"budget": { "perSessionUsd": 5 }`** (user file only) stops automatic runs once a
   session's agents have reported that much: a `--loop` does not start its next cycle and
   `--auto` does not start its review. You can always dispatch the next step yourself. Only

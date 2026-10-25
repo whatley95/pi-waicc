@@ -31,6 +31,8 @@ type Source = "user" | "project";
 export interface AgentConfig {
   /** User file only: run the continue step after every dispatch that returns a valid reply. */
   autoContinue: boolean;
+  /** User file only: compact the main agent's chat after it assesses a round, once its context passes this many tokens; 0 is off. */
+  autoCompactTokens: number;
   /** User file only: your rules, given in advance, that may answer human-owned decisions. */
   policies: string[];
   /** User file only: accept recommendations for low-risk, reversible, non-sensitive decisions. */
@@ -111,7 +113,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"].includes(key)), at('only "profiles", "roles", "autoContinue", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "autoCompactTokens", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"].includes(key)), at('only "profiles", "roles", "autoContinue", "autoCompactTokens", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed'));
   // Settings that let WAICC act for you, reach you outside Pi, loosen what checks may touch or hold your tokens are yours alone: a repository must not set them.
   for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
@@ -192,6 +194,13 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
     ensure(typeof config.autoContinue === "boolean", at('"autoContinue" must be true or false'));
     into.autoContinue = config.autoContinue;
   }
+  if (config.autoCompactTokens !== undefined) {
+    // How large your own chats may grow is yours to set.
+    ensure(source === "user", at('"autoCompactTokens" is allowed only in your user file'));
+    ensure(Number.isSafeInteger(config.autoCompactTokens) && (config.autoCompactTokens as number) >= 0 && (config.autoCompactTokens as number) <= 10_000_000,
+      at('"autoCompactTokens" must be a whole number of tokens from 0 (off) to 10,000,000'));
+    into.autoCompactTokens = config.autoCompactTokens as number;
+  }
   for (const [key, value] of Object.entries(record(config.profiles ?? {}, at("profiles")))) {
     ensure(name.test(key), at(`profile name ${JSON.stringify(key)} uses characters other than letters, digits, - and _`));
     const profile = record(value, at(`profile ${key}`));
@@ -225,7 +234,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, policies: [], autoDecide: "off", memory: { autoApprove: false }, autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, autoCompactTokens: 150_000, policies: [], autoDecide: "off", memory: { autoApprove: false }, autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))

@@ -109,6 +109,12 @@ instructions to preserve chat-only constraints/decisions/rationale, unfinished w
 actual checks/limits and next action. Pi completion/failure callbacks distinguish a
 request from successful compaction. No new model turn, handoff, approval or closure
 is triggered. Optional notes append to owner context only when no handoff is pending.
+Automatic compaction uses the same instructions: on `agent_start` a coordinator chat records
+its session's ASSESSED round count; on `agent_end`, if that count grew, `ctx.hasUI`,
+`ctx.compact` exists and `ctx.getContextUsage().tokens` is at least the user file's
+`autoCompactTokens` (default 150,000; 0 is off; a project file setting it is rejected), it
+waits up to 10 s for the chat to be idle, skips it if the binding changed or the session has a
+running dispatch or loop, refreshes the checkpoint, notifies and calls `ctx.compact`.
 Human cancel/force-close cannot be obstructed by damaged contract/observed-source
 artifacts needed only for checkpoint generation. Their checkpoint records projection
 errors, preserves the damaged originals and refuses recovery/compaction until the
