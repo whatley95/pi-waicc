@@ -163,6 +163,12 @@ export interface Round {
         base: SourceSnapshot;
         changedPaths: string[];
         completion: WorkCompletion;
+        /**
+         * A later code review after an assessed one: the earlier review covered the whole change,
+         * so this one verifies its fixes, reviews what changed since in full, and elsewhere reports
+         * only high/critical problems. Absent on the first review and on a requested full review.
+         */
+        followUp?: { previousRequestId: string; cycle: number; changedSinceReview: string[] };
         /** A review of an existing change: its range, and the patch and commits beside the handoff. */
         revision?: RevisionReview & {
           changedPaths: string[]; truncated: boolean; patchBytes: number; checkout: string | null;

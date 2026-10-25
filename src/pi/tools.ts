@@ -181,6 +181,7 @@ export function registerTools(app: App): void {
       focus: Type.String(),
       contract: Type.Unknown(),
       reviewKind: Type.Optional(Type.Union([Type.Literal("code"), Type.Literal("contract")])),
+      fullReview: Type.Optional(Type.Boolean({ description: "Code review only: review the whole change again instead of a follow-up review. Set it ONLY when the human asks for a full review." })),
       completion: Type.Optional(Type.Unknown({ description: "Whole-work report: {summary,tasks:[{taskId,evidence}],checks:[{description,outcome:passed|not_run,evidence}],findings:[{requestId,findingId,disposition:resolved|disputed,evidence}]}. ALL tasks and prior actionable code findings exactly once; first review findings: []." })),
     }),
     async execute(_id, params, signal, _update, ctx) {
@@ -188,6 +189,7 @@ export function registerTools(app: App): void {
       coordinator(ctx);
       signal?.throwIfAborted();
       ensure(params.mode === "review" || (params.reviewKind === undefined && params.completion === undefined), "Review kind/completion only apply to review mode");
+      ensure(!params.fullReview || (params.mode === "review" && (params.reviewKind ?? "code") === "code"), "fullReview applies only to a code review");
       prepare(
         ctx.cwd,
         params.sessionId,
@@ -195,7 +197,7 @@ export function registerTools(app: App): void {
         params.mode,
         params.focus,
         params.expectedVersion,
-        params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion } : undefined,
+        params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
       );
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },
@@ -311,6 +313,7 @@ export function registerTools(app: App): void {
       taskId: Type.Optional(Type.String()),
       requirementIds: Type.Optional(Type.Array(Type.String())),
       reviewKind: Type.Optional(Type.Union([Type.Literal("code"), Type.Literal("contract")])),
+      fullReview: Type.Optional(Type.Boolean({ description: "Code review only: review the whole change again instead of a follow-up review. Set it ONLY when the human asks for a full review." })),
       completion: Type.Optional(Type.Unknown({ description: "{summary,tasks:[{taskId,evidence}],checks:[{description,outcome:passed|not_run,evidence}],findings:[{requestId,findingId,disposition:resolved|disputed,evidence}]}; every task and previous actionable code-review finding exactly once." })),
     }),
     async execute(_id, params, signal, _update, ctx) {
@@ -318,6 +321,7 @@ export function registerTools(app: App): void {
       coordinator(ctx);
       signal?.throwIfAborted();
       ensure(params.mode === "review" || (params.reviewKind === undefined && params.completion === undefined), "Review kind/completion only apply to review mode");
+      ensure(!params.fullReview || (params.mode === "review" && (params.reviewKind ?? "code") === "code"), "fullReview applies only to a code review");
       issue(
         ctx.cwd,
         params.sessionId,
@@ -325,7 +329,7 @@ export function registerTools(app: App): void {
         params.focus,
         params.taskId,
         params.requirementIds,
-        params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion } : undefined,
+        params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
       );
       return result(status(ctx.cwd, params.sessionId), ctx, true);
     },

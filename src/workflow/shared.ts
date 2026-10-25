@@ -206,6 +206,20 @@ export function nextRound(
         taskId,
       )
     : undefined;
+  // After an assessed code review, the next one starts from what changed since it.
+  const previous = reviewData?.kind === "code" && review?.kind === "code" && !review.full
+    ? s.rounds.findLast((round) => round.review?.kind === "code" && round.status === "ASSESSED")
+    : undefined;
+  if (previous && reviewData?.kind === "code")
+    reviewData = {
+      ...reviewData,
+      followUp: {
+        previousRequestId: previous.id,
+        cycle: s.rounds.filter((round) => round.review?.kind === "code" && round.status === "ASSESSED").length + 1,
+        changedSinceReview: [...new Set([...Object.keys(previous.source.files), ...Object.keys(source.files)])]
+          .filter((path) => previous.source.files[path] !== source.files[path]).sort(),
+      },
+    };
   // A review of an existing change carries that change, and any fixes made since, every round.
   const revision = reviewData?.kind === "code" && s.revisionReview ? revisionChanges(s.projectRoot, s.revisionReview) : undefined;
   if (revision && reviewData?.kind === "code")

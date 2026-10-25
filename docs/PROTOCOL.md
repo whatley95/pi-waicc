@@ -1008,7 +1008,15 @@ so a failed or not-run result cannot be hidden by conflicting completion metadat
 
 `/waicc-review` prompts the main agent to finish ALL authorized planned work/fixes
 and checks before issuing ONE whole-change review. It never issues a per-task or
-batch code review. `/waicc-review --contract` explicitly retains specification-only
+batch code review. When the session already has an ASSESSED code-review round, a new code
+review gets `review.followUp = {previousRequestId, cycle, changedSinceReview}`: the latest
+assessed code review, the count of assessed code reviews plus one, and the paths whose
+fingerprint entry differs between that round's source and now. Its handoff and reviewer
+instructions say to verify every earlier fix or dispute, review `changedSinceReview` in full
+with affected call paths and tests, and elsewhere report only critical/high findings (medium
+or low concerns in unchanged code go in the summary as optional). `fullReview: true` on
+`waicc_prepare`/`waicc_request` (code review only; the human must ask for it) omits
+`followUp`. Assessment rules are unchanged. `/waicc-review --contract` explicitly retains specification-only
 review. New Pi `waicc_prepare`/`waicc_request` mode review defaults to reviewKind code;
 reviewKind contract is explicit. Old on-disk rounds without review metadata remain
 contract-only; they are not upgraded to code approval.

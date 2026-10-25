@@ -175,8 +175,11 @@ history and report missing evidence honestly. Return one consolidated reply.
 
 On code-review failure, assess needs_changes/blocked BEFORE editing application
 code. Do not use followup to dispatch an immediate re-review. The main agent fixes
-ALL findings (itself or through the selected whole-work implementer), finishes checks and submits one fresh completion report for ONE full
-review. Evidence-backed false positives may be disputed. Repeat until no actionable
+ALL findings (itself or through the selected whole-work implementer), finishes checks and submits one fresh completion report for ONE
+review. After the first, that review is a follow-up (code-review.json `followUp`): earlier
+fixes, files changed since the last review, and only high/critical elsewhere. Pass
+`fullReview: true` only when the human asks for a full review. Evidence-backed false
+positives may be disputed. Repeat until no actionable
 findings remain, respecting genuine blockers and the human-controlled round limit.
 Do not modify source while review waits or awaits assessment; assess/cancel first.
 
