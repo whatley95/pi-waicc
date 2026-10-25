@@ -16,6 +16,9 @@ or silently given larger budgets. Round.phase is persisted for new rounds; old p
 usage is classified from its explicit mode/kind, with legacy reviews specification-only.
 Both overall and phase caps apply. Human /waicc-limit [phase] <2-20> updates only the
 selected cap; transition/decision commands never create a round or reset usage.
+Status `budgetWarning` is a string when the latest round's phase or the overall cap has
+2 rounds or fewer remaining (naming the `/waicc-limit` command), otherwise null. Pi's
+`waicc_prepare` and `waicc_request` also show it to the human as a warning notice.
 
 Plan acceptance, specification approval and implementation authorization are distinct.
 New objective-aware specification review ready -> SPEC_APPROVED, while code review

@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { assertRecipientCurrent, submitRecipientReply, validateRecipientReply } from "../recipient.ts";
 import { json, loadSession } from "../files.ts";
 import { join } from "node:path";
@@ -23,6 +23,12 @@ import type { App } from "./app.ts";
 export function registerTools(app: App): void {
   const { pi, services, bindings, commands, automaticRequests, registerTool, advising, stepLine, key, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
   const consulting = new Set<string>();
+  // A new handoff that leaves 2 rounds or fewer is told to the human at once, not only to the agent.
+  const budgetNotice = (ctx: ExtensionContext, view: unknown) => {
+    const warning = (view as { budgetWarning?: string | null }).budgetWarning;
+    if (warning && ctx.hasUI) ctx.ui.notify(warning, "warning");
+    return view;
+  };
   registerTool({
     name: "waicc_ask_advisor",
     label: "Ask the advisor for a second opinion",
@@ -199,7 +205,7 @@ export function registerTools(app: App): void {
         params.expectedVersion,
         params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
       );
-      return result(status(ctx.cwd, params.sessionId), ctx, true);
+      return result(budgetNotice(ctx, status(ctx.cwd, params.sessionId)), ctx, true);
     },
   });
   registerTool({
@@ -331,7 +337,7 @@ export function registerTools(app: App): void {
         params.requirementIds,
         params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
       );
-      return result(status(ctx.cwd, params.sessionId), ctx, true);
+      return result(budgetNotice(ctx, status(ctx.cwd, params.sessionId)), ctx, true);
     },
   });
   registerTool({
