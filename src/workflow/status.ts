@@ -20,21 +20,28 @@ export type SessionListFilter = "open" | "all" | "closed" | "deleted";
  * prompt itself is not repeated here: the chat stays short.
  */
 function nextSteps(root: string, s: Session, r: Session["rounds"][number]) {
-  let headless = "/waicc-dispatch", detail: string;
+  let headless = "/waicc-dispatch", detail: string, continues = false, agent = "";
   try {
     const picked = resolveDispatch(root, s.id, "");
-    const agent = `${picked.options.via}${picked.options.model ? ` ${picked.options.model}` : ""}`;
+    agent = `${picked.options.via}${picked.options.model ? ` ${picked.options.model}` : ""}`;
     if (r.mode === "implementation") headless = "/waicc-dispatch --implement";
     if (r.mode === "testing" && !picked.options.checks?.length) headless = '/waicc-dispatch --check "<test command>"';
-    detail = `${picked.profile ? `your ${picked.profile} profile (${agent})` : agent}; name another profile to change it`;
+    // Picked from a list, the command should finish the step: the reply goes to the main agent by itself.
+    continues = Boolean(picked.options.continue);
+    if (!continues) headless += " --continue";
+    detail = `${picked.profile ? `your ${picked.profile} profile (${agent})` : agent}; the main agent assesses its reply as soon as it arrives`;
   } catch {
-    headless = "/waicc-dispatch --via <claude|codex|pi|agy>";
+    headless = "/waicc-dispatch --via <claude|codex|pi|agy> --continue";
     detail = "no agent is set for this role yet; /waicc-dispatch --profiles shows your profiles";
   }
+  // A code review the main agent may fix: one command runs review → fix → re-review until it passes.
+  const loop = r.mode === "review" && r.review?.kind === "code" && agent && (s.implementationOwner ?? "main") === "main" &&
+    authorizationState(s, contract(root, s).contract).authorized;
   return [
-    { step: "Send it to an agent, headless", command: headless, detail },
+    ...(loop ? [{ step: "Review, fix and re-review until it passes, headless", command: "/waicc-dispatch --loop", detail: `${agent}; at most 3 cycles, stops on a pass, a blocker or a decision; never closes` }] : []),
+    { step: loop ? "Or one review only, headless" : "Send it to an agent, headless", command: headless, detail },
     { step: "Or give it to an agent yourself", command: "/waicc-handoff", detail: "shows the prompt to paste, and copies it" },
-    { step: "When its reply is in", command: "/waicc-continue", detail: "checks and assesses the reply" },
+    { step: "Only if nothing continued by itself", command: "/waicc-continue", detail: continues ? "checks and assesses the reply" : "checks and assesses the reply; a headless run with --continue does this for you" },
   ];
 }
 
