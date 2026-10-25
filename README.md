@@ -826,7 +826,12 @@ starts assessing it. If the main agent is busy, the assessment waits for its cur
 It only saves you the command: accepting a plan still leaves coding to your
 `/waicc-develop`, and nothing is ever closed for you. To make it your default, set
 `"autoContinue": true` in your user agent config (see [Agent profiles](#agent-profiles-choose-an-agent-per-role-once));
-`--no-continue` turns it off for one run. A project's config cannot turn it on. The CLI's
+`--no-continue` turns it off for one run. A project's config cannot turn it on. With
+`autoContinue` on, a handoff you gave out by hand is covered too: once the other agent's
+`reply.json` has stopped changing for 3 seconds and the main agent is idle, WAICC tells you and
+runs the same step, so you never type `/waicc-continue`. Without it, the commands the main agent
+offers you after a handoff already include `--continue`, and for a code review it may fix, the
+review loop (`--loop`) comes first. The CLI's
 `--continue` validates the reply into `AWAITING_ASSESSMENT`, since there is no main agent.
 
 **Review until it passes: `--loop`.** For a waiting code review, `/waicc-dispatch sol --loop`
