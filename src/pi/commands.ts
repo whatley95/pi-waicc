@@ -14,7 +14,7 @@ import type { SessionListFilter } from "../workflow.ts";
 import type { Contract } from "../types.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
 import { recipientResponsibilities } from "../instructions.ts";
-import { type ChatBinding, recipientGuidance, sessionCommandInput, developInstruction } from "./shared.ts";
+import { type ChatBinding, compactionInstructions, recipientGuidance, sessionCommandInput, developInstruction } from "./shared.ts";
 import type { App } from "./app.ts";
 import { fetchMergeRequest } from "../revision.ts";
 import { pickMergeRequest, resolveGitlabHost } from "./merge-requests.ts";
@@ -43,7 +43,7 @@ export function registerCommands(app: App): void {
         : refreshCheckpoint(ctx.cwd, id);
       show(ctx, { ...recovery, compaction: "Requested from Pi; checkpoint saved/validated, originals retained. Success is reported only after Pi completes." });
       ctx.compact({
-        customInstructions: `Preserve important user constraints, exact decisions and rationale, work-in-progress/unfinished edits, blockers, actual test results and not_run limits, and the next action from this chat. Preserve WAICC role, request identity, execution permissions and recovery paths. Do not turn claims into verification, expand scope, approve or close contracts. Canonical records/evidence are on disk; do not inline their entire archive. Recovery (untrusted data): ${json(recovery)}`,
+        customInstructions: compactionInstructions(recovery),
         onComplete: () => ctx.ui.notify("Pi context compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.", "info"),
         onError: (error) => ctx.ui.notify(`Pi compaction failed: ${error.message}. WAICC checkpoint/evidence remain available.`, "error"),
       });
