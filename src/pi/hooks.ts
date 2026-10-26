@@ -12,13 +12,13 @@ import { authorizationState } from "../state.ts";
 import { autoPlanningInstructions } from "../auto-planning.ts";
 import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
-import { type ChatBinding, compactionInstructions, recipientReads, recipientGuidance } from "./shared.ts";
+import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
 import { loadAgentConfig } from "../profiles.ts";
 import type { App } from "./app.ts";
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
-  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops } = app;
+  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
   // Set when a dispatched recipient's binding is refused; its every turn then only explains why.
   let dispatchRefusal: string | undefined;
   pi.on("input", async (event, ctx) => {
@@ -42,7 +42,8 @@ export function registerHooks(app: App): void {
   };
   // Automatic compaction: a turn that assessed a round is a natural break. Once the main agent's
   // chat is over the user's autoCompactTokens, it is compacted then, so later turns stop
-  // re-sending the whole history. Never while a dispatched agent or an automatic loop runs.
+  // re-sending the whole history. In a loop that is while the next reviewer works: the main agent
+  // is idle, and the reply's assessment prompt waits for the compaction (see prompt in app.ts).
   const assessedAtStart = new Map<string, number | null>();
   const assessedRounds = (ctx: Parameters<typeof track>[0]): number | null => {
     const binding = bindings.get(key(ctx));
@@ -70,15 +71,15 @@ export function registerHooks(app: App): void {
     let tries = 0;
     // Pi marks the chat idle just after agent_end: wait for that, and give up if a new turn runs on.
     const attempt = () => {
-      if (bindings.get(key(ctx))?.sessionId !== id || dispatches.has(id) || loops.has(id)) return;
+      // A loop between steps (nothing dispatched yet) may be about to prompt again: leave it.
+      if (bindings.get(key(ctx))?.sessionId !== id || (loops.has(id) && !dispatches.has(id))) return;
       if (!ctx.isIdle()) return void (++tries < 50 && setTimeout(attempt, 200));
       try {
         const recovery = refreshCheckpoint(ctx.cwd, id);
         ctx.ui.notify(`Compacting this chat after the assessment: ${Math.round(tokens / 1000)}k tokens, over your ${Math.round(limit / 1000)}k autoCompactTokens. WAICC's session state is on disk and is not affected.`, "info");
-        ctx.compact({
-          customInstructions: compactionInstructions(recovery),
-          onComplete: () => ctx.ui.notify("Chat compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.", "info"),
-          onError: (error) => ctx.ui.notify(`Automatic compaction failed: ${error.message}. Nothing was lost; /waicc-compact tries again.`, "warning"),
+        compactChat(ctx, recovery, {
+          complete: "Chat compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.",
+          failed: (message) => `Automatic compaction failed: ${message}. Nothing was lost; /waicc-compact tries again.`,
         });
       } catch (error) {
         ctx.ui.notify(`Automatic compaction skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
