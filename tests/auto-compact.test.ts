@@ -36,19 +36,20 @@ async function setup(t: TestContext, user: object, tokens: number) {
   });
   const received = ingest(root, s.id);
   const commands = new Map<string, any>(), handlers = new Map<string, ((event: unknown, ctx: unknown) => Promise<unknown>)[]>();
-  const compactions: { customInstructions?: string }[] = [], notices: string[] = [], entries: unknown[] = [];
+  const compactions: { customInstructions?: string; onComplete?: () => void; onError?: (error: Error) => void }[] = [];
+  const notices: string[] = [], entries: unknown[] = [], prompts: string[] = [];
   waicc({
     registerCommand: (name: string, command: any) => commands.set(name, command), registerTool() {},
     on: (event: string, handler: any) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
     appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
-    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage: (content: string) => prompts.push(content),
   } as unknown as ExtensionAPI);
   const ctx = {
     cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true, model: undefined,
     sessionManager: { getSessionId: () => "coordinator-chat", getBranch: () => entries, getEntries: () => entries },
     ui: { notify: (m: string) => notices.push(m), setStatus() {}, setWidget() {} },
     getContextUsage: () => ({ tokens, contextWindow: 1_000_000, percent: tokens / 10_000 }),
-    compact: (options: { customInstructions?: string }) => compactions.push(options),
+    compact: (options: { customInstructions?: string; onComplete?: () => void }) => compactions.push(options),
   };
   await commands.get("waicc-use").handler(s.id, ctx);
   t.after(async () => {
@@ -65,7 +66,7 @@ async function setup(t: TestContext, user: object, tokens: number) {
     await emit("agent_end");
     await new Promise((resolve) => setTimeout(resolve, 50));
   };
-  return { compactions, notices, turn };
+  return { compactions, notices, prompts, turn, commands, ctx };
 }
 
 test("a large chat is compacted after the main agent assesses a round, keeping WAICC's recovery", async (t) => {
@@ -76,6 +77,24 @@ test("a large chat is compacted after the main agent assesses a round, keeping W
   assert.equal(compactions.length, 1);
   assert.match(compactions[0].customInstructions!, /Preserve WAICC role, request identity[\s\S]*Recovery \(untrusted data\)/);
   assert.ok(notices.some((n) => n.startsWith("Compacting this chat after the assessment: 200k tokens, over your 150k autoCompactTokens.")));
+});
+
+test("a reply that arrives while the chat compacts waits for it: Pi refuses prompts during compaction", async (t) => {
+  const { compactions, prompts, commands, ctx } = await setup(t, {}, 100_000);
+  await commands.get("waicc-compact").handler("", ctx);
+  assert.equal(compactions.length, 1);
+  // The continue step asks the main agent to assess, as a loop does when its reviewer replies.
+  const continuing = commands.get("waicc-continue").handler("", ctx);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(prompts.length, 0, "held while Pi compacts");
+  compactions[0].onComplete!();
+  await continuing;
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /Assess the reply BEFORE application edits/);
+  // A failed compaction releases it too.
+  await commands.get("waicc-compact").handler("", ctx);
+  compactions[1].onError!(new Error("model unavailable"));
+  await commands.get("waicc-continue").handler("", ctx);
 });
 
 test("a small chat, or autoCompactTokens 0, is left alone", async (t) => {
