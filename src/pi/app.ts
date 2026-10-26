@@ -19,7 +19,7 @@ import { resolveDecision, readContract, requirementsText, status } from "../work
 import { decodeJsonArguments, ensure } from "../validation.ts";
 import type { ContractDecision } from "../types.ts";
 import { AutoPlanningRequests } from "../auto-planning.ts";
-import { type ChatBinding, recipientReads, guidance } from "./shared.ts";
+import { type ChatBinding, compactionInstructions, recipientReads, guidance } from "./shared.ts";
 import type { Runs } from "./runs.ts";
 
 export interface Services {
@@ -398,11 +398,32 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     }
     return accepted;
   }
+  /** By chat: a compaction WAICC asked Pi for, settled when Pi reports it done or failed. */
+  const compactions = new Map<string, Promise<void>>();
+  /** Ask Pi to compact this chat with WAICC's recovery kept; WAICC's own prompts wait for it. */
+  function compactChat(ctx: ExtensionContext, recovery: unknown, done: { complete: string; failed: (message: string) => string }): void {
+    const chat = key(ctx);
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => (settle = resolve));
+    compactions.set(chat, settled);
+    const finish = (message: string, level: "info" | "warning" | "error") => {
+      if (compactions.get(chat) === settled) compactions.delete(chat);
+      settle();
+      ctx.ui.notify(message, level);
+    };
+    ctx.compact({
+      customInstructions: compactionInstructions(recovery),
+      onComplete: () => finish(done.complete, "info"),
+      onError: (error) => finish(done.failed(error.message), "error"),
+    });
+  }
   async function prompt(
     ctx: ExtensionCommandContext,
     instruction: string,
     focus = "",
   ): Promise<void> {
+    // Pi refuses a prompt while it compacts: a reply that arrives meanwhile waits its turn.
+    await compactions.get(key(ctx));
     const id = selected(ctx);
     // Recall by the user's own words, not this fixed instruction text.
     const saved = loadSession(projectRoot(ctx.cwd), id);
@@ -413,7 +434,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, commands, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt };
+  return { pi, services, bindings, copied, commands, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;
