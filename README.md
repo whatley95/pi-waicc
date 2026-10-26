@@ -523,8 +523,9 @@ Pi's own threshold is near the model's full context window, so with a large-cont
 the main agent's chat can grow very large first, and every turn re-sends all of it. WAICC
 therefore also compacts the main agent's chat **right after a turn in which it assessed a
 round**, once the chat is over 150,000 tokens. That's a natural break, and the session's state is on
-disk, not in the chat. It never compacts while a dispatched agent or an automatic loop is
-running for the session, and it tells you when it does. Set `"autoCompactTokens"` in your
+disk, not in the chat. In a `--loop` run that's while the next reviewer works, since the
+main agent is idle then; when the reviewer replies, its assessment waits until compaction is
+done. It tells you when it compacts. Set `"autoCompactTokens"` in your
 user agent config to change the size, or `0` to turn it off.
 
 For an immediate manual compaction in the selected chat:

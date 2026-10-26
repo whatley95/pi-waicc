@@ -14,7 +14,7 @@ import type { SessionListFilter } from "../workflow.ts";
 import type { Contract } from "../types.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
 import { recipientResponsibilities } from "../instructions.ts";
-import { type ChatBinding, compactionInstructions, recipientGuidance, sessionCommandInput, developInstruction } from "./shared.ts";
+import { type ChatBinding, recipientGuidance, sessionCommandInput, developInstruction } from "./shared.ts";
 import type { App } from "./app.ts";
 import { fetchMergeRequest } from "../revision.ts";
 import { pickMergeRequest, resolveGitlabHost } from "./merge-requests.ts";
@@ -22,7 +22,7 @@ import { canonicalProject, gitlabClient, gitlabProject, mergeRequestInfo } from 
 
 /** Contract commands: planning, development, decisions, review, continue, handoff and session management. */
 export function registerCommands(app: App): void {
-  const { pi, services, bindings, automaticRequests, key, trackerStatus, selected, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, command, autoResolve, prompt, continueSession } = app;
+  const { pi, services, bindings, automaticRequests, key, compactChat, trackerStatus, selected, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, command, autoResolve, prompt, continueSession } = app;
   command(
     "waicc-compact",
     "Checkpoint the selected assignment and ask Pi to compact chat; optional coordinator notes: [notes]",
@@ -42,10 +42,9 @@ export function registerCommands(app: App): void {
         ? (assertRecipientCurrent(ctx.cwd, binding.pin), frozenCheckpointView(projectRoot(ctx.cwd), loadSession(projectRoot(ctx.cwd), id), binding.pin.requestId))
         : refreshCheckpoint(ctx.cwd, id);
       show(ctx, { ...recovery, compaction: "Requested from Pi; checkpoint saved/validated, originals retained. Success is reported only after Pi completes." });
-      ctx.compact({
-        customInstructions: compactionInstructions(recovery),
-        onComplete: () => ctx.ui.notify("Pi context compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.", "info"),
-        onError: (error) => ctx.ui.notify(`Pi compaction failed: ${error.message}. WAICC checkpoint/evidence remain available.`, "error"),
+      compactChat(ctx, recovery, {
+        complete: "Pi context compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.",
+        failed: (message) => `Pi compaction failed: ${message}. WAICC checkpoint/evidence remain available.`,
       });
     },
   );

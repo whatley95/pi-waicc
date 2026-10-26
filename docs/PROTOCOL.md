@@ -113,8 +113,12 @@ Automatic compaction uses the same instructions: on `agent_start` a coordinator 
 its session's ASSESSED round count; on `agent_end`, if that count grew, `ctx.hasUI`,
 `ctx.compact` exists and `ctx.getContextUsage().tokens` is at least the user file's
 `autoCompactTokens` (default 150,000; 0 is off; a project file setting it is rejected), it
-waits up to 10 s for the chat to be idle, skips it if the binding changed or the session has a
-running dispatch or loop, refreshes the checkpoint, notifies and calls `ctx.compact`.
+waits up to 10 s for the chat to be idle, skips it if the binding changed or a loop is
+between steps (a loop with no running dispatch), refreshes the checkpoint, notifies and calls
+`ctx.compact`. A running dispatch (a loop's next reviewer) does not stop it. Pi refuses prompts
+while it compacts, so every compaction WAICC requests (this one and `/waicc-compact`) is
+recorded per chat until Pi reports it complete or failed, and WAICC's prompts to the main agent
+(the continue step, loops, commands) wait for it first.
 Human cancel/force-close cannot be obstructed by damaged contract/observed-source
 artifacts needed only for checkpoint generation. Their checkpoint records projection
 errors, preserves the damaged originals and refuses recovery/compaction until the
