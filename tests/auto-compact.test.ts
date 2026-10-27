@@ -7,7 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 import { loadAgentConfig } from "../src/profiles.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
-import { assess, createSession, ingest, prepare } from "../src/workflow.ts";
+import { assess, createSession, ingest, issue, prepare } from "../src/workflow.ts";
 import type { Contract } from "../src/types.ts";
 
 const contract: Contract = {
@@ -59,10 +59,11 @@ async function setup(t: TestContext, user: object, tokens: number) {
     rmSync(base, { recursive: true, force: true });
   });
   const emit = async (event: string) => { for (const handler of handlers.get(event) ?? []) await handler({ type: event }, ctx); };
-  // One main-agent turn; assessing a round in it when asked.
-  const turn = async (assesses: boolean) => {
+  // One main-agent turn; assessing a round, or sending out new work, in it when asked.
+  const turn = async (assesses: boolean, sends = false) => {
     await emit("agent_start");
     if (assesses) assess(root, s.id, { requestId: received.rounds.at(-1)!.id, decision: "planned", rationale: "Sound", dispositions: [] });
+    if (sends) issue(root, s.id, "advisor", "Is the menu placement right?", undefined, ["R1"]);
     await emit("agent_end");
     await new Promise((resolve) => setTimeout(resolve, 50));
   };
@@ -77,6 +78,18 @@ test("a large chat is compacted after the main agent assesses a round, keeping W
   assert.equal(compactions.length, 1);
   assert.match(compactions[0].customInstructions!, /Preserve WAICC role, request identity[\s\S]*Recovery \(untrusted data\)/);
   assert.ok(notices.some((n) => n.startsWith("Compacting this chat after the assessment: 200k tokens, over your 150k autoCompactTokens.")));
+});
+
+test("a turn that sends out new work compacts too, so its reply is read in a small chat", async (t) => {
+  const { compactions, notices, turn } = await setup(t, { autoCompactTokens: 300_000 }, 200_000);
+  await turn(true);
+  assert.equal(compactions.length, 0, "under the limit");
+  const large = await setup(t, {}, 200_000);
+  await large.turn(true);
+  await large.turn(false, true);
+  assert.equal(large.compactions.length, 2);
+  assert.ok(large.notices.some((n) => n.startsWith("Compacting this chat while it waits for the reply: 200k tokens")));
+  assert.equal(notices.length, 0);
 });
 
 test("a reply that arrives while the chat compacts waits for it: Pi refuses prompts during compaction", async (t) => {

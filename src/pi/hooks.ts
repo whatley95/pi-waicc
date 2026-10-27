@@ -40,25 +40,29 @@ export function registerHooks(app: App): void {
     if (turn) clearInterval(turn.ticker);
     mainTurns.delete(key(ctx));
   };
-  // Automatic compaction: a turn that assessed a round is a natural break. Once the main agent's
-  // chat is over the user's autoCompactTokens, it is compacted then, so later turns stop
-  // re-sending the whole history. In a loop that is while the next reviewer works: the main agent
-  // is idle, and the reply's assessment prompt waits for the compaction (see prompt in app.ts).
-  const assessedAtStart = new Map<string, number | null>();
-  const assessedRounds = (ctx: Parameters<typeof track>[0]): number | null => {
+  // Automatic compaction: a turn that assessed a round, or sent out new work, is a natural break.
+  // Once the main agent's chat is over the user's autoCompactTokens, it is compacted then, so the
+  // next reply (often a code review after a long coding turn) is read in a small chat. The main
+  // agent is idle until that reply, and its assessment prompt waits for the compaction (see prompt in app.ts).
+  type Marks = { assessed: number; rounds: number; waiting: boolean };
+  const marksAtStart = new Map<string, Marks | null>();
+  const roundMarks = (ctx: Parameters<typeof track>[0]): Marks | null => {
     const binding = bindings.get(key(ctx));
     if (binding?.role !== "coordinator") return null;
     try {
-      return loadSession(projectRoot(ctx.cwd), binding.sessionId).rounds.filter((r) => r.status === "ASSESSED").length;
+      const { rounds } = loadSession(projectRoot(ctx.cwd), binding.sessionId);
+      return { assessed: rounds.filter((r) => r.status === "ASSESSED").length, rounds: rounds.length, waiting: rounds.at(-1)?.status === "WAITING" };
     } catch {
       return null;
     }
   };
-  const autoCompact = (ctx: Parameters<typeof track>[0], before: number | null | undefined) => {
+  const autoCompact = (ctx: Parameters<typeof track>[0], before: Marks | null | undefined) => {
     const binding = bindings.get(key(ctx));
     if (binding?.role !== "coordinator" || before == null || !ctx.hasUI || typeof ctx.compact !== "function") return;
-    const after = assessedRounds(ctx);
-    if (after === null || after <= before) return;
+    const after = roundMarks(ctx);
+    if (after === null) return;
+    const assessed = after.assessed > before.assessed;
+    if (!assessed && !(after.rounds > before.rounds && after.waiting)) return;
     let limit: number;
     try {
       limit = loadAgentConfig(ctx.cwd).autoCompactTokens;
@@ -76,7 +80,7 @@ export function registerHooks(app: App): void {
       if (!ctx.isIdle()) return void (++tries < 50 && setTimeout(attempt, 200));
       try {
         const recovery = refreshCheckpoint(ctx.cwd, id);
-        ctx.ui.notify(`Compacting this chat after the assessment: ${Math.round(tokens / 1000)}k tokens, over your ${Math.round(limit / 1000)}k autoCompactTokens. WAICC's session state is on disk and is not affected.`, "info");
+        ctx.ui.notify(`Compacting this chat ${assessed ? "after the assessment" : "while it waits for the reply"}: ${Math.round(tokens / 1000)}k tokens, over your ${Math.round(limit / 1000)}k autoCompactTokens. WAICC's session state is on disk and is not affected.`, "info");
         compactChat(ctx, recovery, {
           complete: "Chat compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.",
           failed: (message) => `Automatic compaction failed: ${message}. Nothing was lost; /waicc-compact tries again.`,
@@ -90,7 +94,7 @@ export function registerHooks(app: App): void {
   pi.on("agent_start", async (_event, ctx) => {
     // A dispatched recipient's own Pi is not this project's main agent.
     if (bindings.get(key(ctx))?.role === "recipient") return;
-    assessedAtStart.set(key(ctx), assessedRounds(ctx));
+    marksAtStart.set(key(ctx), roundMarks(ctx));
     endMain(ctx);
     // Refreshed while it thinks without using tools, so the page does not take it for gone.
     const ticker = setInterval(() => track(ctx), 20_000);
@@ -104,8 +108,8 @@ export function registerHooks(app: App): void {
     if (event.isError) feedMain(ctx, { type: "tool_execution_end", toolName: event.toolName, isError: true, result: event.result });
   });
   pi.on("agent_end", async (_event, ctx) => {
-    const before = assessedAtStart.get(key(ctx));
-    assessedAtStart.delete(key(ctx));
+    const before = marksAtStart.get(key(ctx));
+    marksAtStart.delete(key(ctx));
     endMain(ctx);
     automaticRequests.clear(ctx);
     advanceLoop(ctx);
