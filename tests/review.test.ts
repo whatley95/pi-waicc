@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { artifact, json, loadSession, sessionRelative, withoutSnapshotFiles } from "../src/files.ts";
 import { roundDirectory } from "../src/render.ts";
+import { dispatch, prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { snapshot } from "../src/source.ts";
 import { amend, assess, cancel, closeSession, createSession, exportHandoff, ingest, issue, prepare, status } from "../src/workflow.ts";
@@ -218,6 +219,79 @@ test("a later code review is a follow-up: it starts from what changed since the 
   const full = s.rounds.at(-1)!;
   assert.equal(full.review?.kind === "code" && full.review.followUp, undefined);
   assert.match(handoff(full), /Review the entire implementation and all prior fixes/);
+});
+
+/** A headless reviewer: prints the agent's own session line, then answers (or not) the waiting review. */
+function reviewer(root: string, id: string, calls: string[][], sessionLine: string, updates: Partial<Reply> | null = {}): AgentRunner {
+  return async (_program, args) => {
+    calls.push(args);
+    const s = loadSession(root, id);
+    if (updates) {
+      const r = s.rounds.at(-1)!;
+      writeFileSync(join(root, sessionRelative(s.id), roundDirectory(r), "reply.json"), json({
+        ...JSON.parse(artifact(root, s, `${roundDirectory(r)}/reply.example.json`)),
+        outcome: "ready", summary: "Independently inspected entire assigned scope",
+        coverage: [{ requirementId: "R1", status: "addressed", evidence: "API and CLIENT source and AC0/AC1 inspected" }],
+        findings: [], questions: [],
+        checks: [{ description: "Read API and CLIENT", outcome: "passed", evidence: "Source inspected; no runtime-test claim" }],
+        ...updates,
+      }));
+    }
+    return updates ? { stdout: sessionLine, stderr: "", code: 0, killed: false } : { stdout: "", stderr: "Error: no rollout found for that thread id", code: 1, killed: false };
+  };
+}
+/** A first code review dispatched to `via`, answered needs_changes and assessed, then a follow-up review waiting. */
+function followUpWaiting(t: TestContext, via: "claude" | "codex", sessionLine: string) {
+  const { root, s: initial } = acceptedPlan(t);
+  writeFileSync(join(root, "API.txt"), "implemented API");
+  writeFileSync(join(root, "CLIENT.txt"), "implemented client");
+  let s = review(root, initial);
+  const first = s.rounds.at(-1)!;
+  const calls: string[][] = [];
+  return dispatch(root, s.id, { via }, reviewer(root, s.id, calls, sessionLine, { outcome: "needs_changes", findings: [{ id: "F1", severity: "medium", description: "API misses a check", evidence: "API.txt" }] })).then(() => {
+    s = decide(root, ingest(root, s.id), "needs_changes");
+    writeFileSync(join(root, "API.txt"), "implemented API with the check");
+    const report = completion();
+    report.findings = [{ requestId: first.id, findingId: "F1", disposition: "resolved", evidence: "API.txt now checks; regression added" }];
+    s = review(root, s, report);
+    calls.length = 0;
+    return { root, s, first, calls };
+  });
+}
+
+test("a follow-up code review continues the earlier Codex reviewer's own conversation, and starts fresh if that fails", async (t) => {
+  const { root, s, first, calls } = await followUpWaiting(t, "codex", '{"type":"thread.started","thread_id":"0199a7e2-thread-one"}');
+  const started = prepareDispatch(root, s.id, { via: "codex" });
+  const resumeAt = started.args.indexOf("resume");
+  assert.deepEqual(started.args.slice(0, resumeAt + 1), ["exec", "--sandbox", "read-only", "-C", root, "resume"], "still read-only: the sandbox goes before resume");
+  assert.ok(started.args.includes('sandbox_mode="read-only"'));
+  assert.equal(started.args.at(-2), "0199a7e2-thread-one");
+  assert.match(started.args.at(-1)!, new RegExp(`^You reviewed this change earlier in this conversation \\(request "${first.id}"\\)[\\s\\S]*read again every file you check\\. You are a dispatched WAICC review recipient`));
+  assert.equal(started.resume!.freshArgs[0], "exec");
+  assert.ok(!started.resume!.freshArgs.includes("resume"));
+  assert.equal(JSON.parse(artifact(root, loadSession(root, s.id), `${started.logPrefix}/start.json`)).resume.agentSession, "0199a7e2-thread-one");
+
+  // The earlier conversation is gone: the same dispatch reviews once from scratch.
+  let tries = 0;
+  const answer = reviewer(root, s.id, calls, '{"type":"thread.started","thread_id":"0199a7e2-thread-two"}');
+  const outcome = await runDispatch(started, async (program, args, options) => (++tries === 1 ? reviewer(root, s.id, calls, "", null) : answer)(program, args, options));
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].includes("resume") && !calls[1].includes("resume"));
+  assert.equal(outcome.replySubmitted, true);
+  assert.match(outcome.resumed!.failed!, /^exit 1: Error: no rollout found/);
+  assert.equal(JSON.parse(readFileSync(outcome.log!, "utf8")).agentSession, "0199a7e2-thread-two");
+});
+
+test("Claude resumes its review session too; another model, or a run with no session, starts fresh", async (t) => {
+  const { root, s } = await followUpWaiting(t, "claude", '{"type":"system","subtype":"init","session_id":"1ff5a5bb-4b08-4e70-9ebf-47778c0f474e"}');
+  const other = prepareDispatch(root, s.id, { via: "claude", model: "opus" });
+  assert.equal(other.resume, null, "a different model has no such conversation");
+  assert.ok(!other.args.includes("--resume"));
+  // Only one dispatch per request at a time: end that one before trying the same model.
+  await runDispatch(other, reviewer(root, s.id, [], "", null));
+  const same = prepareDispatch(root, s.id, { via: "claude" });
+  assert.deepEqual(same.args.slice(same.args.indexOf("--resume"), same.args.indexOf("--resume") + 2), ["--resume", "1ff5a5bb-4b08-4e70-9ebf-47778c0f474e"]);
+  assert.ok(same.args.includes("Edit,Write,NotebookEdit,Bash"), "still no edit tools");
 });
 
 test("standalone code review captures its scope atomically and records unavailable checks honestly", (t) => {

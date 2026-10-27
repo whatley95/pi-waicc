@@ -145,7 +145,7 @@ export function createRuns(app: Core) {
     // Coding in place can leave edits behind; a retry then starts only if nothing changed.
     const before = plan.mode === "implementation" && !plan.isolation ? snapshot(plan.root).fingerprint : null;
     const controller = new AbortController();
-    const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${fallbackFrom ? ` · fallback for ${fallbackFrom.profile}` : ""}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
+    const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${fallbackFrom ? ` · fallback for ${fallbackFrom.profile}` : ""}${plan.resume ? " · continuing its earlier review" : ""}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
     const { quietMs } = alertSettings(ctx.cwd);
     const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root, lastActivityAt: Date.now(), quietAfterMs: quietMs };
     let quietWarned = false;
