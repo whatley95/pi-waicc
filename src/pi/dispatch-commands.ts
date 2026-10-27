@@ -54,6 +54,7 @@ export function registerDispatchCommands(app: App): void {
       const resolved = resolveDispatch(ctx.cwd, id, args);
       const waiting = loadSession(projectRoot(ctx.cwd), id).rounds.find((round) => round.status === "WAITING");
       ensure(!resolved.options.review || resolved.options.develop, "--review continues a planning run through development into the code review, so it needs --develop.");
+      ensure(!resolved.options.ship || waiting?.mode !== "planning" || resolved.options.develop, "--ship ships the change once its code review passes, so on a planning handoff it needs --auto (or --develop --review).");
       if (resolved.options.develop) {
         ensure(waiting?.mode === "planning", "--develop starts development when a plan is accepted, so it needs a waiting planning handoff.");
         ensure(resolved.options.continue !== false, "--develop needs the continue step; drop --no-continue.");
@@ -86,6 +87,7 @@ export function registerDispatchCommands(app: App): void {
           ...(resolved.options.review ? { review: { profile: resolved.options.reviewWith } } : {}),
           ...(resolved.options.codeWith ? { code: { profile: typeof resolved.options.codeWith === "string" ? resolved.options.codeWith : undefined } } : {}),
           ...(resolved.options.reviewOnce ? { reviewMax: 1 } : {}),
+          ...(resolved.options.ship ? { ship: true } : {}),
         });
       try {
         launch(ctx, id, resolved.options, resolved.profile);

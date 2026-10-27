@@ -35,6 +35,8 @@ export interface AgentConfig {
   autoCompactTokens: number;
   /** User file only: a follow-up code review may continue the earlier reviewer's conversation (off: every review starts fresh). */
   resumeReviews: boolean;
+  /** User file only: a --ship run commits, pushes and opens the merge request without asking you first. */
+  autoShip: boolean;
   /** User file only: your rules, given in advance, that may answer human-owned decisions. */
   policies: string[];
   /** User file only: accept recommendations for low-risk, reversible, non-sensitive decisions. */
@@ -115,7 +117,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "autoCompactTokens", "resumeReviews", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"].includes(key)), at('only "profiles", "roles", "autoContinue", "autoCompactTokens", "resumeReviews", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "autoCompactTokens", "resumeReviews", "autoShip", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"].includes(key)), at('only "profiles", "roles", "autoContinue", "autoCompactTokens", "resumeReviews", "autoShip", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed'));
   // Settings that let WAICC act for you, reach you outside Pi, loosen what checks may touch or hold your tokens are yours alone: a repository must not set them.
   for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
@@ -209,6 +211,12 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
     ensure(typeof config.resumeReviews === "boolean", at('"resumeReviews" must be true or false'));
     into.resumeReviews = config.resumeReviews;
   }
+  if (config.autoShip !== undefined) {
+    // A repository must not make your runs push without asking you.
+    ensure(source === "user", at('"autoShip" is allowed only in your user file'));
+    ensure(typeof config.autoShip === "boolean", at('"autoShip" must be true or false'));
+    into.autoShip = config.autoShip;
+  }
   for (const [key, value] of Object.entries(record(config.profiles ?? {}, at("profiles")))) {
     ensure(name.test(key), at(`profile name ${JSON.stringify(key)} uses characters other than letters, digits, - and _`));
     const profile = record(value, at(`profile ${key}`));
@@ -242,7 +250,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, autoCompactTokens: 150_000, resumeReviews: false, policies: [], autoDecide: "off", memory: { autoApprove: false }, autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, autoCompactTokens: 150_000, resumeReviews: false, autoShip: false, policies: [], autoDecide: "off", memory: { autoApprove: false }, autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -333,6 +341,7 @@ export function profilesView(cwd: string) {
   return {
     autoContinue: config.autoContinue,
     resumeReviews: config.resumeReviews,
+    autoShip: config.autoShip,
     policies: config.policies,
     autoDecide: config.autoDecide,
     memory: config.memory,

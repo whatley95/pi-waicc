@@ -257,7 +257,7 @@ export function status(
             ? `${authorization.reason} ${authorization.authorized ? `Coding owner ${s.implementationOwner ?? "main"}. ${gates?.openGates ? "Use /waicc-decisions; main may do only genuinely unblocked authorized tasks. Whole-plan delegated coding and final review wait until all gates are resolved." : "Complete ALL work/checks before ONE full code review; delegation is optional."}` : "Stop implementation and obtain explicit /waicc-develop authorization."}`
           : s.status === "READY_TO_CLOSE"
             ? s.reviewApproval?.kind === "code"
-              ? "Whole-change code review PASS. The human may /waicc-close <reason>; this is assessed evidence, not automatic delivery certification."
+              ? "Whole-change code review PASS. The human may /waicc-ship (commit the reviewed files on their own branch, push and open the merge request, then close) or /waicc-close <reason>; this is assessed evidence, not automatic delivery certification. Offer /waicc-ship; never commit or push yourself."
               : "Specification-only contract review PASS (legacy closure-ready state), NOT code approval or implementation authority. Use /waicc-develop to continue development in this SAME session, or explicitly close planning-only work."
             : s.status === "DRAFT"
               ? "Inspect the project and prepare a contract and handoff."
