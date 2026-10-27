@@ -11,7 +11,7 @@ import { roundDirectory } from "../src/render.ts";
 import { parseDispatchArgs } from "../src/dispatch.ts";
 import { planShip, requestOpener, ship } from "../src/ship.ts";
 import { assess, closeShipped, createSession, ingest, issue, prepare } from "../src/workflow.ts";
-import type { Contract, Reply, Session, WorkCompletion } from "../src/types.ts";
+import type { Contract, IssueLink, Reply, Session, WorkCompletion } from "../src/types.ts";
 
 const scope: Contract = {
   title: "Search with paging",
@@ -52,7 +52,7 @@ const completion = (): WorkCompletion => ({
 });
 
 /** A Git project whose origin is a GitLab address (pushes go to a local bare repository), with a reviewed change READY_TO_CLOSE. */
-function reviewed(t: TestContext, url = "https://gitlab.example.com/team/app.git") {
+function reviewed(t: TestContext, url = "https://gitlab.example.com/team/app.git", issueLink?: IssueLink) {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-ship-")));
   t.after(() => {
     assert.ok(basename(base).startsWith("waicc-ship-"));
@@ -79,7 +79,7 @@ function reviewed(t: TestContext, url = "https://gitlab.example.com/team/app.git
   git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
   // Your own unfinished edit from before the session: never part of what is shipped.
   writeFileSync(join(root, "notes.txt"), "my own notes");
-  let s = createSession(root, "Add search with paging");
+  let s = createSession(root, "Add search with paging", undefined, undefined, issueLink);
   s = decide(root, reply(root, prepare(root, s.id, scope, "planning", "Plan search", 0), { outcome: "planned" }), "planned");
   writeFileSync(join(root, "API.txt"), "api with paging");
   writeFileSync(join(root, "CLIENT.txt"), "client with paging");
@@ -134,6 +134,15 @@ test("without a GitLab token, the push itself opens the merge request (push opti
   assert.equal(shipped.request.url, "https://gitlab.example.com/team/app/-/merge_requests/7");
   assert.match(shipped.request.note!, /Opened without a GitLab token/);
   assert.deepEqual(changedIn(bare, "feature/paging").slice(1), ["API.txt", "CLIENT.txt"]);
+});
+
+test("a session planned from an issue ships on a branch named after it, and its merge request closes it", async (t) => {
+  const { root, id } = reviewed(t, undefined, { provider: "gitlab", remote: "origin", number: 42, url: null, title: "Add paging", author: "alice" });
+  const plan = planShip(root, id);
+  assert.equal(plan.branch, "waicc/42-search-with-paging");
+  assert.match(plan.description, /^> 🤖[^\n]*\n\nCloses #42\n\n## Requirements/);
+  const options = (await requestOpener(plan, { host: () => null, origin: async (project) => project })).pushOptions!;
+  assert.ok(options.some((option) => option.startsWith("merge_request.description=Closes #42. Planned, coded and reviewed")));
 });
 
 test("GitHub opens a pull request through gh; refusals come before anything changes", async (t) => {

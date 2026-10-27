@@ -246,6 +246,8 @@ export interface Session {
   closure?: Closure;
   /** Set by /waicc-review --rev: every code review in this session covers this change. */
   revisionReview?: RevisionReview;
+  /** Set by /waicc-planning --issue: where the requirements came from. */
+  issue?: IssueLink;
   /** Set by /waicc-ship: the branch, commit and merge request the reviewed change went out as. */
   shipped?: Shipped;
   deliveryVerified: false;
@@ -272,6 +274,15 @@ export interface MemoryEntry {
   corroborations?: { sessionId: string; model: string | null; at: string }[];
   /** A decision the human answered with /waicc-decide: the entry restates it. */
   decision?: { sessionId: string; decisionId: string; record: string };
+}
+/** The issue a session was planned from (/waicc-planning --issue): shipping closes it. */
+export interface IssueLink {
+  provider: "gitlab" | "github";
+  remote: string;
+  number: number;
+  url: string | null;
+  title: string;
+  author: string | null;
 }
 /** A reviewed change as /waicc-ship sent it out. */
 export interface Shipped {
