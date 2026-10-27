@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -128,6 +128,22 @@ test("--ship: when the loop's review passes, it goes on to ship (here it stops: 
   await waitFor(() => h.loopMessages().some((m) => m.includes("Shipping stopped")), "the ship attempt");
   assert.match(h.loopMessages().at(-1)!, /^Review passed after 1 cycle\. Shipping stopped: This project is not a Git repository/);
   assert.equal(loadSession(root, id).status, "READY_TO_CLOSE", "nothing is closed when shipping did not happen");
+});
+
+test("in a queued Pi, the end of a run is reported for the queue", async (t) => {
+  const { root, id } = reviewWaiting(t);
+  const report = join(root, "report.jsonl");
+  process.env.WAICC_QUEUE_REPORT = report;
+  t.after(() => { delete process.env.WAICC_QUEUE_REPORT; });
+  const h = harness(root, [answer()]);
+  await h.use(id);
+  await h.dispatch("--via codex --loop");
+  await waitFor(() => h.prompts.length === 1, "the assessment");
+  mainAgentAccepts(root, id);
+  await h.turnEnds();
+  const [event] = readFileSync(report, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(event.kind, "loop-ended");
+  assert.match(event.text, /^Review passed after 1 cycle\. Nothing was closed/);
 });
 
 test("the loop stops when the same findings return, when no fresh review is requested, and at its cap", async (t) => {
