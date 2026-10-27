@@ -1545,6 +1545,18 @@ When the whole-change code review passes (`READY_TO_CLOSE`), `/waicc-ship` sends
 5. **It closes the session** and records the branch, commit and merge request in it
    (`/waicc-status` shows them). Your checkout stays on the new branch.
 
+6. **It watches the pipeline** of the shipped commit until it ends (GitLab through its API, with
+   the host's token; GitHub through `gh pr checks`), and tells you when it passes or fails.
+   - **After a typed `/waicc-ship`, a failure asks you** "Fix it?". On yes, the session is
+     reopened and development authorized again for the fix. The main agent gets the failed jobs
+     and the end of their logs, fixes the cause within the plan's paths, and requests a review.
+     The review runs as a loop, and when it passes the change ships again to the same branch and
+     merge request, asking you first unless you set `autoShip`.
+   - **After a `--ship` run, a failure is fixed that way by itself**, at most twice, and within
+     your `budget`. If the cause is outside the plan, flaky, or an environment problem, the main
+     agent explains it and stops instead.
+   - It stops watching after 2 hours, or after 15 minutes when no pipeline appears.
+
 Git does the pushing with your own Git login, and never prompts for a password, so a missing
 login fails instead of hanging. `waicc ship <session> --dry-run` (CLI) shows the plan;
 `--yes` ships it.
