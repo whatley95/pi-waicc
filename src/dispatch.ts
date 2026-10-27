@@ -57,6 +57,8 @@ export interface DispatchOptions {
   codeWith?: string | true;
   /** Pi only, with develop and review: stop after the first code review instead of looping. */
   reviewOnce?: boolean;
+  /** Your user file's resumeReviews: a follow-up code review may continue the earlier reviewer's conversation. */
+  resumeReview?: boolean;
 }
 /** Default and largest number of automatic review cycles. */
 export const loopCycles = { default: 3, max: 8 };
@@ -263,14 +265,16 @@ function agentSessionOf(via: Agent, line: string): string | null {
 /** Past this, the earlier review's prompt cache has likely expired, and resending its whole conversation can cost more than starting fresh. */
 const resumeWithinMs = 60 * 60_000;
 /**
- * A follow-up code review continues the earlier reviewer's own conversation when WAICC dispatched
- * that review with the same agent and model within the hour: it has already read the change, so it
- * mostly checks the fixes. Claude and Codex only.
+ * Only with your resumeReviews: a follow-up code review continues the earlier reviewer's own
+ * conversation when WAICC dispatched that review with the same agent and model within the hour.
+ * It has already read the change, so it mostly checks the fixes; but it may trust what it
+ * remembers of changed files, or its own earlier findings, so a fresh reviewer is the default.
+ * Claude and Codex only.
  */
 function earlierReviewer(root: string, s: Session, r: Round, options: DispatchOptions): { agentSession: string; dispatchId: string; requestId: string } | null {
   const previous = r.review?.kind === "code" ? r.review.followUp?.previousRequestId : undefined;
   const earlier = previous ? s.rounds.find((round) => round.id === previous) : undefined;
-  if (!earlier || (options.via !== "claude" && options.via !== "codex")) return null;
+  if (!options.resumeReview || !earlier || (options.via !== "claude" && options.via !== "codex")) return null;
   const dir = roundDirectory(earlier);
   const run = Object.keys(s.artifacts)
     .filter((path) => path.startsWith(`${dir}/dispatch/`) && path.endsWith("/result.json"))

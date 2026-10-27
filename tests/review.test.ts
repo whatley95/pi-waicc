@@ -259,9 +259,9 @@ function followUpWaiting(t: TestContext, via: "claude" | "codex", sessionLine: s
   });
 }
 
-test("a follow-up code review continues the earlier Codex reviewer's own conversation, and starts fresh if that fails", async (t) => {
+test("with resumeReviews, a follow-up code review continues the earlier Codex reviewer's own conversation, and starts fresh if that fails", async (t) => {
   const { root, s, first, calls } = await followUpWaiting(t, "codex", '{"type":"thread.started","thread_id":"0199a7e2-thread-one"}');
-  const started = prepareDispatch(root, s.id, { via: "codex" });
+  const started = prepareDispatch(root, s.id, { via: "codex", resumeReview: true });
   const resumeAt = started.args.indexOf("resume");
   assert.deepEqual(started.args.slice(0, resumeAt + 1), ["exec", "--sandbox", "read-only", "-C", root, "resume"], "still read-only: the sandbox goes before resume");
   assert.ok(started.args.includes('sandbox_mode="read-only"'));
@@ -282,14 +282,17 @@ test("a follow-up code review continues the earlier Codex reviewer's own convers
   assert.equal(JSON.parse(readFileSync(outcome.log!, "utf8")).agentSession, "0199a7e2-thread-two");
 });
 
-test("Claude resumes its review session too; another model, or a run with no session, starts fresh", async (t) => {
+test("a follow-up review starts fresh by default; with resumeReviews Claude resumes too, but not for another model", async (t) => {
   const { root, s } = await followUpWaiting(t, "claude", '{"type":"system","subtype":"init","session_id":"1ff5a5bb-4b08-4e70-9ebf-47778c0f474e"}');
-  const other = prepareDispatch(root, s.id, { via: "claude", model: "opus" });
-  assert.equal(other.resume, null, "a different model has no such conversation");
-  assert.ok(!other.args.includes("--resume"));
-  // Only one dispatch per request at a time: end that one before trying the same model.
-  await runDispatch(other, reviewer(root, s.id, [], "", null));
-  const same = prepareDispatch(root, s.id, { via: "claude" });
+  // Only one dispatch per request at a time: each is ended before the next is prepared.
+  for (const options of [{ via: "claude" as const }, { via: "claude" as const, model: "opus", resumeReview: true }]) {
+    const fresh = prepareDispatch(root, s.id, options);
+    assert.equal(fresh.resume, null, options.model ? "a different model has no such conversation" : "fresh is the default");
+    assert.ok(!fresh.args.includes("--resume"));
+    assert.match(fresh.prompt, /^You are a dispatched WAICC review recipient/);
+    await runDispatch(fresh, reviewer(root, s.id, [], "", null));
+  }
+  const same = prepareDispatch(root, s.id, { via: "claude", resumeReview: true });
   assert.deepEqual(same.args.slice(same.args.indexOf("--resume"), same.args.indexOf("--resume") + 2), ["--resume", "1ff5a5bb-4b08-4e70-9ebf-47778c0f474e"]);
   assert.ok(same.args.includes("Edit,Write,NotebookEdit,Bash"), "still no edit tools");
 });
