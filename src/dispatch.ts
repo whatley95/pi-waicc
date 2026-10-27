@@ -15,7 +15,7 @@ import { progressParser, type ProgressEvent } from "./progress.ts";
 import { usageMeter } from "./usage.ts";
 import { agentLimit, limitText } from "./limits.ts";
 import { agyServerName, registerAgyServer, unregisterAgyServer, type AgyServer } from "./agy.ts";
-import type { Mode, RecipientPin } from "./types.ts";
+import type { Mode, RecipientPin, Round, Session } from "./types.ts";
 
 export const agents = ["claude", "codex", "pi", "agy"] as const;
 export type Agent = (typeof agents)[number];
@@ -243,9 +243,51 @@ export interface DispatchPlan {
   agyServer?: AgyServer;
   /** This run retries the handoff with a profile's fallback after that profile hit a limit. */
   fallbackFrom?: { profile: string; dispatchId: string | null; reason: string };
+  /** A follow-up code review continuing the earlier reviewer's own conversation; freshArgs start a new one if that fails. */
+  resume: { agentSession: string; fromDispatchId: string; freshArgs: string[] } | null;
 }
 
-function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer">): Pick<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer"> {
+/** Claude's session id or Codex's thread id: a plain id, since it goes on the command line. */
+const agentSessionPattern = /^[0-9A-Za-z-]{8,64}$/;
+/** The agent's own conversation id, from its streamed JSON events (Claude: session_id; Codex: thread.started). */
+function agentSessionOf(via: Agent, line: string): string | null {
+  if ((via !== "claude" && via !== "codex") || !line.startsWith("{")) return null;
+  try {
+    const event = JSON.parse(line) as { session_id?: unknown; type?: unknown; thread_id?: unknown };
+    const id = via === "claude" ? event.session_id : event.type === "thread.started" ? event.thread_id : undefined;
+    return typeof id === "string" && agentSessionPattern.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+/** Past this, the earlier review's prompt cache has likely expired, and resending its whole conversation can cost more than starting fresh. */
+const resumeWithinMs = 60 * 60_000;
+/**
+ * A follow-up code review continues the earlier reviewer's own conversation when WAICC dispatched
+ * that review with the same agent and model within the hour: it has already read the change, so it
+ * mostly checks the fixes. Claude and Codex only.
+ */
+function earlierReviewer(root: string, s: Session, r: Round, options: DispatchOptions): { agentSession: string; dispatchId: string; requestId: string } | null {
+  const previous = r.review?.kind === "code" ? r.review.followUp?.previousRequestId : undefined;
+  const earlier = previous ? s.rounds.find((round) => round.id === previous) : undefined;
+  if (!earlier || (options.via !== "claude" && options.via !== "codex")) return null;
+  const dir = roundDirectory(earlier);
+  const run = Object.keys(s.artifacts)
+    .filter((path) => path.startsWith(`${dir}/dispatch/`) && path.endsWith("/result.json"))
+    .flatMap((path) => {
+      try {
+        return [JSON.parse(artifact(root, s, path)) as { dispatchId: string; via: string; model: string | null; replySubmitted: boolean; agentSession?: unknown; finishedAt: string }];
+      } catch {
+        return [];
+      }
+    })
+    .filter((result) => result.replySubmitted && result.via === options.via && result.model === (options.model ?? null)
+      && typeof result.agentSession === "string" && agentSessionPattern.test(result.agentSession))
+    .sort((a, b) => Date.parse(b.finishedAt) - Date.parse(a.finishedAt))[0];
+  return run && Date.now() - Date.parse(run.finishedAt) <= resumeWithinMs ? { agentSession: run.agentSession as string, dispatchId: run.dispatchId, requestId: earlier.id } : null;
+}
+
+function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer" | "resume"> & { resume?: { agentSession: string } }): Pick<DispatchPlan, "program" | "args" | "scratch" | "env" | "agyServer"> {
   const model = plan.model;
   const effort = plan.effort;
   const isolated = plan.isolation !== null;
@@ -279,27 +321,32 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
             : ["--allowedTools", "mcp__waicc,Read,Grep,Glob", "--disallowedTools", "Edit,Write,NotebookEdit,Bash"]),
           ...(model ? ["--model", model] : []),
           ...(effort ? ["--effort", effort] : []),
+          ...(plan.resume ? ["--resume", plan.resume.agentSession] : []),
         ],
         scratch: [config, ...scratch], env: {},
       };
     }
-    case "codex":
+    case "codex": {
+      // The OS sandbox limits writes to the directory it runs in: the project read-only, or the worktree.
+      const sandbox = isolated ? "workspace-write" : "read-only";
+      const settings = [
+        "-c", `mcp_servers.waicc.command=${JSON.stringify(server.command)}`,
+        "-c", `mcp_servers.waicc.args=${JSON.stringify(server.args)}`,
+        // Headless exec rejects unapproved MCP calls; approve only the four recipient tools.
+        "-c", `mcp_servers.waicc.enabled_tools=${JSON.stringify(recipientTools)}`,
+        "-c", 'mcp_servers.waicc.default_tools_approval_mode="approve"',
+        ...(model ? ["-m", model] : []),
+        ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+      ];
       return {
         program: "codex",
-        args: [
-          // The OS sandbox limits writes to the directory it runs in: the project read-only, or the worktree.
-          "exec", "--json", "--sandbox", isolated ? "workspace-write" : "read-only", "--skip-git-repo-check", "-C", plan.cwd,
-          "-c", `mcp_servers.waicc.command=${JSON.stringify(server.command)}`,
-          "-c", `mcp_servers.waicc.args=${JSON.stringify(server.args)}`,
-          // Headless exec rejects unapproved MCP calls; approve only the four recipient tools.
-          "-c", `mcp_servers.waicc.enabled_tools=${JSON.stringify(recipientTools)}`,
-          "-c", 'mcp_servers.waicc.default_tools_approval_mode="approve"',
-          ...(model ? ["-m", model] : []),
-          ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
-          plan.prompt,
-        ],
+        args: plan.resume
+          // resume has no --sandbox or -C of its own: they go before it, and the sandbox is set as config too.
+          ? ["exec", "--sandbox", sandbox, "-C", plan.cwd, "resume", "--json", "--skip-git-repo-check", "-c", `sandbox_mode="${sandbox}"`, ...settings, plan.resume.agentSession, plan.prompt]
+          : ["exec", "--json", "--sandbox", sandbox, "--skip-git-repo-check", "-C", plan.cwd, ...settings, plan.prompt],
         scratch, env: {},
       };
+    }
     case "agy": {
       // agy reads MCP servers only from its own config, so this run's pinned server is registered
       // there for the run (see agy.ts). Its default headless permissions deny file edits and
@@ -413,13 +460,22 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
         ? `You are a dispatched WAICC implementation recipient, not the coordinator. You are working in an isolated copy of the project at ${JSON.stringify(isolation.workdir ?? isolation.worktree)}; the real checkout is not yours to edit.${isolation.prefix ? " This project is one folder of a larger repository: the rest of the repository is there for context only, and changes outside this folder are never applied." : ""} First call the waicc_receive MCP tool with ${ids}, then read its handoff and other inputs with waicc_read_input. Implement the whole assignment in dependency order in this copy, changing only files inside the task's allowedPaths: when you finish, WAICC applies your changes to the real checkout only if every changed file is in scope, and applies nothing otherwise. ${shell} ${approved} Report whole-work completion evidence and every check honestly, marking any check you could not run not_run with its limit. ${finish}`
         : `You are a dispatched WAICC ${r.mode} recipient, not the coordinator, for the project at ${JSON.stringify(root)}. First call the waicc_receive MCP tool with ${ids}. Then read ${JSON.stringify(starter)} and the assignment inputs, and do only that assignment. Source is read-only: do not edit, create or delete files. ${approved} ${finish}`,
     };
+    const earlier = earlierReviewer(root, s, r, options);
     try {
-      const plan: DispatchPlan = { ...base, ...invocation(base) };
+      const fresh = invocation(base);
+      const plan: DispatchPlan = earlier
+        ? {
+            ...base,
+            ...invocation({ ...base, resume: earlier, prompt: `You reviewed this change earlier in this conversation (request ${JSON.stringify(earlier.requestId)}). That review was assessed and the main agent has worked on it since: this is a new request, and what you remember of the files may be out of date, so read again every file you check. ${base.prompt}` }),
+            resume: { agentSession: earlier.agentSession, fromDispatchId: earlier.dispatchId, freshArgs: fresh.args },
+          }
+        : { ...base, ...fresh, resume: null };
       commit(root, s, "dispatch.started", {
         [`${plan.logPrefix}/start.json`]: json({
           schemaVersion: 1, dispatchId, sessionId: s.id, requestId: r.id, mode: r.mode,
           via: plan.via, model: plan.model, effort: plan.effort, program: plan.program, args: plan.args, env: plan.env,
           isolation, checks, startedAt: now(), timeoutMs: plan.timeoutMs,
+          resume: plan.resume ? { agentSession: plan.resume.agentSession, fromDispatchId: plan.resume.fromDispatchId } : null,
         }),
       });
       return plan;
@@ -455,34 +511,49 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   const parse = progressParser(plan.via, plan.cwd, startedAt);
   const meter = usageMeter(plan.via);
   const progress: ProgressEvent[] = [];
+  let agentSession: string | null = null;
   const onLine = (line: string) => {
     meter.read(line);
+    agentSession = agentSessionOf(plan.via, line) ?? agentSession;
     for (const event of parse(line)) {
       progress.push(event);
       if (progress.length > 400) progress.splice(0, progress.length - 400);
       onProgress?.(event);
     }
   };
+  const attempt = async (args: string[], timeout: number): Promise<AgentResult> => {
+    try {
+      return await run(plan.program, args, { cwd: plan.cwd, timeout, signal, env: plan.env, onLine });
+    } catch (error) {
+      return { stdout: "", stderr: error instanceof Error ? error.message : String(error), code: 1, killed: Boolean(signal?.aborted) };
+    }
+  };
   let result: AgentResult;
+  let resumeFailed: string | null = null;
   try {
     if (plan.agyServer) agyRegistry.register(plan.agyServer, recipientTools);
-    result = await run(plan.program, plan.args, { cwd: plan.cwd, timeout: plan.timeoutMs, signal, env: plan.env, onLine });
-  } catch (error) {
-    result = { stdout: "", stderr: error instanceof Error ? error.message : String(error), code: 1, killed: Boolean(signal?.aborted) };
+    result = await attempt(plan.args, plan.timeoutMs);
+    // The earlier conversation may be gone (deleted, another computer) or refused: review once from scratch.
+    if (plan.resume && !existsSync(plan.replyPath) && !result.killed && !signal?.aborted && !agentLimit(result)) {
+      resumeFailed = `exit ${result.code}: ${tail(result.stderr.trim() || result.stdout.trim(), 500)}`;
+      result = await attempt(plan.resume.freshArgs, Math.max(60_000, plan.timeoutMs - (Date.now() - startedAt)));
+    }
   } finally {
     for (const path of plan.scratch) rmSync(path, { force: true });
     if (plan.agyServer) agyRegistry.unregister(plan.agyServer.name);
   }
   // A runner that returns stdout without streaming it (older agents, tests) still yields its usage.
   if (!meter.get()) for (const line of result.stdout.split(/\r?\n/)) meter.read(line);
+  if (!agentSession) for (const line of result.stdout.split(/\r?\n/)) agentSession = agentSessionOf(plan.via, line) ?? agentSession;
   const usage = meter.get();
+  const resumed = plan.resume ? { agentSession: plan.resume.agentSession, fromDispatchId: plan.resume.fromDispatchId, failed: resumeFailed } : null;
   const replySubmitted = existsSync(plan.replyPath);
   const isolation = plan.isolation ? settleIsolation(plan, replySubmitted) : null;
   const limit = replySubmitted ? null : agentLimit(result);
   const report = {
     schemaVersion: 1, dispatchId: plan.dispatchId, sessionId: plan.sessionId, requestId: plan.requestId,
     mode: plan.mode, via: plan.via, model: plan.model, effort: plan.effort, finishedAt: now(), durationMs: Date.now() - startedAt,
-    code: result.code, killed: result.killed, replySubmitted, isolation, usage, limit,
+    code: result.code, killed: result.killed, replySubmitted, isolation, usage, limit, agentSession, resumed,
     ...(plan.fallbackFrom ? { fallbackFrom: plan.fallbackFrom } : {}),
     // What the agent did, step by step, and the last thing it said.
     progress, lastMessage: progress.findLast((event) => event.kind === "note")?.text ?? null,
@@ -498,7 +569,7 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   });
   return {
     dispatched: true, dispatchId: plan.dispatchId, via: plan.via, model: plan.model, effort: plan.effort, sessionId: plan.sessionId, requestId: plan.requestId,
-    replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs, usage, limit,
+    replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs, usage, limit, resumed,
     ...(plan.fallbackFrom ? { fallbackFrom: plan.fallbackFrom } : {}),
     isolation, lastMessage: report.lastMessage, steps: progress.length,
     log: saved ? join(plan.root, sessionRelative(plan.sessionId), logPath) : null,
