@@ -15,6 +15,7 @@ import { ensure } from "../validation.ts";
 import type { Session } from "../types.ts";
 import { authorizationState } from "../state.ts";
 import { developInstruction } from "./shared.ts";
+import { shipSession } from "./ship.ts";
 import type { Core } from "./app.ts";
 
 /** Automatic loops, by session: a planning handoff (plan → assess → revise) or a code review
@@ -30,6 +31,8 @@ export type Loop = {
   codings?: number; reviews?: number; reviewMax?: number;
   /** Profiles that hit a limit in this run: their fallback is used for the rest of it. */
   limited?: string[];
+  /** --ship: when the code review passes, ship the change (commit, push, merge request, close). */
+  ship?: boolean;
 };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -294,7 +297,7 @@ export function createRuns(app: Core) {
       return void startDevelopment(ctx as ExtensionCommandContext, id, cycles);
     }
     if (loop.mode === "review" && (s.status === "READY_TO_CLOSE" || s.contractReview === "PASS"))
-      return endLoop(ctx, id, `Review passed after ${cycles}. Nothing was closed: run /waicc-close when you are satisfied.`);
+      return passed(ctx as ExtensionCommandContext, id, loop, `Review passed after ${cycles}.`);
     if (loop.mode === "review" && loop.reviewMax === 1)
       return endLoop(ctx, id, "Run finished after its one review, as you asked with --review-once. The main agent has assessed it: see its findings, then fix them or dispatch the next step yourself.");
     const next = s.rounds.find((round) => round.status === "WAITING");
@@ -312,6 +315,14 @@ export function createRuns(app: Core) {
     } catch (error) {
       endLoop(ctx, id, `${loopName(loop)} stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
     }
+  }
+  /** The run's code review passed: with --ship the change goes out (asking first unless autoShip); otherwise nothing is closed. */
+  function passed(ctx: ExtensionCommandContext, id: string, loop: Loop, done: string): void {
+    if (!loop.ship) return endLoop(ctx, id, `${done} Nothing was closed: /waicc-ship to commit, push and open the merge request, or /waicc-close when you are satisfied.`);
+    loops.delete(id);
+    shipSession(app, ctx, id, {}, true)
+      .then((shipped) => { if (!shipped) endLoop(ctx, id, `${done} Not shipped, as you chose: /waicc-ship when you are ready.`); })
+      .catch((error) => endLoop(ctx, id, `${done} Shipping stopped: ${error instanceof Error ? error.message : String(error)}`, "error"));
   }
   /** --develop: the plan was accepted, so authorize development as the human asked, unless a decision is open. */
   async function startDevelopment(ctx: ExtensionCommandContext, id: string, cycles: string): Promise<void> {
@@ -351,7 +362,7 @@ export function createRuns(app: Core) {
     const waiting = s.rounds.find((round) => round.status === "WAITING");
     if (!waiting) {
       if (s.status === "READY_TO_CLOSE" || (loop.reviews && s.contractReview === "PASS"))
-        return endLoop(ctx, id, `${name} finished: the review passed (${done}). Nothing was closed: run /waicc-close when you are satisfied.`);
+        return passed(ctx, id, loop, `${name} finished: the review passed (${done}).`);
       if (loop.reviewMax === 1 && loop.reviews)
         return endLoop(ctx, id, `${name} finished after its one review, as you asked with --review-once (${done}). The main agent has assessed it: see its findings. To have them fixed, ask the main agent for one coding handoff and send it with /waicc-dispatch --implement.`);
       if (loop.phase === "developing") return; // The main agent is still preparing the coding handoff.

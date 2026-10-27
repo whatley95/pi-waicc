@@ -117,6 +117,19 @@ test("--loop reviews, lets the main agent fix, re-reviews automatically and stop
   assert.equal(h.dispatched(), 2, "a finished loop dispatches nothing more");
 });
 
+test("--ship: when the loop's review passes, it goes on to ship (here it stops: the project is not a Git repository)", async (t) => {
+  const { root, id } = reviewWaiting(t);
+  const h = harness(root, [answer()]);
+  await h.use(id);
+  await h.dispatch("--via codex --loop --ship");
+  await waitFor(() => h.prompts.length === 1, "the assessment");
+  mainAgentAccepts(root, id);
+  await h.turnEnds();
+  await waitFor(() => h.loopMessages().some((m) => m.includes("Shipping stopped")), "the ship attempt");
+  assert.match(h.loopMessages().at(-1)!, /^Review passed after 1 cycle\. Shipping stopped: This project is not a Git repository/);
+  assert.equal(loadSession(root, id).status, "READY_TO_CLOSE", "nothing is closed when shipping did not happen");
+});
+
 test("the loop stops when the same findings return, when no fresh review is requested, and at its cap", async (t) => {
   const repeated = reviewWaiting(t);
   const same = [{ id: "F1", description: "Missing account check" }];

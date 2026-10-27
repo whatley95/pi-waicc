@@ -1241,6 +1241,53 @@ Both deliveryVerified and legacy verified remain false throughout. Legacy sessio
 without these fields default to NOT_REVIEWED and deliveryVerified false; they do
 not inherit an approval from an old READY_FOR_HANDOFF record.
 
+### Shipping a reviewed change
+
+`/waicc-ship` (Pi, human only; CLI `waicc ship <session> --dry-run|--yes`) is `planShip` then
+`ship` then `closeShipped` (`src/ship.ts`, `src/workflow/closing.ts`). `planShip` changes
+nothing. It requires:
+- a Git repository, and a session that is not a `--rev`/`--mr` review;
+- `READY_TO_CLOSE` with a code `reviewApproval` that `approvalIsCurrent` against the current
+  snapshot, whose fingerprint becomes `plan.fingerprint`.
+
+Files are the `git status --porcelain -z --untracked-files=all` paths of the project (prefix
+stripped in a monorepo; renames add both paths) that are in the latest assessed code round's
+`review.changedPaths`; the rest are `leftOut`. The branch is `--branch`, else the earlier
+`shipped.branch`, else the current branch when it is not the target, else
+`waicc/<slug(title)>` (suffixed `-2`… while taken). It must pass `git check-ref-format`,
+differ from the target, and not exist when it is new. The target is `--into`, else the earlier
+`shipped.target`, else `refs/remotes/<remote>/HEAD`, else `main`/`master` when the remote has
+them. `earlierCommits` are `<remote>/<target>..HEAD`. Planning fails when there are neither
+files nor earlier commits.
+
+`ship` then runs these steps:
+1. Recheck the fingerprint (an edit after the confirmation commits nothing).
+2. `git switch -c` for a new branch.
+3. `git add -A` and `git commit -F` with `--pathspec-from-file` (NUL-separated, literal
+   pathspecs), so only those paths are committed.
+4. `git push --set-upstream <remote> HEAD:refs/heads/<branch>` with `GIT_TERMINAL_PROMPT=0`
+   and `GCM_INTERACTIVE=never`.
+5. Open the request through the opener `requestOpener` chose. A failure there leaves the push
+   done and records `request.how: "none"` with a note.
+
+| Remote | Opener |
+| --- | --- |
+| GitHub (`github.com` in the URL) | `gh pr view <branch>` (reused when `OPEN`), else `gh pr create --body-file -`; without gh, the compare URL |
+| GitLab with a host token from the user file | `GET /merge_requests?state=opened&source_branch&target_branch` (reused), else `POST /merge_requests` with the description and `remove_source_branch` |
+| GitLab without a token | push options `merge_request.create`, `.target`, `.remove_source_branch`, `.title` (`Draft: ` with `--draft`) and a one-line `.description`; the URL is read from the push output. A push refused for push options is retried without them. Not used on a re-ship |
+| Anything else | push only |
+
+`closeShipped` closes with reason `Shipped as <url|branch> (…)`, checking `approvalIsCurrent`
+against `shipped.reviewedFingerprint`, since the commit changes Git's part of the fingerprint.
+It sets `session.shipped` and writes `lifecycle/<closure>/ship.json`.
+
+The Pi command asks with a summary first. A `--ship` dispatch run (`DispatchOptions.ship`,
+which needs `--loop` or `--review` and not `--review-once`; on a planning handoff it needs
+`--develop`) calls the same path when its review passes, asking unless the user file sets
+`autoShip: true` (default false; a project file setting it is rejected). Without a UI and
+without autoShip it stops and says to run `/waicc-ship`. The main agent is told to offer
+`/waicc-ship` and never to commit or push.
+
 ## Session lists and recoverable deletion
 
 `/waicc-list` lists open sessions, independently of the selected session. `all`

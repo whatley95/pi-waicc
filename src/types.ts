@@ -246,6 +246,8 @@ export interface Session {
   closure?: Closure;
   /** Set by /waicc-review --rev: every code review in this session covers this change. */
   revisionReview?: RevisionReview;
+  /** Set by /waicc-ship: the branch, commit and merge request the reviewed change went out as. */
+  shipped?: Shipped;
   deliveryVerified: false;
   verified: false;
 }
@@ -270,6 +272,20 @@ export interface MemoryEntry {
   corroborations?: { sessionId: string; model: string | null; at: string }[];
   /** A decision the human answered with /waicc-decide: the entry restates it. */
   decision?: { sessionId: string; decisionId: string; record: string };
+}
+/** A reviewed change as /waicc-ship sent it out. */
+export interface Shipped {
+  shippedAt: string;
+  remote: string;
+  provider: "gitlab" | "github";
+  branch: string;
+  target: string;
+  commit: string;
+  files: string[];
+  /** The source the passing review approved, before the commit changed Git's state. */
+  reviewedFingerprint: string;
+  /** The merge request: how it was opened, or a null url with why when it could not be. */
+  request: { number: number | null; url: string | null; how: "api" | "push-options" | "gh" | "existing" | "none"; note: string | null };
 }
 /** A Git commit or range, or SVN revisions, resolved when the review was requested. */
 export interface RevisionReview {

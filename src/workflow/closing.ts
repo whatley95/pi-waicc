@@ -5,7 +5,7 @@ import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { ensure, text, readyPlan } from "../validation.ts";
 import { acceptedFindings } from "../state.ts";
-import type { Session } from "../types.ts";
+import type { Session, Shipped } from "../types.ts";
 import { requireOpen, resetReview, approvalIsCurrent, contract } from "./shared.ts";
 
 /** Cancelling, amending, closing, force-closing and reopening a session. */
@@ -116,7 +116,11 @@ export function forceCloseSession(
     );
   });
 }
-export function closeSession(cwd: string, id: string, reason: string): Session {
+/** /waicc-ship, after the push: the session is closed with where the change went. */
+export function closeShipped(cwd: string, id: string, shipped: Shipped): Session {
+  return closeSession(cwd, id, `Shipped as ${shipped.request.url ?? `branch ${shipped.branch}`} (${shipped.commit.slice(0, 10)} on ${shipped.remote}/${shipped.branch}, into ${shipped.target}).`, shipped);
+}
+export function closeSession(cwd: string, id: string, reason: string, shipped?: Shipped): Session {
   const root = projectRoot(cwd);
   return withLock(root, () => {
     const s = loadSession(root, id);
@@ -131,7 +135,8 @@ export function closeSession(cwd: string, id: string, reason: string): Session {
       "Resolve pending replies before closing",
     );
     ensure(
-      approvalIsCurrent(s, snapshot(root).fingerprint),
+      // Shipping committed the reviewed files, which changes Git's state: it checked the source just before.
+      approvalIsCurrent(s, shipped ? shipped.reviewedFingerprint : snapshot(root).fingerprint),
       "The passing review no longer matches the current contract, requirements or source. Request a fresh review.",
     );
     readyPlan(contract(root, s).contract);
@@ -158,11 +163,15 @@ export function closeSession(cwd: string, id: string, reason: string): Session {
       approval: { ...s.reviewApproval! },
     };
     s.status = "CLOSED";
+    if (shipped) s.shipped = shipped;
     return commit(
       root,
       s,
-      "contract.closed-by-explicit-command",
-      closureFiles(s, `Contract review: PASS. Assessment request: ${round.id}.`),
+      shipped ? "contract.shipped" : "contract.closed-by-explicit-command",
+      {
+        ...closureFiles(s, `Contract review: PASS. Assessment request: ${round.id}.${shipped ? `\nShipped: ${shipped.request.url ?? shipped.branch}.` : ""}`),
+        ...(shipped ? { [`lifecycle/${s.closure.id}/ship.json`]: json(shipped) } : {}),
+      },
     );
   });
 }
