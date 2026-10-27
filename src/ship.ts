@@ -105,6 +105,8 @@ export function shipDescription(s: Session, root: string): string {
   return [
     "> 🤖 **Planned, coded and reviewed by AI agents in WAICC.** A person started it and shipped it; review it as you would any change.",
     "",
+    // Merging closes the issue it was planned from, on GitLab and GitHub alike.
+    ...(s.issue ? [`Closes #${s.issue.number}`, ""] : []),
     "## Requirements",
     ...contract.requirements.map((r) => `- **${r.id}:** ${r.text}`),
     "",
@@ -145,12 +147,13 @@ export function planShip(cwd: string, id: string, options: ShipOptions = {}): Sh
   ensure(target, `Could not tell ${remote}'s default branch; name the target with --into <branch>`);
   ensure(validBranch(root, target), `Not a branch name: ${JSON.stringify(target)}`);
   const { contract } = readContract(root, id);
-  let branch = options.branch ?? previous?.branch ?? (branchNow !== target ? branchNow : `waicc/${slug(contract.title)}`);
+  const named = `waicc/${s.issue ? `${s.issue.number}-` : ""}${slug(contract.title)}`;
+  let branch = options.branch ?? previous?.branch ?? (branchNow !== target ? branchNow : named);
   ensure(validBranch(root, branch), `Not a branch name: ${JSON.stringify(branch)}`);
   ensure(branch !== target, `The change would go straight onto ${target}. Ship it on its own branch: drop --branch, or name another.`);
   const newBranch = branch !== branchNow;
   if (newBranch && !options.branch && !previous && exists(root, `refs/heads/${branch}`))
-    for (let n = 2; exists(root, `refs/heads/${branch}`); n++) branch = `waicc/${slug(contract.title)}-${n}`;
+    for (let n = 2; exists(root, `refs/heads/${branch}`); n++) branch = `${named}-${n}`;
   ensure(!newBranch || !exists(root, `refs/heads/${branch}`),
     `Branch ${branch} already exists. Switch to it yourself (git switch ${branch}) if the change belongs there, or pass --branch with a new name.`);
   const base = exists(root, `refs/remotes/${remote}/${target}`) ? `refs/remotes/${remote}/${target}` : null;
@@ -226,7 +229,7 @@ export function gitlabPushOptions(plan: ShipPlan): string[] {
   return [
     "merge_request.create", `merge_request.target=${plan.target}`, "merge_request.remove_source_branch",
     `merge_request.title=${oneLine(`${plan.draft ? "Draft: " : ""}${plan.title}`)}`,
-    `merge_request.description=${oneLine(`Planned, coded and reviewed by AI agents in WAICC (session ${plan.sessionId}). Set up a GitLab token for WAICC to get the full summary here.`)}`,
+    `merge_request.description=${oneLine(`${/^Closes #\d+$/m.exec(plan.description)?.[0].concat(". ") ?? ""}Planned, coded and reviewed by AI agents in WAICC (session ${plan.sessionId}). Set up a GitLab token for WAICC to get the full summary here.`)}`,
   ];
 }
 

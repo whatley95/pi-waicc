@@ -7,6 +7,7 @@ import { projectRoot } from "../source.ts";
 import { openPage } from "../tracker.ts";
 import { postedComments, recordPostedComments, type PostedComments } from "../workflow.ts";
 import { ensure } from "../validation.ts";
+import { githubIssue, gitlabIssue, type FetchedIssue } from "../issues.ts";
 import type { App } from "./app.ts";
 
 const short = (sha: string) => sha.slice(0, 10);
@@ -87,6 +88,26 @@ async function setupGitlabHost(app: App, ctx: ExtensionCommandContext, project: 
   if (!(keep && !windows)) sessionTokens.set(project.host.toLowerCase(), token);
   ctx.ui.notify(`${added ? `Added ${project.host} to ${added.path}. ` : ""}${keep ? (windows ? (saved ? "Saved GITLAB_TOKEN in your Windows user settings; new terminals will have it." : "Could not save GITLAB_TOKEN in your Windows settings; it works for this Pi session.") : "Saved the token in your user file.") : "The token works for this Pi session only."}`, "info");
   return resolveGitlabHost(ctx.cwd, project.host);
+}
+
+/**
+ * /waicc-planning --issue: the issue from the project's remote. GitHub through gh; GitLab through
+ * its API with your token for the host, sent only to a host listed in your user file.
+ */
+export async function fetchIssue(app: App, ctx: ExtensionCommandContext, number: number, wanted?: string): Promise<FetchedIssue> {
+  const { services } = app;
+  const root = projectRoot(ctx.cwd);
+  const { remote, url, provider } = chooseRemote(root, wanted);
+  if (provider === "github") return (services.githubIssue ?? githubIssue)(root, remote, number);
+  let project: GitLabProject | null = null;
+  try {
+    project = url ? gitlabProject(url) : null;
+  } catch { /* reported below */ }
+  ensure(project, `${remote} is not a GitLab or GitHub project WAICC can read issues from`);
+  project = await (services.gitlabOrigin ?? canonicalProject)(project);
+  const host = resolveGitlabHost(ctx.cwd, project.host);
+  ensure(host?.token, `Reading issue #${number} from ${project.host} needs a GitLab token. List the host under "gitlab" in your user file (${userConfigPath()}), for example "gitlab": { "${project.host}": { "tokenEnv": "GITLAB_TOKEN" } }, with a token that has the api (or read_api) scope. /waicc-mr-comments walks you through it.`);
+  return gitlabIssue((services.gitlab ?? gitlabClient)(project, host), remote, number);
 }
 
 const ago = (iso: string) => {
