@@ -3,6 +3,7 @@ import type { GitLabCall, GitLabHost, GitLabProject, OriginProbe } from "../gitl
 import type { ShipPlan } from "../ship.ts";
 import type { FetchedIssue } from "../issues.ts";
 import type { PipelineResult } from "../pipelines.ts";
+import type { PiSpawner } from "../queue.ts";
 import type { Shipped } from "../types.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession } from "../files.ts";
@@ -37,6 +38,8 @@ export interface Services {
   openTerminal?: (path: string) => boolean;
   /** Reads a shipped pull request's checks (gh), replaceable in tests. */
   githubChecks?: (root: string, shipped: Shipped) => Promise<PipelineResult>;
+  /** Starts a queued task's headless Pi (RPC), replaceable in tests. */
+  queuePi?: PiSpawner;
   /** How often a shipped change's pipeline is checked; tests make it fast. */
   pipelinePollMs?: number;
   /** Reads a GitHub issue for /waicc-planning --issue (gh), replaceable in tests. */

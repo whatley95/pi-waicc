@@ -6,6 +6,7 @@ import { projectRoot } from "../source.ts";
 import { chooseRemote } from "../revision.ts";
 import type { Shipped } from "../types.ts";
 import { resolveGitlabHost } from "./merge-requests.ts";
+import { reportRun } from "../queue.ts";
 import type { App } from "./app.ts";
 
 /** At most this many automatic fixes of a failed pipeline per session, in one Pi process. */
@@ -61,14 +62,21 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
     pi.sendMessage({ customType: "waicc-pipeline", content: message, display: true }, { triggerTurn: false });
   };
   const read = await reader(app, ctx, shipped);
-  if (typeof read === "string") return say("info", `Not watching the pipeline for ${where}: ${read}.`);
+  if (typeof read === "string") {
+    reportRun({ kind: "pipeline", outcome: "not-watching", text: read });
+    return say("info", `Not watching the pipeline for ${where}: ${read}.`);
+  }
   stopPipelineWatch(id);
   const started = Date.now();
   let busy = false, errors = 0, seen = false;
   const done = async (result: PipelineResult) => {
     stopPipelineWatch(id);
     const link = result.url ? ` (${result.url})` : "";
-    if (result.state === "success") return say("info", `✅ The pipeline passed for ${where}${link}.`);
+    if (result.state === "success") {
+      reportRun({ kind: "pipeline", outcome: "passed", text: `The pipeline passed${link}.` });
+      return say("info", `✅ The pipeline passed for ${where}${link}.`);
+    }
+    if (result.state !== "failed") reportRun({ kind: "pipeline", outcome: "ended", text: `The pipeline ended: ${result.state}${link}.` });
     if (result.state !== "failed")
       return say("warning", result.state === "manual" ? `The pipeline for ${where} waits for a manual job${link}.` : `The pipeline for ${where} was ${result.state === "none" ? "not started" : "canceled or skipped"}${link}.`);
     const names = result.failed.map((job) => job.name).join(", ") || "a job";
@@ -76,12 +84,17 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
     const tried = fixes.get(id) ?? 0;
     const fix = () => {
       fixes.set(id, tried + 1);
-      return app.fixPipeline(ctx, id, result).catch((error) => say("error", `The fix could not start: ${error instanceof Error ? error.message : String(error)}`));
+      reportRun({ kind: "pipeline", outcome: "fixing", text: names });
+      return app.fixPipeline(ctx, id, result).catch((error) => {
+        reportRun({ kind: "pipeline", outcome: "failed", text: `The pipeline failed (${names}), and the fix could not start.` });
+        say("error", `The fix could not start: ${error instanceof Error ? error.message : String(error)}`);
+      });
     };
     if (automatic && tried < pipelineFixes) {
       say("info", `Fixing it automatically, as your --ship run allows (attempt ${tried + 1} of ${pipelineFixes}): the session is reopened, the main agent fixes it, a review runs, then it ships again.`);
       return void fix();
     }
+    if (!automatic || tried >= pipelineFixes) reportRun({ kind: "pipeline", outcome: "failed", text: `The pipeline failed: ${names}${link}.` });
     if (automatic) return say("warning", `The pipeline still fails after ${pipelineFixes} automatic fixes. Look at the jobs yourself; /waicc-reopen <reason> to work on it in this session.`);
     if (!ctx.hasUI) return;
     const picked = await ctx.ui.select(`The pipeline failed (${names}). Fix it?`, ["Fix it: reopen the session, the main agent fixes it, a review runs, then ship again", "Leave it"]);
@@ -97,11 +110,13 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
       seen ||= result.url !== null && result.state === "pending";
       if (Date.now() - started > (seen ? giveUpMs : noPipelineMs)) {
         stopPipelineWatch(id);
+        reportRun({ kind: "pipeline", outcome: "ended", text: seen ? "Still running after 2 hours." : "No pipeline appeared." });
         say("warning", seen ? `Stopped watching the pipeline for ${where} after 2 hours; it was still running.` : `No pipeline appeared for ${where} within 15 minutes, so there is nothing to watch.`);
       }
     } catch (error) {
       if (++errors >= 5) {
         stopPipelineWatch(id);
+        reportRun({ kind: "pipeline", outcome: "ended", text: `Could not read the pipeline: ${error instanceof Error ? error.message : String(error)}` });
         say("warning", `Stopped watching the pipeline for ${where}: ${error instanceof Error ? error.message : String(error)}`);
       }
     } finally {
