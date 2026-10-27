@@ -90,7 +90,7 @@ test("the project file wins over the user file, and nothing chosen names both fi
 test("agent configs are validated strictly, and can never grant --implement", (t) => {
   const cases: [unknown, RegExp][] = [
     ["{ not json", /is not valid JSON/],
-    [{ agents: {} }, /only "profiles", "roles", "autoContinue", "autoCompactTokens", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed/],
+    [{ agents: {} }, /only "profiles", "roles", "autoContinue", "autoCompactTokens", "resumeReviews", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed/],
     [{ profiles: { x: { via: "gemini" } } }, /profile x: via must be one of claude, codex, pi, agy/],
     [{ profiles: { x: { via: "codex", implement: true } } }, /profile x allows only via, model, effort, timeoutMinutes and fallback/],
     [{ profiles: { "bad name": { via: "codex" } } }, /profile name "bad name"/],
@@ -246,6 +246,18 @@ test("the default template carries the full profile set: role defaults plus vari
     { planning: "opus", review: "sol", implementation: "codex", testing: "deepseek", advisor: "sonnet" },
   );
   assert.deepEqual(resolveDispatch(root, id, "opus-max").options, { via: "claude", model: "claude-opus-5-5", effort: "max" });
+});
+
+test("resumeReviews is off by default and comes only from your user file", (t) => {
+  const fresh = project(t, { user: { profiles, roles: { planning: "claude" } } });
+  assert.equal(loadAgentConfig(fresh.root).resumeReviews, false);
+  assert.equal(resolveDispatch(fresh.root, fresh.id, "").options.resumeReview, undefined);
+  const mine = project(t, { user: { resumeReviews: true, profiles, roles: { planning: "claude" } } });
+  assert.equal(resolveDispatch(mine.root, mine.id, "").options.resumeReview, true);
+  assert.equal(resolveDispatch(mine.root, mine.id, "--via codex").options.resumeReview, true, "also with a typed agent");
+  assert.equal(profilesView(mine.root).resumeReviews, true);
+  assert.throws(() => loadAgentConfig(project(t, { project: { resumeReviews: true } }).root), /"resumeReviews" is allowed only in your user file/);
+  assert.throws(() => loadAgentConfig(project(t, { user: { resumeReviews: "yes" } }).root), /"resumeReviews" must be true or false/);
 });
 
 test("autoContinue comes only from your user file; --continue and --no-continue win, and a loop always continues", (t) => {
