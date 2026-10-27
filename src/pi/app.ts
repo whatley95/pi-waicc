@@ -2,6 +2,7 @@ import { recipientAssignment } from "../recipient.ts";
 import type { GitLabCall, GitLabHost, GitLabProject, OriginProbe } from "../gitlab.ts";
 import type { ShipPlan } from "../ship.ts";
 import type { FetchedIssue } from "../issues.ts";
+import type { PipelineResult } from "../pipelines.ts";
 import type { Shipped } from "../types.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession } from "../files.ts";
@@ -34,6 +35,10 @@ export interface Services {
   gitlabOrigin?: OriginProbe;
   /** Opens a new terminal in a folder running Pi, replaceable in tests. */
   openTerminal?: (path: string) => boolean;
+  /** Reads a shipped pull request's checks (gh), replaceable in tests. */
+  githubChecks?: (root: string, shipped: Shipped) => Promise<PipelineResult>;
+  /** How often a shipped change's pipeline is checked; tests make it fast. */
+  pipelinePollMs?: number;
   /** Reads a GitHub issue for /waicc-planning --issue (gh), replaceable in tests. */
   githubIssue?: (root: string, remote: string, number: number) => Promise<FetchedIssue>;
   /** Opens a GitHub pull request for /waicc-ship (gh), replaceable in tests. */

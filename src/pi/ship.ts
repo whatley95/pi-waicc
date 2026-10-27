@@ -6,7 +6,8 @@ import { ensure } from "../validation.ts";
 import { json } from "../files.ts";
 import type { Shipped } from "../types.ts";
 import { resolveGitlabHost } from "./merge-requests.ts";
-import type { App, Core } from "./app.ts";
+import type { App } from "./app.ts";
+import { watchPipeline } from "./pipelines.ts";
 
 const list = (items: string[], max = 12) => [...items.slice(0, max).map((item) => `  ${item}`), ...(items.length > max ? [`  … and ${items.length - max} more`] : [])].join("\n");
 
@@ -27,7 +28,7 @@ export function shipSummary(plan: ShipPlan): string {
  * close. A --ship run skips the confirmation only with "autoShip": true in your user file.
  * Returns what went out, or null when you said no.
  */
-export async function shipSession(app: Core, ctx: ExtensionCommandContext, id: string, options: ShipOptions, automatic = false): Promise<Shipped | null> {
+export async function shipSession(app: App, ctx: ExtensionCommandContext, id: string, options: ShipOptions, automatic = false): Promise<Shipped | null> {
   const { pi, notice } = app;
   const plan = planShip(ctx.cwd, id, options);
   const unasked = automatic && loadAgentConfig(ctx.cwd).autoShip;
@@ -51,6 +52,8 @@ export async function shipSession(app: Core, ctx: ExtensionCommandContext, id: s
   notice(ctx, shipped.request.url ? "info" : "warning", message);
   ctx.ui.notify(message, shipped.request.url ? "info" : "warning");
   pi.sendMessage({ customType: "waicc-ship", content: json(shipped), display: true }, { triggerTurn: false });
+  // A --ship run's failed pipeline is fixed automatically; after a typed /waicc-ship you are asked.
+  await watchPipeline(app, ctx, id, automatic).catch((error) => ctx.ui.notify(`Not watching the pipeline: ${error instanceof Error ? error.message : String(error)}`, "warning"));
   return shipped;
 }
 
