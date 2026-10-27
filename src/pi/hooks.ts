@@ -15,6 +15,7 @@ import { sourceFirst, contractOwner, recipientResponsibilities } from "../instru
 import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
 import { loadAgentConfig } from "../profiles.ts";
 import type { App } from "./app.ts";
+import { stopPipelineWatches } from "./pipelines.ts";
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
@@ -125,7 +126,7 @@ export function registerHooks(app: App): void {
   });
   pi.on("model_select", async (_event, ctx) => { track(ctx); });
   // Pi is closing this chat: its agents stop with it, so the page shows the project idle.
-  pi.on("session_shutdown", async (_event, ctx) => { endMain(ctx); stopWatching(ctx); track(ctx, true, false); });
+  pi.on("session_shutdown", async (_event, ctx) => { endMain(ctx); stopWatching(ctx); stopPipelineWatches(key(ctx)); track(ctx, true, false); });
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);
