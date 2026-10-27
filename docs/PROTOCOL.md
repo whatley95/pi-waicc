@@ -1039,7 +1039,16 @@ instructions say to verify every earlier fix or dispute, review `changedSinceRev
 with affected call paths and tests, and elsewhere report only critical/high findings (medium
 or low concerns in unchanged code go in the summary as optional). `fullReview: true` on
 `waicc_prepare`/`waicc_request` (code review only; the human must ask for it) omits
-`followUp`. Assessment rules are unchanged. `/waicc-review --contract` explicitly retains specification-only
+`followUp`. Dispatch records the agent's own conversation id in each run's `result.json`
+(`agentSession`: Claude's `session_id`, Codex's `thread.started` `thread_id`). Dispatching a
+follow-up with `via` claude or codex looks up the latest run of the `previousRequestId` round
+with `replySubmitted`, the same `via` and model and an `agentSession`, finished at most 60
+minutes ago; if there is one, the run resumes it (Claude `--resume <id>` with the same tool
+limits; Codex `exec --sandbox read-only -C <root> resume … -c sandbox_mode="read-only" <id>`)
+with a prompt that names the earlier request and says remembered files may be out of date.
+`start.json` and `result.json` record `resume`/`resumed` `{agentSession, fromDispatchId}`. A
+resumed run that ends without a reply, unstopped and without a usage limit, is retried once in
+the same dispatch with fresh arguments; `resumed.failed` keeps why. Assessment rules are unchanged. `/waicc-review --contract` explicitly retains specification-only
 review. New Pi `waicc_prepare`/`waicc_request` mode review defaults to reviewKind code;
 reviewKind contract is explicit. Old on-disk rounds without review metadata remain
 contract-only; they are not upgraded to code approval.
