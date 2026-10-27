@@ -15,6 +15,7 @@ import {
   amend,
   cancel,
   closeSession,
+  closeShipped,
   createSession,
   delegateWork,
   exportHandoff,
@@ -32,7 +33,8 @@ import { advisorInput, ensure } from "./validation.ts";
 import { checkCommand } from "./checks.ts";
 import { commandText, maxCheckMs, prepareDispatch, runAgent, runDispatch } from "./dispatch.ts";
 import { elapsed } from "./progress.ts";
-import { initAgentConfig, profilesView, resolveDispatch } from "./profiles.ts";
+import { gitlabHost, initAgentConfig, profilesView, resolveDispatch } from "./profiles.ts";
+import { planShip, requestOpener, ship } from "./ship.ts";
 import { serveMcp } from "./mcp.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
@@ -222,6 +224,23 @@ try {
           ? forceCloseSession(cwd, id, rest.slice(1).join(" ") || undefined)
           : closeSession(cwd, id, rest.join(" "));
       break;
+    case "ship": {
+      // No dialog here: --yes is your confirmation, after reading what --dry-run shows.
+      const dry = rest.includes("--dry-run"), yes = rest.includes("--yes");
+      const words = rest.filter((word) => word !== "--dry-run" && word !== "--yes");
+      ensure(id && (dry || yes), "Usage: waicc ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes");
+      const plan = planShip(cwd, id, {
+        into: flag(words, "--into"), branch: flag(words, "--branch"), remote: flag(words, "--remote"), draft: words.includes("--draft"),
+      });
+      if (dry) {
+        output = { dryRun: true, ...plan, message: undefined };
+        break;
+      }
+      const shipped = await ship(plan, await requestOpener(plan, { host: (name) => gitlabHost(cwd, name) }));
+      closeShipped(cwd, id, shipped);
+      output = { shipped };
+      break;
+    }
     case "reopen":
       output = reopenSession(cwd, id, rest.join(" "));
       break;
@@ -262,7 +281,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | recover-lock",
       };
   }
   process.stdout.write(json(output));
