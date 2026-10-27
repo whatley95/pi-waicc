@@ -37,7 +37,7 @@ Or `/waicc-dispatch --auto --ship` after `/waicc-planning` to plan, build, revie
 [Dispatch to a headless agent](#dispatch-to-a-headless-agent) ·
 [Agent profiles](#agent-profiles-choose-an-agent-per-role-once) ·
 [MCP server](#mcp-server-for-any-agent) · [Commands](#commands) ·
-[Ship it](#ship-it-from-a-passed-review-to-a-merge-request) · [Finish a contract](#finish-a-contract-discussion) ·
+[Ship it](#ship-it-from-a-passed-review-to-a-merge-request) · [Overnight queue](#overnight-queue-tasks-run-while-you-are-away) · [Finish a contract](#finish-a-contract-discussion) ·
 [Advisor](#when-the-main-agent-is-stuck-it-asks-the-advisor) ·
 [Monorepos](#monorepos-one-service-as-its-own-project) ·
 [Storage](#project-storage-and-version-control) · [Memory](#memory-and-wai-skills) ·
@@ -1435,6 +1435,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-delete <session-id>`                    | Move one CLOSED session to project-local recovery storage; no source or shared-memory deletion           |
 | `/waicc-restore <session-id>`                   | Restore a deleted session as CLOSED, preserving history without selecting or reopening it               |
 | `/waicc-use <session-id>`                        | Select coordinator mode for an existing project session; explicitly leaves recipient mode             |
+| `/waicc-queue [add <task>\|add --issue <n>\|remove <n>\|clear\|run [--code-with p] [--plan-with p] [--review-with p]\|stop]` | Tasks run one after another while you are away, each in its own branch folder and headless Pi |
 | `/waicc-ship [--into b] [--branch n] [--remote r] [--draft]` | Commit the reviewed files on their own branch, push, open the merge request (GitLab) or pull request (GitHub), then close; asks first |
 | `/waicc-close [session-id] <reason>`             | Close fresh code-review READY_TO_CLOSE, or planning-only SPEC_APPROVED |
 | `/waicc-close [session-id] --force [reason]`     | Stop the contract immediately, cancel pending handoffs and preserve history; no review PASS             |
@@ -1563,6 +1564,37 @@ login fails instead of hanging. `waicc ship <session> --dry-run` (CLI) shows the
 
 The main agent never ships: it offers `/waicc-ship` when the review passes. Only you run it,
 or a run you started with `/waicc-dispatch --auto --ship`.
+
+## Overnight queue: tasks run while you are away
+
+Queue several tasks or issues, start the queue, and come back to a list of reviewed changes,
+or of open merge requests:
+
+```text
+/waicc-queue add Add paging to customer search
+/waicc-queue add --issue 42                  # you read the issue now, as with /waicc-planning --issue
+/waicc-queue                                 # the list, with each task's state and merge request
+/waicc-queue run --review-with sol-ultra     # one after another; you confirm once
+/waicc-queue stop
+```
+
+- **Each task runs in its own branch folder** (`waicc/queue-<n>-<task>`, beside this one, as
+  [`/waicc-worktree`](#several-branches-at-once-one-folder-per-branch) makes them), with its
+  own headless Pi. That Pi loads only WAICC, and runs `/waicc-planning`, then
+  `/waicc-dispatch --auto --ship` with your agent profiles. `--code-with`, `--plan-with` and
+  `--review-with` on `run` apply to every task. A task that fails does not stop the ones after it.
+- **Queued Pis answer every question no**, except the issue you confirmed when you queued it.
+  - **With `"autoShip": true`** in your user file, each passing task is committed, pushed and
+    gets its merge request, and its pipeline is watched and fixed up to twice.
+  - **Without it**, each stops with its review passed (🟡 `reviewed`): open its folder, check it,
+    and `/waicc-ship` there. Nothing is pushed.
+- **Your budget applies to every task**, and a task gives up after 4 hours.
+- **Keep this Pi open while the queue runs**: it is the one driving the queue. `/waicc-queue`
+  shows where each task got to, with its folder, its merge request and how it ended.
+- **Branch folders start without installed dependencies**, such as `node_modules`. The main
+  agent installs them when its checks need them. Remove a folder you are done with with
+  `/waicc-worktree remove <branch>`, and finished tasks from the list with `/waicc-queue clear`.
+- In each folder, `pi -c` opens that task's chat, to see or continue what its main agent did.
 
 ## Finish a contract discussion
 

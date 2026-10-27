@@ -16,6 +16,7 @@ import type { Session } from "../types.ts";
 import { authorizationState } from "../state.ts";
 import { developInstruction } from "./shared.ts";
 import { shipSession } from "./ship.ts";
+import { reportRun } from "../queue.ts";
 import { failureText, type PipelineResult } from "../pipelines.ts";
 import { loopCycles } from "../dispatch.ts";
 import type { App } from "./app.ts";
@@ -115,6 +116,7 @@ export function createRuns(app: Core) {
   const coder = (loop: Loop) => (loop.code?.profile ? `your ${loop.code.profile} profile` : "your implementation profile");
   const endLoop = (ctx: ExtensionContext, id: string, message: string, level: "info" | "warning" | "error" = "info") => {
     loops.delete(id);
+    reportRun({ kind: "loop-ended", level, text: message });
     notice(ctx, level, message);
     ctx.ui.notify(message, level);
     pi.sendMessage({ customType: "waicc-review-loop", content: message, display: true }, { triggerTurn: false });

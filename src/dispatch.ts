@@ -617,7 +617,7 @@ export function windowsCommand(program: string, args: string[], env = process.en
   return { file: env.comspec ?? "cmd.exe", args: ["/d", "/s", "/c", `"${line}"`], verbatim: true };
 }
 
-function killTree(pid: number | undefined): void {
+export function killTree(pid: number | undefined): void {
   if (!pid) return;
   if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
   else {

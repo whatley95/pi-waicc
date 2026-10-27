@@ -1345,6 +1345,47 @@ characters.
 `startReview` then dispatches the review loop; a pass ships again. `session.shipped` survives the
 reopen, so that ship reuses its branch, target and merge request.
 
+### Overnight queue
+
+`/waicc-queue` (Pi) keeps `.pi/pi-waicc/queue.json`, written under the writer lock:
+`{schemaVersion: 1, items: [{id, task, issue: {number, title} | null, status, addedAt, startedAt?,
+finishedAt?, folder?, branch?, sessionId?, url?, outcome?}]}`. Status is `waiting`, `running`,
+`shipped`, `reviewed`, `stopped` or `failed`. `add --issue` reads and confirms the issue in the
+calling chat.
+
+`run` takes only `--code-with`, `--plan-with` and `--review-with` (checked with
+`parseDispatchArgs("--auto --ship …")`), confirms once, and marks items left `running` by a
+closed Pi as `stopped`. It then works through the waiting items in order, one Pi process per
+item.
+
+For each item:
+1. `addWorktree(cwd, "waicc/queue-<id>-<slug>")`.
+2. `runItem` starts `pi --mode rpc -ne -e <this WAICC's index> -a` there, with
+   `WAICC_QUEUE_REPORT=<runtime>/queue/<id>-<time>.jsonl`.
+3. It checks `get_commands`, sends `/waicc-planning <task>` (or `--issue <n> [task]`) and waits
+   for `agent_end` (an error notice ends it at once; 30 min at most). It then requires a session
+   that did not exist before, with a WAITING planning round.
+4. It sends `/waicc-dispatch --auto --ship [options]`.
+5. It polls the report file every 2 s.
+
+Every `extension_ui_request` confirm is answered `confirmed: false`, except a title starting
+`Plan from issue #<n>:` for the item's own issue; select, input and editor get
+`cancelled: true`.
+
+A queued Pi's WAICC appends one JSON line per event:
+- `endLoop` writes `loop-ended {level, text}`;
+- a ship writes `shipped {url, branch, sessionId}`;
+- the pipeline watcher writes `pipeline {outcome: passed | fixing | failed | ended | not-watching,
+  text}`.
+
+`runItem` ends:
+- on `loop-ended`: `shipped` if something was shipped, `reviewed` when the text says it was not
+  shipped by choice, otherwise `stopped`;
+- on any `pipeline` outcome except `fixing`: `shipped`;
+- on an error notice before any report, when the Pi exits, after 4 h, or on `/waicc-queue stop`.
+
+It then kills the Pi (its folder is kept) and records the result.
+
 ## Session lists and recoverable deletion
 
 `/waicc-list` lists open sessions, independently of the selected session. `all`

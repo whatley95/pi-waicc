@@ -8,6 +8,7 @@ import type { Shipped } from "../types.ts";
 import { resolveGitlabHost } from "./merge-requests.ts";
 import type { App } from "./app.ts";
 import { watchPipeline } from "./pipelines.ts";
+import { reportRun } from "../queue.ts";
 
 const list = (items: string[], max = 12) => [...items.slice(0, max).map((item) => `  ${item}`), ...(items.length > max ? [`  … and ${items.length - max} more`] : [])].join("\n");
 
@@ -47,6 +48,7 @@ export async function shipSession(app: App, ctx: ExtensionCommandContext, id: st
     host: (name) => resolveGitlabHost(ctx.cwd, name), gitlab: services.gitlab, origin: services.gitlabOrigin, github: services.github,
   }));
   closeShipped(ctx.cwd, id, shipped);
+  reportRun({ kind: "shipped", url: shipped.request.url, branch: shipped.branch, sessionId: id });
   const where = shipped.request.url ? `${shipped.request.how === "existing" ? "Updated" : "Opened"} ${shipped.request.url}` : `Pushed ${shipped.branch}`;
   const message = `Shipped: ${where} (${shipped.files.length} file${shipped.files.length === 1 ? "" : "s"}, commit ${shipped.commit.slice(0, 10)} on ${shipped.branch} → ${shipped.target}). The session is closed.${shipped.request.note ? ` ${shipped.request.note}` : ""}`;
   notice(ctx, shipped.request.url ? "info" : "warning", message);

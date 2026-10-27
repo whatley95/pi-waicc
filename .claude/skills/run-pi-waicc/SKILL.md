@@ -92,6 +92,12 @@ merge request on the project's remote. To exercise them, follow `tests/ship.test
 repository whose `origin` URL looks like GitLab or GitHub but whose push URL
 (`git remote set-url --push`) is a local bare repository, with fake GitLab/GitHub openers.
 
+**The overnight queue starts real Pis.** `/waicc-queue run` spawns `pi --mode rpc` (the `pi` on PATH)
+in a new branch folder per task, and each one calls your model. To test it without a model, give it
+a fake RPC peer through `services.queuePi`, as `tests/queue.test.ts` does. To check that the real
+`pi` starts and loads WAICC, send only `get_commands` to `spawnPi(folder, { PI_CODING_AGENT_DIR: <temp> }, true)`,
+then kill it.
+
 See `driver.mjs` → `roundtrip()` for working contract/reply/assessment bodies, and `docs/PROTOCOL.md` for the schema.
 For the extension's tool layer (`waicc_prepare` etc.) without the Pi runtime, the
 pattern is `tests/extension.test.ts`, which uses Pi's own `loadExtensions()`.
