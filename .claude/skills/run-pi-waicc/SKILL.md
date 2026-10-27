@@ -65,7 +65,7 @@ node .claude/skills/run-pi-waicc/driver.mjs pi "$env:TEMP\waicc-drive-XXXX" "/wa
 MSYS_NO_PATHCONV=1 node .claude/skills/run-pi-waicc/driver.mjs pi "<project>" "/waicc-status all"
 ```
 
-The output starts with `commands: waicc-planning … waicc-memory` (11 commands), which proves the extension loaded.
+The output starts with a `commands: waicc-planning …` line listing every /waicc-* command, which proves the extension loaded.
 After that the driver prints `> <prompt>`, any `[notify:<type>]` lines, and the `customType: "waicc"`
 JSON messages that commands emit via `pi.sendMessage`.
 
@@ -84,7 +84,13 @@ node src/cli.ts --root <project> prepare <sid> contract.json planning "focus tex
 node src/cli.ts --root <project> continue <sid>              # ingest rounds/<rid>/reply.json
 node src/cli.ts --root <project> assess <sid> assessment.json
 node src/cli.ts --root <project> export <sid>
+node src/cli.ts --root <project> ship <sid> --dry-run        # READY_TO_CLOSE only: branch, files, target; changes nothing
 ```
+
+**Never ship for real while testing.** `/waicc-ship` and `ship --yes` commit, push and open a
+merge request on the project's remote. To exercise them, follow `tests/ship.test.ts`: a throwaway
+repository whose `origin` URL looks like GitLab or GitHub but whose push URL
+(`git remote set-url --push`) is a local bare repository, with fake GitLab/GitHub openers.
 
 See `driver.mjs` → `roundtrip()` for working contract/reply/assessment bodies, and `docs/PROTOCOL.md` for the schema.
 For the extension's tool layer (`waicc_prepare` etc.) without the Pi runtime, the

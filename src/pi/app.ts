@@ -1,5 +1,7 @@
 import { recipientAssignment } from "../recipient.ts";
 import type { GitLabCall, GitLabHost, GitLabProject, OriginProbe } from "../gitlab.ts";
+import type { ShipPlan } from "../ship.ts";
+import type { Shipped } from "../types.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
@@ -31,6 +33,8 @@ export interface Services {
   gitlabOrigin?: OriginProbe;
   /** Opens a new terminal in a folder running Pi, replaceable in tests. */
   openTerminal?: (path: string) => boolean;
+  /** Opens a GitHub pull request for /waicc-ship (gh), replaceable in tests. */
+  github?: (plan: ShipPlan) => Promise<Shipped["request"]>;
   /** Saves a Windows user environment variable (what setx does), replaceable in tests. */
   saveUserVariable?: (name: string, value: string) => boolean;
 }

@@ -24,10 +24,10 @@ pi install git:github.com/whatley95/pi-waicc      # once, in a terminal
 /waicc-dispatch                                   # an agent plans; then /waicc-continue
 /waicc-develop                                    # the main agent builds the accepted plan
 /waicc-review <focus>                             # then /waicc-dispatch and /waicc-continue
-/waicc-close <reason>                             # when the review passes
+/waicc-ship                                       # when the review passes: branch, commit, push, MR
 ```
 
-Or `/waicc-dispatch --auto` after `/waicc-planning` to plan, build and review on its own.
+Or `/waicc-dispatch --auto --ship` after `/waicc-planning` to plan, build, review and open the merge request on its own.
 `/waicc-tracker` shows every project on one page.
 
 **This README is the full reference.** Contents: [Install](#install) ·
@@ -37,7 +37,7 @@ Or `/waicc-dispatch --auto` after `/waicc-planning` to plan, build and review on
 [Dispatch to a headless agent](#dispatch-to-a-headless-agent) ·
 [Agent profiles](#agent-profiles-choose-an-agent-per-role-once) ·
 [MCP server](#mcp-server-for-any-agent) · [Commands](#commands) ·
-[Finish a contract](#finish-a-contract-discussion) ·
+[Ship it](#ship-it-from-a-passed-review-to-a-merge-request) · [Finish a contract](#finish-a-contract-discussion) ·
 [Advisor](#when-the-main-agent-is-stuck-it-asks-the-advisor) ·
 [Monorepos](#monorepos-one-service-as-its-own-project) ·
 [Storage](#project-storage-and-version-control) · [Memory](#memory-and-wai-skills) ·
@@ -935,7 +935,15 @@ sent back to the planner automatically, until the plan is accepted (`PLAN_READY`
   review uses them.
 - **`--review` needs `--develop`**; the review stage then follows the same stop rules as any
   review loop. `--develop` without `--loop` is a single planning cycle. `/waicc-dispatch --stop`
-  ends the run at any stage. The run never closes, commits, pushes or deploys.
+  ends the run at any stage. Without `--ship` the run never closes, commits, pushes or deploys.
+- **`--ship` ships the change when the run's code review passes**, as
+  [`/waicc-ship`](#ship-it-from-a-passed-review-to-a-merge-request) does: it asks you first,
+  unless your user file has `"autoShip": true`. It needs `--auto` (or `--loop` on a code review),
+  not `--review-once`.
+
+  ```text
+  /waicc-dispatch --auto --ship     # plan, code, review, fix, then open the merge request
+  ```
 
 Verified live with `/waicc-dispatch --auto`: Claude Opus 5.5 planned (accepted in one cycle),
 development started automatically, the Pi main agent (DeepSeek V4 Pro) coded the function and
@@ -1208,6 +1216,9 @@ Safety rules:
   earlier findings, which is why it is off. If that conversation is gone, the same dispatch
   reviews from scratch. After an hour, or for a full review, another model, Pi or Antigravity,
   it always starts fresh.
+- **`"autoShip": true`** (user file only; off by default) lets a `/waicc-dispatch --ship` run
+  commit, push and open the merge request without asking you first, once its review passes.
+  A typed `/waicc-ship` always asks.
 - **`"budget": { "perSessionUsd": 5 }`** (user file only) stops automatic runs once a
   session's agents have reported that much: a `--loop` does not start its next cycle and
   `--auto` does not start its review. You can always dispatch the next step yourself. Only
@@ -1408,6 +1419,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-delete <session-id>`                    | Move one CLOSED session to project-local recovery storage; no source or shared-memory deletion           |
 | `/waicc-restore <session-id>`                   | Restore a deleted session as CLOSED, preserving history without selecting or reopening it               |
 | `/waicc-use <session-id>`                        | Select coordinator mode for an existing project session; explicitly leaves recipient mode             |
+| `/waicc-ship [--into b] [--branch n] [--remote r] [--draft]` | Commit the reviewed files on their own branch, push, open the merge request (GitLab) or pull request (GitHub), then close; asks first |
 | `/waicc-close [session-id] <reason>`             | Close fresh code-review READY_TO_CLOSE, or planning-only SPEC_APPROVED |
 | `/waicc-close [session-id] --force [reason]`     | Stop the contract immediately, cancel pending handoffs and preserve history; no review PASS             |
 | `/waicc-force-close [session-id] [reason]`       | Shortcut for force-close; ID alone works, or omit it for the selected session                           |
@@ -1481,6 +1493,46 @@ Delete/restore are human coordinator commands, not agent tools. Deleting the cur
 selection clears that chat's saved selection. Other chats pointing to the deleted
 session report it unavailable without selecting another session. CLI equivalents:
 `waicc list [open|all|closed|deleted]`, `waicc delete <id>`, `waicc restore <id>`.
+
+## Ship it: from a passed review to a merge request
+
+When the whole-change code review passes (`READY_TO_CLOSE`), `/waicc-ship` sends the change out:
+
+```text
+/waicc-ship                       # a new branch waicc/<title>, into the remote's default branch
+/waicc-ship --into develop --draft
+/waicc-ship --branch feature/search
+```
+
+1. **It shows you everything first**: the branch, the target, the remote, every file it will
+   commit, earlier commits that go out with the branch, and the changed files it leaves out.
+   Nothing happens until you say yes.
+2. **It commits only the files the passing review covered.** Files you had changed before the
+   session started stay uncommitted, and anything else you had staged stays staged and out of
+   the commit. If a reviewed file changes after the review, or after you said yes, nothing is
+   committed: request a fresh review.
+3. **It never commits onto the target.** On the default branch it creates `waicc/<title>`
+   (with `-2` and so on if that exists); on another branch it uses that branch.
+4. **It pushes and opens the merge request**, with a description written from the session:
+   the requirements, tasks, checks, how many review rounds it took, any finding accepted
+   unfixed, and a note that AI agents planned, coded and reviewed it.
+   - **GitLab, with a token** for the host in your user file (the same one
+     `/waicc-mr-comments` uses): through GitLab's API, with the full description. An open merge
+     request for the branch is reused.
+   - **GitLab, without a token:** the push itself opens it (GitLab push options), with the title
+     and a one-line description. Set up a token for the full one.
+   - **GitHub:** with the `gh` CLI, signed in, with the full description; an open pull request
+     for the branch is reused. Without `gh`, the branch is pushed and you get GitHub's link to
+     open the pull request.
+5. **It closes the session** and records the branch, commit and merge request in it
+   (`/waicc-status` shows them). Your checkout stays on the new branch.
+
+Git does the pushing with your own Git login, and never prompts for a password, so a missing
+login fails instead of hanging. `waicc ship <session> --dry-run` (CLI) shows the plan;
+`--yes` ships it.
+
+The main agent never ships: it offers `/waicc-ship` when the review passes. Only you run it,
+or a run you started with `/waicc-dispatch --auto --ship`.
 
 ## Finish a contract discussion
 

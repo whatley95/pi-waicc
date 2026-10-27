@@ -57,6 +57,8 @@ export interface DispatchOptions {
   codeWith?: string | true;
   /** Pi only, with develop and review: stop after the first code review instead of looping. */
   reviewOnce?: boolean;
+  /** Pi only: when the run's code review passes, ship it as /waicc-ship does (asks first unless your user file has autoShip). */
+  ship?: boolean;
   /** Your user file's resumeReviews: a follow-up code review may continue the earlier reviewer's conversation. */
   resumeReview?: boolean;
 }
@@ -115,10 +117,11 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
       if (!named) i -= 1;
       continue;
     }
-    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review" || flag === "--auto" || flag === "--review-once") {
+    if (flag === "--implement" || flag === "--continue" || flag === "-c" || flag === "--no-continue" || flag === "--develop" || flag === "--review" || flag === "--auto" || flag === "--review-once" || flag === "--ship") {
       if (flag === "--implement") options.implement = true;
       else if (flag === "--auto") auto = true;
       else if (flag === "--review-once") options.reviewOnce = true;
+      else if (flag === "--ship") options.ship = true;
       else if (flag === "--develop") options.develop = true;
       else if (flag === "--review") options.review = true;
       else options.continue = flag !== "--no-continue"; // -c is short for --continue.
@@ -163,6 +166,7 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
   if (auto) Object.assign(options, { develop: true, review: true, loop: options.loop ?? loopCycles.default });
   ensure(!options.codeWith || options.develop, "--code-with hands the coding to an agent once the plan is accepted, so it needs --auto or --develop");
   ensure(!options.reviewOnce || (options.develop && options.review), "--review-once stops an automatic run after its first code review, so it needs --auto (or --develop --review)");
+  ensure(!options.ship || ((options.loop || options.review) && !options.reviewOnce), "--ship ships the change when the run's code review passes, so it needs --auto (or --loop on a code review), and not --review-once");
   return { profile, options, checkMinutes };
 }
 
