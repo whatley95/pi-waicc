@@ -138,6 +138,13 @@ instead of relaying a questionnaire.
    the last review, and elsewhere reports only high or critical problems. This keeps the loop
    from finding new small issues in unchanged code every round. Ask the main agent for a
    *full review* when you want the whole change reviewed again.
+   When WAICC dispatched the earlier review to Claude or Codex, a follow-up sent to the same
+   agent and model within an hour **continues that reviewer's own conversation**
+   (`claude --resume`, `codex exec resume`). It has already read the change, so it mostly
+   checks the fixes, and it is told to read again every file it checks. It is still read-only.
+   If that conversation is gone, the same dispatch reviews once from scratch. After an hour
+   the agent's prompt cache has likely expired, and resending the old conversation can cost
+   more than starting fresh, so it starts fresh. A full review always starts fresh.
 8. **Close explicitly.** A passing whole-change assessment shows `READY_TO_CLOSE`
    and `contractReview: PASS`. Run `/waicc-close <reason>` only when you decide the
    contract discussion is finished. This does not certify code delivery.
