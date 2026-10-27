@@ -102,6 +102,8 @@ export function status(
     sessionId: s.id,
     projectRoot: root,
     objective: s.objective ?? "legacy_unspecified",
+    ...(s.issue ? { issue: s.issue } : {}),
+    ...(s.shipped ? { shipped: { branch: s.shipped.branch, target: s.shipped.target, commit: s.shipped.commit, mergeRequest: s.shipped.request.url } } : {}),
     autoPlanning: s.autoPlanning ?? null,
     phase: sessionPhase(s),
     planApproval: s.planApproval ?? null,
