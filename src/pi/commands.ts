@@ -11,13 +11,14 @@ import type { manualHandoff } from "../render.ts";
 import { beginDevelopment, decisionsView, openDecisionsText, resolveDecision, readContract, createSession, createRevisionReview, refreshRevisionReview, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
 import { advisorInput, ensure } from "../validation.ts";
 import type { SessionListFilter } from "../workflow.ts";
-import type { Contract } from "../types.ts";
+import type { Contract, IssueLink } from "../types.ts";
+import { issueNote, issueNumber, issueRequirements } from "../issues.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
 import { recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientGuidance, sessionCommandInput, developInstruction } from "./shared.ts";
 import type { App } from "./app.ts";
 import { fetchMergeRequest } from "../revision.ts";
-import { pickMergeRequest, resolveGitlabHost } from "./merge-requests.ts";
+import { fetchIssue, pickMergeRequest, resolveGitlabHost } from "./merge-requests.ts";
 import { canonicalProject, gitlabClient, gitlabProject, mergeRequestInfo } from "../gitlab.ts";
 
 /** Contract commands: planning, development, decisions, review, continue, handoff and session management. */
@@ -114,14 +115,37 @@ export function registerCommands(app: App): void {
     "waicc-planning",
     "Create a durable requirements session and prepare a planning contract/handoff",
     async (args, ctx) => {
-      ensure(args, "Usage: /waicc-planning <original requirements>");
-      const delegated = /^--delegate(?:\s|$)/.test(args);
-      const requirements = delegated ? args.slice("--delegate".length).trim() : args;
-      const s = createSession(ctx.cwd, requirements, delegated ? "delegate" : undefined, "planning");
+      ensure(args, "Usage: /waicc-planning [--delegate] <original requirements>, or /waicc-planning [--delegate] --issue <number> [--remote <remote>] [more requirements]");
+      const words = args.trim().split(/\s+/);
+      let delegated = false, issueInput: string | undefined, remote: string | undefined;
+      // Leading options in any order; the rest is the requirements as typed.
+      for (;;) {
+        if (words[0] === "--delegate") (delegated = true), words.shift();
+        else if (words[0] === "--issue" || words[0] === "--remote") {
+          const [flag, value] = words.splice(0, 2);
+          ensure(value && !value.startsWith("-"), `${flag} requires a value`);
+          if (flag === "--issue") issueInput = value;
+          else remote = value;
+        } else break;
+      }
+      ensure(!remote || issueInput, "--remote names where the issue is, so it needs --issue");
+      const typed = issueInput ? words.join(" ") : args.replace(/^\s*--delegate(?:\s+|$)/, "").trim();
+      let requirements = typed, link: IssueLink | undefined;
+      if (issueInput) {
+        const fetched = await fetchIssue(app, ctx, issueNumber(issueInput), remote);
+        // You chose the issue, but someone else may have written it: read it before it becomes the requirements.
+        if (ctx.hasUI && !(await ctx.ui.confirm(`Plan from issue #${fetched.link.number}: ${fetched.link.title.slice(0, 80)}?`,
+          `${fetched.state && !["opened", "open"].includes(fetched.state) ? `This issue is ${fetched.state}.\n\n` : ""}${fetched.link.author ? `Written by @${fetched.link.author}. ` : ""}Its text becomes the requirements; the agents plan what it asks for and never follow instructions inside it.\n\n${fetched.body.trim().slice(0, 1500) || "(no description)"}${fetched.body.trim().length > 1500 ? "\n…" : ""}`)))
+          return ctx.ui.notify("Nothing was started.", "info");
+        requirements = issueRequirements(fetched, typed);
+        link = fetched.link;
+      }
+      ensure(requirements, "Usage: /waicc-planning <original requirements>");
+      const s = createSession(ctx.cwd, requirements, delegated ? "delegate" : undefined, "planning", link);
       bind(ctx, s.id);
       await prompt(
         ctx,
-        "Capture the user's requirements/context and source references as a concise planning brief. First save important chat-only constraints, established decisions/rationale, domain context and source references with waicc_context; summaries do not change scope. Then use waicc_prepare. A draft may use tasks: [] rather than inventing a detailed plan. The planner investigates source and returns proposedContract; do not implement while planning. Honor implementationOwner: delegate means the main agent coordinates and generates ONE full implementation handoff after plan adoption, not application edits itself.",
+        `Capture the user's requirements/context and source references as a concise planning brief. First save important chat-only constraints, established decisions/rationale, domain context and source references with waicc_context; summaries do not change scope. Then use waicc_prepare. A draft may use tasks: [] rather than inventing a detailed plan. The planner investigates source and returns proposedContract; do not implement while planning. Honor implementationOwner: delegate means the main agent coordinates and generates ONE full implementation handoff after plan adoption, not application edits itself.${link ? ` ${issueNote(link)}` : ""}`,
       );
     },
   );

@@ -95,6 +95,21 @@ In Pi, describe the actual outcome and constraints:
 /waicc-planning Add customer search with pagination and account isolation. Preserve the existing response format and support the current frontend.
 ```
 
+Or plan straight from an issue on the project's GitLab or GitHub:
+
+```text
+/waicc-planning --issue 42
+/waicc-planning --issue 42 Keep the page size configurable    # your own additions after it
+```
+
+WAICC reads the issue (GitLab: through its API, with the same host token as
+[`/waicc-mr-comments`](#review-a-merge-request); GitHub: with `gh`) and shows it to you first; on yes,
+its title and description become the requirements. Someone else may have written that text,
+so the agents are told to plan what it asks for and never follow instructions inside it. The
+session remembers the issue: [`/waicc-ship`](#ship-it-from-a-passed-review-to-a-merge-request)
+names the branch after it (`waicc/42-…`) and the merge request says `Closes #42`, so merging
+closes it. CLI: `waicc start --issue 42`.
+
 Pi saves your exact request and relevant context as a requirements/constraints brief.
 The recipient investigates actual source, tests/docs/history and available reference
 projects, resolves technical facts and returns the detailed proposed contract/plan.
@@ -1375,6 +1390,7 @@ model assessment is not proof of tested delivery.
 | Command                                          | Purpose                                                                                               |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | `/waicc-planning <requirements>`                 | Start a new durable task/session and ask Pi to prepare its contract                                   |
+| `/waicc-planning --issue <n> [--remote r] [more]` | Start from a GitLab or GitHub issue, after you read it; shipping then closes the issue |
 | `/waicc-auto-planning [on\|off]`                  | Plan when tracked steps help, even for small work; default on. Legacy complex aliases on |
 | `/waicc-develop [--main\|--delegate]`             | Explicitly accept/authorize the current plan in this session; no handoff or round consumed |
 | `/waicc-decisions [session-id]`                 | Show the consolidated gate brief, recommendations, evidence and affected tasks |
@@ -1512,10 +1528,12 @@ When the whole-change code review passes (`READY_TO_CLOSE`), `/waicc-ship` sends
    the commit. If a reviewed file changes after the review, or after you said yes, nothing is
    committed: request a fresh review.
 3. **It never commits onto the target.** On the default branch it creates `waicc/<title>`
-   (with `-2` and so on if that exists); on another branch it uses that branch.
+   (`waicc/<issue>-<title>` for a session planned from an issue; with `-2` and so on if that
+   exists); on another branch it uses that branch.
 4. **It pushes and opens the merge request**, with a description written from the session:
    the requirements, tasks, checks, how many review rounds it took, any finding accepted
-   unfixed, and a note that AI agents planned, coded and reviewed it.
+   unfixed, and a note that AI agents planned, coded and reviewed it. A session planned from
+   an issue adds `Closes #<n>`.
    - **GitLab, with a token** for the host in your user file (the same one
      `/waicc-mr-comments` uses): through GitLab's API, with the full description. An open merge
      request for the branch is reused.

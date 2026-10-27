@@ -7,14 +7,14 @@ import { projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { acceptedPlanCurrent, acceptedPlanRequestId, authorizationState, defaultRoundLimits, decisionSummary, requirementsText, scopeDigest } from "../state.ts";
 import { ensure, identifier, text, validateContract, readyContract, readyPlan } from "../validation.ts";
-import type { Contract, Session, Objective, RevisionReview } from "../types.ts";
+import type { Contract, IssueLink, Session, Objective, RevisionReview } from "../types.ts";
 import { resolveRevision, revisionChanges } from "../revision.ts";
 import { requireOpen, resetReview, approvalIsCurrent, contract, contractFiles, nextRound } from "./shared.ts";
 
 /** Starting a session, saving its context, authorising development, decisions and who does the work. */
 
 function newSession(root: string, requirements: string, implementationOwner?: "main" | "delegate", objective?: Objective,
-  automatic?: { id: string; origin: NonNullable<Session["autoPlanning"]> }, revisionReview?: RevisionReview): Session {
+  automatic?: { id: string; origin: NonNullable<Session["autoPlanning"]> }, revisionReview?: RevisionReview, issue?: IssueLink): Session {
   const timestamp = now();
   const s: Session = {
     schemaVersion: 1,
@@ -35,6 +35,7 @@ function newSession(root: string, requirements: string, implementationOwner?: "m
     planApproval: null,
     ...(implementationOwner ? { implementationOwner } : {}),
     ...(revisionReview ? { revisionReview } : {}),
+    ...(issue ? { issue } : {}),
     deliveryVerified: false,
     verified: false,
   };
@@ -42,12 +43,12 @@ function newSession(root: string, requirements: string, implementationOwner?: "m
     "requirements.md": `${requirements}\n`,
   });
 }
-export function createSession(cwd: string, requirements: string, implementationOwner?: "main" | "delegate", objective?: Objective): Session {
+export function createSession(cwd: string, requirements: string, implementationOwner?: "main" | "delegate", objective?: Objective, issue?: IssueLink): Session {
   const root = projectRoot(cwd);
   text(requirements, "Original requirements", 64_000);
   ensure(implementationOwner === undefined || ["main", "delegate"].includes(implementationOwner), "Invalid implementation owner");
   ensure(objective === undefined || ["planning", "development", "review"].includes(objective), "Invalid objective");
-  return withLock(root, () => newSession(root, requirements, implementationOwner, objective));
+  return withLock(root, () => newSession(root, requirements, implementationOwner, objective, undefined, undefined, issue));
 }
 /**
  * A review session for an existing change (/waicc-review --rev). The range is checked against
