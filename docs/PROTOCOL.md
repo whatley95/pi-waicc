@@ -110,7 +110,8 @@ actual checks/limits and next action. Pi completion/failure callbacks distinguis
 request from successful compaction. No new model turn, handoff, approval or closure
 is triggered. Optional notes append to owner context only when no handoff is pending.
 Automatic compaction uses the same instructions: on `agent_start` a coordinator chat records
-its session's ASSESSED round count; on `agent_end`, if that count grew, `ctx.hasUI`,
+its session's ASSESSED round count and round count; on `agent_end`, if the ASSESSED count grew
+or a new round was issued and the latest round is WAITING, `ctx.hasUI`,
 `ctx.compact` exists and `ctx.getContextUsage().tokens` is at least the user file's
 `autoCompactTokens` (default 150,000; 0 is off; a project file setting it is rejected), it
 waits up to 10 s for the chat to be idle, skips it if the binding changed or a loop is
