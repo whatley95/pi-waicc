@@ -1040,7 +1040,9 @@ with affected call paths and tests, and elsewhere report only critical/high find
 or low concerns in unchanged code go in the summary as optional). `fullReview: true` on
 `waicc_prepare`/`waicc_request` (code review only; the human must ask for it) omits
 `followUp`. Dispatch records the agent's own conversation id in each run's `result.json`
-(`agentSession`: Claude's `session_id`, Codex's `thread.started` `thread_id`). Dispatching a
+(`agentSession`: Claude's `session_id`, Codex's `thread.started` `thread_id`). Only when the
+user file sets `resumeReviews: true` (default false; a project file setting it is rejected),
+which `resolveDispatch` passes as `DispatchOptions.resumeReview`, dispatching a
 follow-up with `via` claude or codex looks up the latest run of the `previousRequestId` round
 with `replySubmitted`, the same `via` and model and an `agentSession`, finished at most 60
 minutes ago; if there is one, the run resumes it (Claude `--resume <id>` with the same tool

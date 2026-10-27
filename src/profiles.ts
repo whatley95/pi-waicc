@@ -33,6 +33,8 @@ export interface AgentConfig {
   autoContinue: boolean;
   /** User file only: compact the main agent's chat after it assesses a round, once its context passes this many tokens; 0 is off. */
   autoCompactTokens: number;
+  /** User file only: a follow-up code review may continue the earlier reviewer's conversation (off: every review starts fresh). */
+  resumeReviews: boolean;
   /** User file only: your rules, given in advance, that may answer human-owned decisions. */
   policies: string[];
   /** User file only: accept recommendations for low-risk, reversible, non-sensitive decisions. */
@@ -113,7 +115,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
   }
   const at = (detail: string) => `${path}: ${detail}`;
   const config = record(raw, at("the file"));
-  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "autoCompactTokens", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"].includes(key)), at('only "profiles", "roles", "autoContinue", "autoCompactTokens", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed'));
+  ensure(Object.keys(config).every((key) => ["profiles", "roles", "autoContinue", "autoCompactTokens", "resumeReviews", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"].includes(key)), at('only "profiles", "roles", "autoContinue", "autoCompactTokens", "resumeReviews", "policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab" and "memory" are allowed'));
   // Settings that let WAICC act for you, reach you outside Pi, loosen what checks may touch or hold your tokens are yours alone: a repository must not set them.
   for (const key of ["policies", "autoDecide", "autoAdvisor", "budget", "alerts", "sandbox", "gitlab", "memory"])
     ensure(config[key] === undefined || source === "user", at(`"${key}" is allowed only in your user file`));
@@ -201,6 +203,12 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
       at('"autoCompactTokens" must be a whole number of tokens from 0 (off) to 10,000,000'));
     into.autoCompactTokens = config.autoCompactTokens as number;
   }
+  if (config.resumeReviews !== undefined) {
+    // Whether your reviewers start fresh is yours to trade against cost.
+    ensure(source === "user", at('"resumeReviews" is allowed only in your user file'));
+    ensure(typeof config.resumeReviews === "boolean", at('"resumeReviews" must be true or false'));
+    into.resumeReviews = config.resumeReviews;
+  }
   for (const [key, value] of Object.entries(record(config.profiles ?? {}, at("profiles")))) {
     ensure(name.test(key), at(`profile name ${JSON.stringify(key)} uses characters other than letters, digits, - and _`));
     const profile = record(value, at(`profile ${key}`));
@@ -234,7 +242,7 @@ function readConfig(path: string, source: Source, into: AgentConfig): void {
 
 /** The user file first, then the project file, which wins for any profile or role both name. */
 export function loadAgentConfig(cwd: string): AgentConfig {
-  const config: AgentConfig = { autoContinue: false, autoCompactTokens: 150_000, policies: [], autoDecide: "off", memory: { autoApprove: false }, autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
+  const config: AgentConfig = { autoContinue: false, autoCompactTokens: 150_000, resumeReviews: false, policies: [], autoDecide: "off", memory: { autoApprove: false }, autoAdvisor: consultLimit.default, budget: { perSessionUsd: null }, alerts: { quietMinutes: 10, desktop: false }, sandbox: { mode: "off", network: false, allowWrite: [] }, gitlab: {}, profiles: {}, roles: {}, files: { user: userConfigPath(), project: projectConfigPath(projectRoot(cwd)), found: [] } };
   readConfig(config.files.user, "user", config);
   readConfig(config.files.project, "project", config);
   for (const [role, choice] of Object.entries(config.roles))
@@ -290,9 +298,12 @@ export function resolveDispatch(cwd: string, id: string, input: string | string[
   const mode = waitingMode(cwd, id);
   const config = loadAgentConfig(cwd);
   // --continue / --no-continue win; otherwise your user file's autoContinue, and a loop always continues.
-  const continued = (options: Partial<DispatchOptions>): Partial<DispatchOptions> =>
-    options.continue !== undefined || options.loop || options.develop ? { ...options, continue: options.continue ?? true }
+  // Your resumeReviews (off by default) lets a follow-up code review continue the earlier reviewer's conversation.
+  const continued = (options: Partial<DispatchOptions>): Partial<DispatchOptions> => {
+    const settled = options.continue !== undefined || options.loop || options.develop ? { ...options, continue: options.continue ?? true }
       : config.autoContinue ? { ...options, continue: true } : options;
+    return config.resumeReviews ? { ...settled, resumeReview: true } : settled;
+  };
   const needsConfig = typed.profile !== undefined || typed.options.via === undefined;
   if (!needsConfig) return { options: continued(typed.options) as DispatchOptions, mode, profile: null, confirmChecks: false };
   const role = config.roles[mode];
@@ -321,6 +332,7 @@ export function profilesView(cwd: string) {
   const config = loadAgentConfig(cwd);
   return {
     autoContinue: config.autoContinue,
+    resumeReviews: config.resumeReviews,
     policies: config.policies,
     autoDecide: config.autoDecide,
     memory: config.memory,
