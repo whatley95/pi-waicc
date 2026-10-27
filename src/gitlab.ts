@@ -108,7 +108,8 @@ export function gitlabClient(project: GitLabProject, settings: GitLabHost): GitL
         try {
           json = text ? JSON.parse(text) : null;
         } catch { /* not JSON: reported as text */ }
-        if ((res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300) return resolve(json);
+        // A job's log is plain text: that comes back as it is.
+        if ((res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300) return resolve(json ?? (text || null));
         // A redirect is not followed with your token; say where it points instead of showing its page.
         if ((res.statusCode ?? 0) >= 300 && (res.statusCode ?? 0) < 400) {
           const error = new Error(`GitLab at ${project.host} redirected ${method} ${path.split("?")[0]} to ${String(res.headers.location ?? "another address").split("?")[0]}; WAICC does not send your token on to another address. List that host under "gitlab" in your user file, or point the remote at it.`) as Error & { status?: number };

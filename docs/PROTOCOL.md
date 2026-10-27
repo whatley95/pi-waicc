@@ -1301,6 +1301,50 @@ which needs `--loop` or `--review` and not `--review-once`; on a planning handof
 without autoShip it stops and says to run `/waicc-ship`. The main agent is told to offer
 `/waicc-ship` and never to commit or push.
 
+### Watching the shipped pipeline
+
+After `closeShipped`, Pi's `watchPipeline` (`src/pi/pipelines.ts`) polls every 60 s. It keeps
+one watcher per session, process-wide (`Symbol.for("pi-waicc.pipeline-watchers")`), and stops
+it on `session_shutdown`.
+
+**GitLab** (`gitlabPipeline`): the project comes from the merge request URL, else the remote's
+URL, and the host must be listed with a token (otherwise nothing is watched).
+- It reads `GET /pipelines?sha=<commit>&order_by=id&sort=desc&per_page=5` and uses the newest
+  one: `success` is a pass; `canceled`/`skipped` is canceled; `manual` is manual; `failed` is a
+  failure; anything else is pending.
+- For a failure it reads `GET /pipelines/<id>/jobs?scope[]=failed`, skips `allow_failure` jobs,
+  and fetches up to 3 jobs' `GET /jobs/<id>/trace` as text. The GitLab client now returns a
+  non-JSON 2xx body as text.
+
+**GitHub** (`githubChecks`):
+- It reads `gh pr checks <branch> --json name,state,bucket,link`, whatever gh's exit code.
+  "no checks reported" means none yet, and an empty list is pending.
+- Any `fail` bucket is a failure, with `gh run view <run> --log-failed` per run linked from up to
+  3 failing checks. Otherwise any `pending` is pending, any `cancel` is canceled, and the rest is
+  a pass.
+
+**Logs** are cleaned of ANSI escapes and GitLab section markers, and cut to their last 6,000
+characters.
+
+**When it stops:** the watcher stops on any final state, after 2 h with a pipeline seen, after
+15 min without one, or after 5 read errors in a row.
+
+**On a failure:**
+- A watcher started by a `--ship` run calls `fixPipeline` at most `pipelineFixes` (2) times per
+  session per process.
+- After a typed `/waicc-ship`, Pi asks with a select first.
+- `fixPipeline` requires the session CLOSED with `shipped`, the main agent as implementation
+  owner, and no budget stop. It then:
+  1. calls `reopenSession`;
+  2. calls `beginDevelopment(…, "human-dispatch-develop")`;
+  3. sets a `developing` review loop with `ship: true`;
+  4. prompts the main agent with the jobs and log tails as data, saying to fix within allowed
+     paths and request ONE fresh code review, or to explain and stop for out-of-scope, flaky or
+     environment causes.
+
+`startReview` then dispatches the review loop; a pass ships again. `session.shipped` survives the
+reopen, so that ship reuses its branch, target and merge request.
+
 ## Session lists and recoverable deletion
 
 `/waicc-list` lists open sessions, independently of the selected session. `all`
