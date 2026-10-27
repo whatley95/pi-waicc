@@ -138,13 +138,10 @@ instead of relaying a questionnaire.
    the last review, and elsewhere reports only high or critical problems. This keeps the loop
    from finding new small issues in unchanged code every round. Ask the main agent for a
    *full review* when you want the whole change reviewed again.
-   When WAICC dispatched the earlier review to Claude or Codex, a follow-up sent to the same
-   agent and model within an hour **continues that reviewer's own conversation**
-   (`claude --resume`, `codex exec resume`). It has already read the change, so it mostly
-   checks the fixes, and it is told to read again every file it checks. It is still read-only.
-   If that conversation is gone, the same dispatch reviews once from scratch. After an hour
-   the agent's prompt cache has likely expired, and resending the old conversation can cost
-   more than starting fresh, so it starts fresh. A full review always starts fresh.
+   Every review goes to a **fresh reviewer**: one that remembers neither the files before the
+   fixes nor its own earlier findings, so it cannot trust stale memory or defend what it
+   reported. To trade some of that for cost, set `"resumeReviews": true` in your user file
+   ([agent settings](#set-it-up)).
 8. **Close explicitly.** A passing whole-change assessment shows `READY_TO_CLOSE`
    and `contractReview: PASS`. Run `/waicc-close <reason>` only when you decide the
    contract discussion is finished. This does not certify code delivery.
@@ -1203,6 +1200,14 @@ Safety rules:
   project file that sets it is rejected.
 - **`"autoCompactTokens": 150000`** (user file only; the default) compacts the main agent's
   chat after it assesses a round or sends out new work, once its context is over that many tokens; `0` turns it off.
+- **`"resumeReviews": true`** (user file only; off by default) lets a follow-up code review
+  continue the earlier reviewer's own conversation (`claude --resume`, `codex exec resume`)
+  when WAICC dispatched that review to the same Claude or Codex model within the hour. It has
+  already read the change, so it mostly checks the fixes; it is told to read again every file
+  it checks and stays read-only. The risk is a reviewer that trusts what it remembers or its own
+  earlier findings, which is why it is off. If that conversation is gone, the same dispatch
+  reviews from scratch. After an hour, or for a full review, another model, Pi or Antigravity,
+  it always starts fresh.
 - **`"budget": { "perSessionUsd": 5 }`** (user file only) stops automatic runs once a
   session's agents have reported that much: a `--loop` does not start its next cycle and
   `--auto` does not start its review. You can always dispatch the next step yourself. Only
