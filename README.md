@@ -223,6 +223,8 @@ files.
 your working folder is often on another branch or a later commit. If so, `/waicc-dispatch` checks the
 reviewed commit out into a temporary folder, read-only, and the reviewer reads the changed files and
 their surroundings there. Your working folder is not touched. The folder is removed when the run ends.
+While the reviewer reads it, the folder is locked, so `/waicc-worktree` leaves it alone. If Pi closes
+during the review, the next review in that repository, or `/waicc-worktree list`, removes it.
 Pre-approved `--check` commands run there too, with your `node_modules` linked in. A Pi reviewer still
 runs in your project, since that is where it loads WAICC, and is told where the checkout is. A
 follow-up review, after fixes made in this session, reads your working folder, where those fixes are.
@@ -1827,7 +1829,7 @@ branch. If you run it from a service set up with `/waicc-init`, that service is 
 way in the new folder, and Pi starts there; on Windows it offers to open a new terminal there
 with Pi running. Removing refuses a folder with uncommitted changes, and asks first when it has
 unpushed commits or open WAICC sessions, which live in that folder. It never removes the main
-folder, the folder this chat works in, or WAICC's own temporary folders for delegated coding.
+folder, the folder this chat works in, or WAICC's own temporary folders for delegated coding and reviews.
 Git does not check out one branch in two folders, so each branch has at most one.
 
 ## Project storage and version control
