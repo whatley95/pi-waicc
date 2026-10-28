@@ -479,13 +479,25 @@ list; single quotes group an argument with spaces. `--check-timeout` sets 1–30
 check (default 10; interactive checks stay capped at one minute). Checks apply only to
 testing and implementation rounds and are recorded in `start.json`. Claude and Codex
 receive them through the pinned MCP server (`--checks <file>`, a per-run file removed after
-the run, plus `--check-cwd <worktree>` for isolated implementation); `waicc_run_check {check}`
+the run, plus `--check-cwd <folder>` when the agent runs outside the project: isolated
+implementation, or a review checkout); `waicc_run_check {check}`
 runs one by number through the ordinary recipient check engine, so each run writes
 `checks/<id>/start.json` and `result.json` with exit code, bounded output and source before
 and after (`ranIn: "isolated worktree"` when it ran in the copy); testing runs that change
 source fail. Pi receives them as `WAICC_DISPATCH_CHECKS`, and `waicc_check` runs an exact
 match without a dialog; any other command still needs `--run-checks` and per-command
 confirmation, which a headless run cannot give. Antigravity cannot receive checks.
+
+**Review checkout.** For a code review round whose `review.revision` is Git, with no `followUp`
+and `revision.checkout !== revision.to` (the working folder was at another commit when the handoff
+was issued), `prepareDispatch` runs `git worktree add --detach <tmp>/waicc-review-<dispatch id>
+<to>`. Ignored `node_modules`, `.venv` and `venv` are linked in, as for isolation. The plan
+records it as `checkout {worktree, workdir, commit, linked}` (also in `start.json`). Claude, Codex
+and Antigravity then run with the workdir as `cwd`, and their prompt names it. Claude also gets
+`--add-dir <project>` for the handoff files. Pi keeps the project as `cwd`, since it loads WAICC
+there; its prompt names the checkout. The worktree is removed in `runDispatch`'s `finally`
+(`git worktree remove --force`, then `prune`), or when the plan fails to start. A checkout that
+cannot be created leaves the reviewer in the project, as before.
 
 Every recipient check (pre-approved or confirmed, Pi or MCP) reads the user file's `sandbox`
 (a project file setting it is rejected): `checks` `off` (default), `auto` or `required`;

@@ -10,7 +10,7 @@ import { checkCommand, type CheckCommand } from "./checks.ts";
 import { roundDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure } from "./validation.ts";
-import { applyIsolatedChanges, createIsolation, isolatedChanges, removeIsolation, type Isolation } from "./worktree.ts";
+import { applyIsolatedChanges, createIsolation, createReviewCheckout, isolatedChanges, removeIsolation, type Isolation, type ReviewCheckout } from "./worktree.ts";
 import { progressParser, type ProgressEvent } from "./progress.ts";
 import { usageMeter } from "./usage.ts";
 import { agentLimit, limitText } from "./limits.ts";
@@ -236,6 +236,8 @@ export interface DispatchPlan {
   /** Where the agent runs: the project, or its isolated worktree. */
   cwd: string;
   isolation: Isolation | null;
+  /** A first review of an existing change whose working folder is at another commit: that commit, checked out read-only for the reviewer and removed after the run. */
+  checkout?: ReviewCheckout | null;
   checks: CheckCommand[];
   program: string;
   args: string[];
@@ -309,7 +311,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
       waiccCli(), "--root", plan.root, "mcp", "--session", plan.sessionId, "--request", plan.requestId,
       ...(isolated ? ["--implement"] : []),
       ...(checksFile ? ["--checks", checksFile] : []),
-      ...(checksFile && isolated ? ["--check-cwd", plan.cwd] : []),
+      ...(checksFile && plan.cwd !== plan.root ? ["--check-cwd", plan.cwd] : []),
     ],
   };
   const scratch = checksFile ? [checksFile] : [];
@@ -327,6 +329,8 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
           ...(isolated
             ? ["--permission-mode", "acceptEdits", "--allowedTools", "mcp__waicc,Read,Grep,Glob,Edit,Write", "--disallowedTools", "Bash,NotebookEdit"]
             : ["--allowedTools", "mcp__waicc,Read,Grep,Glob", "--disallowedTools", "Edit,Write,NotebookEdit,Bash"]),
+          // Reviewing a checkout of the change: the handoff files are still read from the project.
+          ...(plan.cwd !== plan.root && !isolated ? ["--add-dir", plan.root] : []),
           ...(model ? ["--model", model] : []),
           ...(effort ? ["--effort", effort] : []),
           ...(plan.resume ? ["--resume", plan.resume.agentSession] : []),
@@ -383,7 +387,7 @@ function invocation(plan: Omit<DispatchPlan, "program" | "args" | "scratch" | "e
         : " You cannot run shell commands: report every check you could not run as not_run with that limit.";
       const work = implement
         ? `implement the whole assignment in dependency order, editing only the task's allowed paths.${checks} Include whole-work completion evidence.`
-        : `do only that assignment with read-only tools.${plan.mode === "testing" ? checks : ""}`;
+        : `do only that assignment with read-only tools.${plan.mode === "testing" ? checks : ""}${plan.checkout ? ` The change itself is checked out, read-only, at ${JSON.stringify(plan.checkout.workdir)} (commit ${plan.checkout.commit.slice(0, 12)}): read the changed files and their surroundings there, since this project folder is at another commit.` : ""}`;
       return {
         program: "pi",
         args: [
@@ -449,6 +453,17 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
     const dispatchId = randomUUID();
     const starter = join(root, sessionRelative(s.id), dir, "STARTER.txt");
     const isolation = r.mode === "implementation" && options.via !== "pi" ? createIsolation(root, dispatchId) : null;
+    // A first review of an existing Git change reads that change's own files, not a working folder on
+    // another commit. A follow-up review reads the working folder, where this session's fixes are.
+    const revision = r.mode === "review" && r.review?.kind === "code" && !r.review.followUp ? r.review.revision : undefined;
+    let checkout: ReviewCheckout | null = null;
+    if (revision?.vcs === "git" && revision.checkout !== revision.to)
+      try {
+        checkout = createReviewCheckout(root, dispatchId, revision.to);
+      } catch { /* the reviewer reads the working folder and the patch, as the handoff says */ }
+    const reviewing = checkout
+      ? ` The change itself is checked out for you, read-only, at ${JSON.stringify(checkout.workdir)} (commit ${checkout.commit.slice(0, 12)}): read the changed files and their surroundings there, since the project folder is at another commit. Handoff files stay in the project folder.`
+      : "";
     const ids = `sessionId ${JSON.stringify(s.id)} and requestId ${JSON.stringify(r.id)}`;
     const finish = "Check your draft with waicc_validate_reply and fix every reported problem, submit exactly once with waicc_submit_reply, then stop. If the waicc tools are unavailable or refuse, stop and explain why; never write reply.json yourself.";
     const approved = checks.length
@@ -461,12 +476,13 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
       dispatchId, root, sessionId: s.id, requestId: r.id, mode: r.mode, via: options.via,
       model: options.model ?? null, effort: options.effort ?? null, timeoutMs: (options.timeoutMinutes ?? 30) * 60_000, replyPath,
       pin: { sessionId: s.id, requestId: r.id, contractVersion: r.contractVersion, requirementsDigest: r.requirementsDigest, sourceFingerprint: r.source.fingerprint, mode: r.mode },
-      cwd: isolation?.workdir ?? isolation?.worktree ?? root, isolation, checks,
+      // Pi loads WAICC from the folder it runs in, so a Pi reviewer stays in the project and reads the checkout by path.
+      cwd: isolation?.workdir ?? isolation?.worktree ?? (options.via === "pi" ? null : checkout?.workdir) ?? root, isolation, checkout, checks,
       logPrefix: `${dir}/dispatch/${dispatchId}`,
       // One line: it travels as a command-line argument on every platform.
       prompt: isolation
         ? `You are a dispatched WAICC implementation recipient, not the coordinator. You are working in an isolated copy of the project at ${JSON.stringify(isolation.workdir ?? isolation.worktree)}; the real checkout is not yours to edit.${isolation.prefix ? " This project is one folder of a larger repository: the rest of the repository is there for context only, and changes outside this folder are never applied." : ""} First call the waicc_receive MCP tool with ${ids}, then read its handoff and other inputs with waicc_read_input. Implement the whole assignment in dependency order in this copy, changing only files inside the task's allowedPaths: when you finish, WAICC applies your changes to the real checkout only if every changed file is in scope, and applies nothing otherwise. ${shell} ${approved} Report whole-work completion evidence and every check honestly, marking any check you could not run not_run with its limit. ${finish}`
-        : `You are a dispatched WAICC ${r.mode} recipient, not the coordinator, for the project at ${JSON.stringify(root)}. First call the waicc_receive MCP tool with ${ids}. Then read ${JSON.stringify(starter)} and the assignment inputs, and do only that assignment. Source is read-only: do not edit, create or delete files. ${approved} ${finish}`,
+        : `You are a dispatched WAICC ${r.mode} recipient, not the coordinator, for the project at ${JSON.stringify(root)}. First call the waicc_receive MCP tool with ${ids}. Then read ${JSON.stringify(starter)} and the assignment inputs, and do only that assignment. Source is read-only: do not edit, create or delete files.${reviewing} ${approved} ${finish}`,
     };
     const earlier = earlierReviewer(root, s, r, options);
     try {
@@ -482,16 +498,24 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
         [`${plan.logPrefix}/start.json`]: json({
           schemaVersion: 1, dispatchId, sessionId: s.id, requestId: r.id, mode: r.mode,
           via: plan.via, model: plan.model, effort: plan.effort, program: plan.program, args: plan.args, env: plan.env,
-          isolation, checks, startedAt: now(), timeoutMs: plan.timeoutMs,
+          isolation, checkout, checks, startedAt: now(), timeoutMs: plan.timeoutMs,
           resume: plan.resume ? { agentSession: plan.resume.agentSession, fromDispatchId: plan.resume.fromDispatchId } : null,
         }),
       });
       return plan;
     } catch (error) {
       if (isolation) removeIsolation(root, isolation);
+      if (checkout) removeReviewCheckout(root, checkout);
       throw error;
     }
   });
+}
+
+/** A review checkout is only read, so it always goes; a failure to remove it never fails the run. */
+function removeReviewCheckout(root: string, checkout: ReviewCheckout): void {
+  try {
+    removeIsolation(root, checkout);
+  } catch { /* git worktree prune removes it later */ }
 }
 
 /** Brings an isolated agent's work back, all or nothing; the worktree is kept whenever nothing is applied. */
@@ -549,6 +573,7 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
   } finally {
     for (const path of plan.scratch) rmSync(path, { force: true });
     if (plan.agyServer) agyRegistry.unregister(plan.agyServer.name);
+    if (plan.checkout) removeReviewCheckout(plan.root, plan.checkout);
   }
   // A runner that returns stdout without streaming it (older agents, tests) still yields its usage.
   if (!meter.get()) for (const line of result.stdout.split(/\r?\n/)) meter.read(line);

@@ -219,6 +219,14 @@ files from the checkout. If the reviewer finds problems, the fixes and re-review
 and each re-review carries the original change plus the fixes. `/waicc-export` includes both
 files.
 
+**The reviewer reads the change's own files, not your branch.** For the first review of a Git change,
+your working folder is often on another branch or a later commit. If so, `/waicc-dispatch` checks the
+reviewed commit out into a temporary folder, read-only, and the reviewer reads the changed files and
+their surroundings there. Your working folder is not touched. The folder is removed when the run ends.
+Pre-approved `--check` commands run there too, with your `node_modules` linked in. A Pi reviewer still
+runs in your project, since that is where it loads WAICC, and is told where the checkout is. A
+follow-up review, after fixes made in this session, reads your working folder, where those fixes are.
+
 ### Review a merge request
 
 ```text
