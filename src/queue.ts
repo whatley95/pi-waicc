@@ -26,6 +26,8 @@ export interface QueueItem {
   sessionId?: string;
   url?: string | null;
   outcome?: string;
+  /** Where a running task has got to, for /waicc-queue and the tracker page. */
+  step?: string;
 }
 export interface Queue { schemaVersion: 1; items: QueueItem[] }
 
