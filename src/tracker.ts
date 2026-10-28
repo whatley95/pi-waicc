@@ -13,6 +13,10 @@ import { repositoryPrefix } from "./revision.ts";
 import type { PostedComments } from "./workflow.ts";
 import { chatUsage, totalUsage, type ChatHour, type Usage } from "./usage.ts";
 import { pendingLessons } from "./memory.ts";
+import { gitPrefix, snapshot } from "./source.ts";
+import { approvalIsCurrent } from "./workflow/shared.ts";
+import { readPipelines } from "./pipelines.ts";
+import { readQueue } from "./queue.ts";
 
 /**
  * One page for every project: each Pi chat writes its project's status file, then rebuilds the
@@ -30,6 +34,8 @@ export interface LiveRun {
   /** When the agent last showed a step, and how long without one counts as quiet (0: never). */
   lastActivityAt?: number;
   quietAfterMs?: number;
+  /** The Pi process running it, set when the page data is written. */
+  pid?: number;
 }
 /** Minutes a running agent has shown nothing new, once that passes its quiet limit; else null. */
 export function quietMinutes(run: LiveRun, now = Date.now()): number | null {
@@ -213,6 +219,17 @@ function sessionView(root: string, s: Session) {
     runs,
     change: changeView(root, s),
     closedAt: s.closure?.closedAt ?? null,
+    issue: s.issue ? { provider: s.issue.provider, number: s.issue.number, title: clip(s.issue.title, 160), url: s.issue.url } : null,
+    shipped: s.shipped ? {
+      provider: s.shipped.provider, branch: s.shipped.branch, target: s.shipped.target, commit: s.shipped.commit, at: s.shipped.shippedAt,
+      number: s.shipped.request.number, url: s.shipped.request.url,
+    } : null,
+    approvalKind: s.reviewApproval?.kind ?? null,
+    // A passed review holds only while the source is the one it approved: projectStatus compares
+    // this with the source now. Null: it no longer holds whatever the source.
+    approvedSource: ["READY_TO_CLOSE", "SPEC_APPROVED"].includes(s.status)
+      ? (s.reviewApproval && approvalIsCurrent(s, s.reviewApproval.sourceFingerprint) ? s.reviewApproval.sourceFingerprint : null)
+      : undefined,
   };
 }
 export type SessionView = ReturnType<typeof sessionView>;
@@ -269,8 +286,47 @@ function consults(root: string) {
   }).sort((a, b) => b.finishedAt.localeCompare(a.finishedAt));
 }
 
+// The source is fingerprinted at most every 30 s per project, and again whenever a session moves on.
+const fingerprints = new Map<string, { at: number; stamp: string; value: string | null }>();
+function sourceNow(root: string, stamp: string): string | null {
+  const known = fingerprints.get(root);
+  if (known && known.stamp === stamp && Date.now() - known.at < 30_000) return known.value;
+  let value: string | null = null;
+  try {
+    value = snapshot(root).fingerprint;
+  } catch { /* unknown: no review is called stale for it */ }
+  fingerprints.set(root, { at: Date.now(), stamp, value });
+  return value;
+}
+/** Tests: the next look fingerprints the source again. */
+export function forgetSources(): void {
+  fingerprints.clear();
+}
+
+/**
+ * The sessions as /waicc-status tells them: a passed review whose source changed since is stale.
+ * A shipped change's pipeline is added from what its watcher last recorded.
+ */
+function current(root: string, views: SessionView[]) {
+  const checked = views.filter((s) => s.approvedSource !== undefined);
+  const source = checked.length ? sourceNow(root, checked.map((s) => `${s.id}@${s.updatedAt}`).join(",")) : null;
+  const pipelines = views.some((s) => s.shipped) ? readPipelines(root) : {};
+  return views.map(({ approvedSource, ...s }) => {
+    const stale = approvedSource !== undefined && (approvedSource === null || (source !== null && approvedSource !== source));
+    const mark = s.shipped ? pipelines[s.id] : undefined;
+    return {
+      ...s,
+      status: stale ? "STALE" as const : s.status,
+      staleReason: stale ? "The code changed after the passing review" : null,
+      pipeline: mark && mark.commit === s.shipped!.commit ? { state: mark.state, text: clip(mark.text, 300), url: mark.url, at: mark.at } : null,
+    };
+  });
+}
+type CurrentSession = ReturnType<typeof current>[number];
+const requestName = (provider: string, number: number | null) => (number === null ? "the merge request" : provider === "github" ? `PR #${number}` : `MR !${number}`);
+
 /** What needs the human, in this project: their decisions, and each session's next human step. */
-function needsYou(views: SessionView[], live: LiveRun[]) {
+function needsYou(views: CurrentSession[], live: LiveRun[], git: boolean) {
   const busy = new Set(live.map((run) => run.sessionId));
   // The text never carries the minutes, so one quiet spell is one item.
   const quiet = live.filter((run) => quietMinutes(run) !== null).map((run) => ({
@@ -278,14 +334,22 @@ function needsYou(views: SessionView[], live: LiveRun[]) {
     detail: run.steps.at(-1) ? `Last step: ${run.steps.at(-1)!.text}. It may still be working.` : "It has shown no step yet.",
     command: run.kind === "advisor" ? "Esc stops the advisor" : "/waicc-dispatch --stop",
   }));
-  return [...quiet, ...views.filter((s) => s.status !== "CLOSED").flatMap((s) => {
+  // A shipped change's failed pipeline, closed session or not: nothing is fixing it.
+  const failed = views.filter((s) => s.pipeline?.state === "failed" && !busy.has(s.id)).map((s) => ({
+    sessionId: s.id, text: `The pipeline failed for ${requestName(s.shipped!.provider, s.shipped!.number)}`,
+    detail: s.pipeline!.text ?? s.title, command: "/waicc-reopen <reason>",
+  }));
+  return [...quiet, ...failed, ...views.filter((s) => s.status !== "CLOSED").flatMap((s) => {
     const items = s.decisions.filter((d) => d.status === "open" && d.owner !== "agent").map((d) => ({
       sessionId: s.id, text: `${d.id}: ${d.question}`, detail: d.recommendation ? `Recommended: ${d.recommendation}` : null,
       command: d.owner === "external" ? `/waicc-decide ${d.id} <answer from its owner>` : d.recommendation ? `/waicc-decide ${d.id} recommended` : `/waicc-decide ${d.id} <answer>`,
     }));
     if (busy.has(s.id)) return items;
+    // A passed code review of work done here can be shipped; a review of an existing change, or of a plan, is closed.
+    const ships = git && s.approvalKind === "code" && !s.change;
     const step: Record<string, [string, string]> = {
-      READY_TO_CLOSE: ["Review passed: ready for you to close", "/waicc-close <reason>"],
+      READY_TO_CLOSE: ships ? ["Review passed: ship it, or close it", "/waicc-ship"] : ["Review passed: ready for you to close", "/waicc-close <reason>"],
+      STALE: s.staleReason ? [`${s.staleReason}: ask for a fresh review`, "/waicc-review"] : ["A reply went stale: the code changed while the agent worked", "/waicc-status"],
       PLAN_READY: ["Plan accepted: start development when ready", "/waicc-develop"],
       AWAITING_ASSESSMENT: ["A reply is waiting to be assessed", "/waicc-continue"],
       NEEDS_CLARIFICATION: ["Needs clarification from you", "/waicc-status"],
@@ -322,11 +386,35 @@ export function newNeeds(status: ProjectStatus): ProjectStatus["needsYou"] {
   return seen ? status.needsYou.filter((n) => !seen!.has(id(n))) : [];
 }
 
+// Whether a project is in Git does not change while Pi runs; asked once per project.
+const gits = new Map<string, boolean>();
+const inGit = (root: string): boolean => {
+  if (!gits.has(root)) gits.set(root, gitPrefix(root) !== null);
+  return gits.get(root)!;
+};
+
+/** The overnight queue of this project: what waits, what runs and how the last tasks ended. */
+function queueView(root: string) {
+  try {
+    const { items } = readQueue(root);
+    if (!items.length) return null;
+    return {
+      waiting: items.filter((i) => i.status === "waiting").length,
+      items: items.slice(-10).map((i) => ({
+        id: i.id, task: clip(i.issue ? `#${i.issue.number} ${i.issue.title}${i.task ? ` (${i.task})` : ""}` : i.task, 160), status: i.status,
+        step: clip(i.step, 160), url: i.url ?? null, folder: i.folder ?? null, outcome: clip(i.outcome, 240), finishedAt: i.finishedAt ?? null,
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function projectStatus(root: string, live: LiveRun[] = [], notices: Notice[] = [], selectedSessionId: string | null = null, budgetUsd: number | null = null,
   extension: { version: string | null; build: string; outdated: boolean } | null = null) {
-  const all = sessions(root);
+  const all = current(root, sessions(root));
   // Open sessions first, newest first; only the five most recent closed ones are shown in full.
-  const newest = (a: SessionView, b: SessionView) => b.updatedAt.localeCompare(a.updatedAt);
+  const newest = (a: CurrentSession, b: CurrentSession) => b.updatedAt.localeCompare(a.updatedAt);
   const shown = [...all.filter((s) => s.status !== "CLOSED").sort(newest), ...all.filter((s) => s.status === "CLOSED").sort(newest).slice(0, 5)];
   const asked = consults(root);
   const talked = chats(root);
@@ -370,29 +458,52 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     chats: talked.slice(0, 10).map(({ chatId, name, model, updatedAt }) => ({ chatId, name, model, updatedAt })),
     runs,
     allTime,
+    queue: queueView(root),
     needsYou: [
       ...(extension?.outdated
         ? [{ sessionId: null, text: "pi-waicc was updated: a Pi chat here still runs the copy it loaded", detail: "Type /reload in that chat to load the new version", command: "/reload" }]
         : []),
-      ...needsYou(shown, live),
+      ...needsYou(shown, live, inGit(root)),
       ...pendingLessons(root).map((lesson) => ({ sessionId: null, text: `Lesson to confirm: ${clip(lesson.text, 200)}`, detail: lesson.source, command: "/waicc-memory confirm" })),
     ],
   };
 }
 export type ProjectStatus = ReturnType<typeof projectStatus>;
 
+/** Whether a Pi process still runs; one this user may not signal runs too. */
+function running(pid: number | undefined): boolean {
+  if (!pid || pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 let pageWritten = "";
 /** Saves this project's status, then the page's data for every project; returns the page. */
 export function publish(status: ProjectStatus): string {
   const dir = trackerDirectory();
-  atomicWrite(join(dir, "projects", `${status.key}.json`), json(status));
+  const own = join(dir, "projects", `${status.key}.json`);
+  // Another Pi in the same project keeps its runs on the card for as long as it runs.
+  let others: LiveRun[] = [];
+  try {
+    const before = JSON.parse(readFileSync(own, "utf8")) as ProjectStatus;
+    others = before.live.filter((run) => (run.pid ?? before.pid) !== process.pid && running(run.pid ?? before.pid)).map((run) => ({ ...run, pid: run.pid ?? before.pid }));
+  } catch { /* the first write */ }
+  atomicWrite(own, json({ ...status, live: [...status.live.map((run) => ({ ...run, pid: process.pid })), ...others] }));
   const cutoff = Date.now() - 14 * 24 * 3_600_000;
   const projects = readdirSync(join(dir, "projects")).filter((name) => /^[a-f0-9]{16}\.json$/.test(name)).flatMap((name) => {
     const path = join(dir, "projects", name);
     try {
       if (statSync(path).mtimeMs < cutoff) return [];
       const project = JSON.parse(readFileSync(path, "utf8")) as ProjectStatus;
-      return project.schemaVersion === 1 && existsSync(project.root) ? [project] : [];
+      if (project.schemaVersion !== 1 || !existsSync(project.root)) return [];
+      // A run whose Pi is gone ended with it: shown as interrupted, never as still working.
+      const live = project.live.filter((run) => running(run.pid ?? project.pid));
+      const interrupted = project.live.filter((run) => !live.includes(run)).map((run) => ({ label: run.label, startedAt: run.startedAt }));
+      return [{ ...project, live, interrupted }];
     } catch {
       return [];
     }

@@ -640,13 +640,34 @@ open sessions and the five most recent closed ones (contract title, requirements
 whether the latest whole-work report claims them, decisions, rounds with outcome, assessment,
 findings, checks and the round's last dispatch result), the last ten consults, the chat's
 running dispatches and consult, its last five run notices, and needs-you items (open human or
-external decisions; READY_TO_CLOSE, PLAN_READY, AWAITING_ASSESSMENT, NEEDS_CLARIFICATION, BLOCKED
-and WAITING_FOR_REPLY when nothing runs for that session). Session summaries are cached by
-latest journal entry. It is written atomically to
-`$PI_CODING_AGENT_DIR/waicc-tracker/projects/<key>.json` (key: digest of the project root),
-then every project file updated within 14 days whose root still exists (at most 30) is
-written into `data.js` as `window.waiccTracker({...})`, which `index.html`, copied from
-`templates/tracker.html`, loads every 3 s and renders with all text escaped.
+external decisions; READY_TO_CLOSE, PLAN_READY, AWAITING_ASSESSMENT, NEEDS_CLARIFICATION, BLOCKED,
+STALE and WAITING_FOR_REPLY when nothing runs for that session; a shipped session whose pipeline
+mark is `failed`, closed or not). Session summaries are cached by latest journal entry.
+
+The summary tells sessions as `/waicc-status` does. A READY_TO_CLOSE or SPEC_APPROVED session
+whose approval fails `approvalIsCurrent` against the source fingerprint is shown as `STALE`, with
+`staleReason`, and its needs-you item is `/waicc-review`. The fingerprint is `snapshot(root)`,
+cached per project for 30 s and recomputed when any such session's `updatedAt` changes; when it
+cannot be computed, nothing is called stale for it. READY_TO_CLOSE with a code approval, in Git
+and not a `--rev`/`--mr` review, offers `/waicc-ship`; otherwise `/waicc-close <reason>`.
+
+Each session also carries `issue {provider, number, title, url}`, `shipped {provider, branch,
+target, commit, at, number, url}` and `pipeline {state, text, url, at}`. The pipeline watcher
+records each state in `.pi/pi-waicc/pipelines.json`
+(`{<session id>: {state: watching | passed | fixing | failed | ended | not-watching, text, url,
+commit, at}}`, under the writer lock, the 50 most recent sessions kept). A mark counts only while
+its `commit` is the session's shipped commit. The project status adds `queue: {waiting, items:
+[{id, task, status, step, url, folder, outcome, finishedAt}]}` (the last ten) from `queue.json`;
+a running queue writes each task's `step` there.
+
+It is written atomically to `$PI_CODING_AGENT_DIR/waicc-tracker/projects/<key>.json` (key:
+digest of the project root). Each live run gets `pid`, the writing Pi's process id. Runs already
+in that file from another Pi process that still runs (`process.kill(pid, 0)` succeeds or fails
+with EPERM) are kept beside this Pi's own. Then every project file updated within 14 days whose
+root still exists (at most 30) is written into `data.js` as `window.waiccTracker({...})`. In
+that data, a run whose `pid` (or the file's `pid`) no longer runs moves from `live` to
+`interrupted: [{label, startedAt}]`. `index.html`, copied from `templates/tracker.html`, loads
+it every 3 s and renders it with all text escaped.
 Each project status carries `extension: {version, build, outdated}`. `build` is the first 12
 hex of a SHA-256 over the sorted names and content digests of the package's `src` (nested
 folders included; `.ts`, `.js`, `.json`, `.html`) and `templates`, computed when the module
