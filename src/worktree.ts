@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, posix } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { safePath } from "./files.ts";
 import { assertTaskPath } from "./recipient.ts";
 import { gitPrefix, snapshot } from "./source.ts";
@@ -103,13 +103,60 @@ export interface ReviewCheckout {
   commit: string;
   linked: string[];
 }
+// Git keeps a lock's reason: it names the process reading the checkout and where its project is,
+// so a checkout left by a Pi that closed mid-review can be found and removed safely.
+const reviewLock = (prefix: string) => `WAICC review in process ${process.pid} for ${prefix || "."}`;
+const reviewLockPattern = /^WAICC review in process (\d+) for (.+)$/;
+
 export function createReviewCheckout(root: string, id: string, commit: string): ReviewCheckout {
+  try {
+    sweepReviewCheckouts(root);
+  } catch { /* a leftover never stops a review */ }
   const prefix = gitPrefix(root) ?? "";
   // Long, physical path, as for an isolated copy.
   const worktree = join(realpathSync.native(tmpdir()), `waicc-review-${id}`);
-  git(root, ["worktree", "add", "--detach", "--quiet", worktree, commit]);
+  // Locked while it is read, so /waicc-worktree and git worktree prune leave it alone.
+  git(root, ["worktree", "add", "--detach", "--quiet", "--lock", "--reason", reviewLock(prefix), worktree, commit]);
   const workdir = join(worktree, prefix.replace(/\/$/, ""));
   return { worktree, workdir, commit, linked: linkDependencies(root, workdir) };
+}
+
+/** A review checkout is only read, so it always goes; a failure to remove it never fails the run. */
+export function removeReviewCheckout(root: string, checkout: Pick<ReviewCheckout, "worktree" | "workdir" | "linked">): void {
+  try {
+    removeIsolation(root, checkout, { locked: true });
+  } catch { /* still locked by this process, so a later review in this repository removes it */ }
+}
+
+/**
+ * Removes review checkouts whose process has ended: a Pi closed during a review leaves its
+ * checkout, which nothing else reads. One held by a running process (another Pi) stays.
+ */
+export function sweepReviewCheckouts(root: string): number {
+  const temporary = realpathSync.native(tmpdir());
+  let removed = 0;
+  for (const block of git(root, ["worktree", "list", "--porcelain"]).split(/\r?\n\r?\n/)) {
+    const field = (key: string) => block.split(/\r?\n/).find((line) => line.startsWith(`${key} `))?.slice(key.length + 1);
+    const worktree = field("worktree");
+    const lock = reviewLockPattern.exec(field("locked") ?? "");
+    if (!worktree || !lock || !basename(worktree).startsWith("waicc-review-") || !samePath(dirname(worktree), temporary) || !ended(Number(lock[1]))) continue;
+    const workdir = join(worktree, lock[2] === "." ? "" : lock[2]);
+    removeReviewCheckout(root, { worktree, workdir, linked: dependencyFolders.filter((name) => isLink(join(workdir, name))) });
+    if (!existsSync(worktree)) removed++;
+  }
+  return removed;
+}
+
+const samePath = (a: string, b: string) => (process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b));
+
+/** Only a process that no longer exists has let go; any doubt (another user's process) keeps the checkout. */
+function ended(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
 }
 
 /** Every file the agent added, changed or deleted relative to the snapshot; ignored output is left out. */
@@ -155,7 +202,7 @@ export function applyIsolatedChanges(root: string, pin: RecipientPin, isolation:
   }
 }
 
-export function removeIsolation(root: string, isolation: Pick<Isolation, "worktree" | "workdir" | "linked">): void {
+export function removeIsolation(root: string, isolation: Pick<Isolation, "worktree" | "workdir" | "linked">, { locked = false } = {}): void {
   // Unlink dependency folders first, removing only the link, so removal can never reach the checkout's copy.
   for (const name of isolation.linked ?? []) {
     const link = join(isolation.workdir ?? isolation.worktree, name);
@@ -163,7 +210,10 @@ export function removeIsolation(root: string, isolation: Pick<Isolation, "worktr
     if (process.platform === "win32") rmdirSync(link);
     else unlinkSync(link);
   }
-  if (existsSync(isolation.worktree)) git(root, ["worktree", "remove", "--force", isolation.worktree]);
+  // A locked worktree (a review checkout) takes --force twice, and Git never prunes a locked one
+  // whose folder is already gone, so that one is unlocked first.
+  if (existsSync(isolation.worktree)) git(root, ["worktree", "remove", "--force", ...(locked ? ["--force"] : []), isolation.worktree]);
+  else if (locked) git(root, ["worktree", "unlock", isolation.worktree]);
   git(root, ["worktree", "prune"]);
 }
 

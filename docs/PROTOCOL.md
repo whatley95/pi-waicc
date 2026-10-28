@@ -490,14 +490,20 @@ confirmation, which a headless run cannot give. Antigravity cannot receive check
 
 **Review checkout.** For a code review round whose `review.revision` is Git, with no `followUp`
 and `revision.checkout !== revision.to` (the working folder was at another commit when the handoff
-was issued), `prepareDispatch` runs `git worktree add --detach <tmp>/waicc-review-<dispatch id>
-<to>`. Ignored `node_modules`, `.venv` and `venv` are linked in, as for isolation. The plan
+was issued), `prepareDispatch` runs `git worktree add --detach --lock --reason "WAICC review in
+process <pid> for <project prefix, or .>" <tmp>/waicc-review-<dispatch id> <to>`. Ignored
+`node_modules`, `.venv` and `venv` are linked in, as for isolation. The plan
 records it as `checkout {worktree, workdir, commit, linked}` (also in `start.json`). Claude, Codex
 and Antigravity then run with the workdir as `cwd`, and their prompt names it. Claude also gets
 `--add-dir <project>` for the handoff files. Pi keeps the project as `cwd`, since it loads WAICC
 there; its prompt names the checkout. The worktree is removed in `runDispatch`'s `finally`
-(`git worktree remove --force`, then `prune`), or when the plan fails to start. A checkout that
-cannot be created leaves the reviewer in the project, as before.
+(`git worktree remove --force --force`, since it is locked, then `prune`), or when the plan fails
+to start. A checkout that cannot be created leaves the reviewer in the project, as before.
+`/waicc-worktree` reports `waicc-review-*` folders as WAICC's own and never removes them.
+`sweepReviewCheckouts` removes those whose lock names a process that no longer exists (a Pi closed
+mid-review). It unlinks their dependency links first, and unlocks one whose folder is already gone
+so that `prune` can drop it. It runs before each new review checkout and at the start of every
+`/waicc-worktree` command. A checkout held by a running process stays.
 
 Every recipient check (pre-approved or confirmed, Pi or MCP) reads the user file's `sandbox`
 (a project file setting it is rejected): `checks` `off` (default), `auto` or `required`;

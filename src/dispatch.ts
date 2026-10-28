@@ -10,7 +10,7 @@ import { checkCommand, type CheckCommand } from "./checks.ts";
 import { roundDirectory } from "./render.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { ensure } from "./validation.ts";
-import { applyIsolatedChanges, createIsolation, createReviewCheckout, isolatedChanges, removeIsolation, type Isolation, type ReviewCheckout } from "./worktree.ts";
+import { applyIsolatedChanges, createIsolation, createReviewCheckout, isolatedChanges, removeIsolation, removeReviewCheckout, type Isolation, type ReviewCheckout } from "./worktree.ts";
 import { progressParser, type ProgressEvent } from "./progress.ts";
 import { usageMeter } from "./usage.ts";
 import { agentLimit, limitText } from "./limits.ts";
@@ -509,13 +509,6 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
       throw error;
     }
   });
-}
-
-/** A review checkout is only read, so it always goes; a failure to remove it never fails the run. */
-function removeReviewCheckout(root: string, checkout: ReviewCheckout): void {
-  try {
-    removeIsolation(root, checkout);
-  } catch { /* git worktree prune removes it later */ }
 }
 
 /** Brings an isolated agent's work back, all or nothing; the worktree is kept whenever nothing is applied. */

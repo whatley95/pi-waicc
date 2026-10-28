@@ -134,6 +134,11 @@ This path is interactive and needs a configured model, so it is not useful to an
 - A dispatched first review of an older Git commit (`--rev`/`--mr`) runs in a temporary
   `waicc-review-<id>` worktree, which `runDispatch` removes. Call `runDispatch` after `prepareDispatch`
   in tests, or the worktree stays (`tests/review-checkout.test.ts`). Its files follow `core.autocrlf`.
+  It is locked with the reason `WAICC review in process <pid> for .`. To simulate a Pi that closed
+  mid-review, re-lock it with the pid of a process that has exited; the next `createReviewCheckout`
+  or `sweepReviewCheckouts` then removes it.
+- Each test file's process removes its `PI_CODING_AGENT_DIR` on exit. A test that prepares a dispatch
+  it never runs must remove `plan.scratch`, or the MCP config is left in the temp folder.
 - Status names to assert on are `DRAFT`, `WAITING_FOR_REPLY`, `AWAITING_ASSESSMENT` and `READY_FOR_HANDOFF`.
   There is no `ASSESSING`. `verified` is always `false` by design.
 - `prepare` requires each `sourceQuote` to occur verbatim in the original request.
