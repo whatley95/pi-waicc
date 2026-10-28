@@ -94,7 +94,8 @@ export function totalUsage(runs: (Usage | null | undefined)[]): Usage & { runs: 
   return total;
 }
 
-const tokens = (n: number): string => (n >= 1_000_000_000 ? `${(n / 1_000_000_000).toFixed(2)}B` : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 1_000)}k` : String(n));
+// Each unit starts where the one below would round up to 1000: 999,950,000 is "1.00B", not "1000.0M".
+const tokens = (n: number): string => (n >= 999_950_000 ? `${(n / 1_000_000_000).toFixed(2)}B` : n >= 999_500 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 1_000)}k` : String(n));
 /** "$0.75 · 433k tokens", or tokens alone when the agent reports no price. */
 export function usageText(usage: Usage | null | undefined): string | null {
   if (!usage) return null;
