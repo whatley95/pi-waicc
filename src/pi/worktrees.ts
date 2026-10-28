@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { addWorktree, here, removeWorktree, worktrees, worktreeState } from "../branches.ts";
 import { ensure } from "../validation.ts";
+import { sweepReviewCheckouts } from "../worktree.ts";
 import type { App } from "./app.ts";
 
 /** A new terminal in the folder, running Pi (Windows Terminal, else a PowerShell window); false elsewhere. */
@@ -33,10 +34,14 @@ export function registerWorktreeCommands(app: App): void {
     async (args, ctx) => {
       const words = args.trim().split(/\s+/).filter(Boolean);
       const at = here(ctx.cwd);
+      // A review checkout left by a Pi that closed mid-review is nobody's: it goes first.
+      try {
+        sweepReviewCheckouts(ctx.cwd);
+      } catch { /* listed as it is */ }
 
       if (!words.length || words[0] === "list") {
         const rows = worktrees(ctx.cwd).map((w) => {
-          if (w.waicc) return `- ${w.path} · WAICC's temporary folder for a delegated coding run`;
+          if (w.waicc) return `- ${w.path} · ${basename(w.path).startsWith("waicc-review-") ? "WAICC's read-only checkout for a review that is running" : "WAICC's temporary folder for a delegated coding run"}`;
           const s = worktreeState(w, at.inside);
           const facts = [
             w.path.toLowerCase() === at.top.toLowerCase() ? "this chat" : "",

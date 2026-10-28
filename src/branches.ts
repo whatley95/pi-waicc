@@ -16,7 +16,7 @@ export interface Worktree {
   head: string;
   branch: string | null;
   main: boolean;
-  /** WAICC's own temporary folder for a delegated coding run; never removed from here. */
+  /** WAICC's own temporary folder for a delegated coding run or a review; never removed from here. */
   waicc: boolean;
   locked: boolean;
 }
@@ -52,7 +52,7 @@ export function worktrees(cwd: string): Worktree[] {
     const path = native(line("worktree") ?? "");
     return {
       path, head: line("HEAD") ?? "", branch: line("branch")?.replace(/^refs\/heads\//, "") ?? null, main: i === 0,
-      waicc: basename(path).startsWith("waicc-worktree-") && same(dirname(path), temporary),
+      waicc: /^waicc-(worktree|review)-/.test(basename(path)) && same(dirname(path), temporary),
       locked: line("locked") !== undefined,
     };
   });
@@ -134,7 +134,7 @@ export function removeWorktree(cwd: string, target: string) {
   const w = list.find((x) => x.branch === target || same(x.path, native(target)));
   ensure(w, `No branch folder for ${JSON.stringify(target)}; /waicc-worktree lists them`);
   ensure(!w.main, "That is the repository's main folder; it is never removed from here");
-  ensure(!w.waicc, "That is WAICC's temporary folder for a delegated coding run; it is removed when the run ends");
+  ensure(!w.waicc, "That is WAICC's temporary folder for a delegated run; it is removed when the run ends");
   ensure(!w.locked, `${w.path} is locked; unlock it with git worktree unlock first`);
   ensure(!same(w.path, here(cwd).top), "This chat is working in that folder; run /waicc-worktree remove from another folder");
   try {
