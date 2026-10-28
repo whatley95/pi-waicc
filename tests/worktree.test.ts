@@ -46,14 +46,18 @@ function project(t: TestContext, setup: (root: string) => void = () => {}) {
   const received = ingest(root, s.id);
   assess(root, s.id, { requestId: received.rounds.at(-1)!.id, decision: "planned", rationale: "Source checked", dispositions: [] });
   delegateWork(root, s.id, "implementation", "Implement everything");
-  const plans: { isolation: { worktree: string } | null }[] = [];
+  const plans: { isolation: { worktree: string } | null; scratch: string[] }[] = [];
   t.after(() => {
-    for (const plan of plans) if (plan.isolation && existsSync(plan.isolation.worktree)) removeIsolation(root, plan.isolation as never);
+    for (const plan of plans) {
+      if (plan.isolation && existsSync(plan.isolation.worktree)) removeIsolation(root, plan.isolation as never);
+      // A plan that never ran still wrote its MCP config or check list to the temp folder.
+      for (const path of plan.scratch) rmSync(path, { force: true });
+    }
     assert.ok(basename(root).startsWith("waicc-test-"));
     rmSync(root, { recursive: true, force: true });
   });
   const id = s.id;
-  return { root, id, requestId: loadSession(root, id).rounds.at(-1)!.id, track: <T extends { isolation: { worktree: string } | null }>(plan: T) => (plans.push(plan), plan) };
+  return { root, id, requestId: loadSession(root, id).rounds.at(-1)!.id, track: <T extends { isolation: { worktree: string } | null; scratch: string[] }>(plan: T) => (plans.push(plan), plan) };
 }
 /** A coding agent: receives first (as waicc_receive does), edits its working directory, then submits. */
 const agent = (root: string, id: string, edit: (cwd: string) => void, submit = true): AgentRunner => async (_program, _args, options) => {
