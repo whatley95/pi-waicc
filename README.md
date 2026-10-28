@@ -798,7 +798,12 @@ that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
   and **All** (everything recorded, with the date it starts); the page remembers your
   choices. The Spend tab shows the same split for today, 7 days and all time.
 - **Needs you:** every decision waiting for your answer and each session's next step for you
-  (review passed, plan ready, a reply to assess), with the command to type.
+  (review passed, plan ready, a reply to assess), with the command to type. A passed code review
+  offers `/waicc-ship`. A shipped change whose pipeline failed is listed with `/waicc-reopen`.
+- **Stale means what `/waicc-status` says.** A review stops counting the moment its code
+  changes. The page shows that session as `stale`, with *"The code changed after the passing
+  review"* and `/waicc-review` to ask for a fresh one. The source is read again at most every
+  30 s, and whenever a session moves on.
 - **A card per project:** the main agent's model, the agent at work (agent, model, effort,
   loop cycle, elapsed time, its last steps), or the session's status when idle, its task
   progress and today's spend. Projects at work come first. The main agent shows here too
@@ -807,6 +812,13 @@ that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
   turn ends. A review of a merge request or a `--rev` range shows what it reviews
   ("MR !7 → develop", linked to the merge request), what was posted to GitLab, and, under
   Needs you, when an assessed review is ready to post.
+- **Where work came from and went:** the issue a session was planned from (`#42`), the merge
+  request it shipped as (`MR !12 → main`, linked) and its pipeline (`CI running`, `CI passed`,
+  `CI failed · fixing`, `CI failed`). The card shows a pipeline that has not passed yet.
+- **The overnight queue** ([`/waicc-queue`](#overnight-queue-tasks-run-while-you-are-away)) is on
+  its project's card (`queue · 1 running · 2 waiting`). Its Overview lists each task with where
+  the running one has got to, how the others ended, their folders and merge requests. Each task
+  also has its own card, since it runs in its own folder.
 - **Click a card** for its tabs:
   - **Overview:** what the agent is doing step by step and its latest message; the main
     agent in each Pi chat in the project (model now, other models used, spend today and in
@@ -846,8 +858,14 @@ The page is `~/.pi/agent/waicc-tracker/index.html` (beside your profiles). It re
 every 3 s and needs no server: each Pi chat writes its project's status into that folder.
 Keep it open in a tab, or open it again any time. Nothing leaves your computer. Updating it
 takes about 10 ms, at most once every 2 s, and never while WAICC is saving. If writing it ever
-fails, WAICC carries on. A card whose agent stops reporting for 90 s says Pi may have
-closed. Projects not seen for 14 days drop off. `/waicc-tracker off` stops every chat
+fails, WAICC carries on.
+
+**When Pi closes or crashes while an agent runs**, the next Pi that updates the page checks
+whether the Pi that started the run is still running. If it is not, the card says *"Pi closed
+while codex coding was running"* instead of showing it at work. Until another Pi updates the
+page, a card whose agent stops reporting for 90 s says Pi may have closed. Two Pi chats in the
+same project each keep their own running agents on the card. Projects not seen for 14 days drop
+off. `/waicc-tracker off` stops every chat
 from updating it; `/waicc-tracker on` turns it back on.
 
 **Continue automatically.** Add `--continue` (short: `-c`) and, when the agent submits a valid reply,

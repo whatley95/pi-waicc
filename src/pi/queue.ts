@@ -32,7 +32,7 @@ export function queueText(root: string): string {
  * it, each stops with its review passed, ready for /waicc-ship in its folder.
  */
 export function registerQueueCommands(app: App): void {
-  const { pi, command, notice } = app;
+  const { pi, command, notice, track } = app;
   // One queue run per Pi process; it lives as long as this Pi does.
   let running: AbortController | null = null;
   const show = (content: string) => pi.sendMessage({ customType: "waicc-queue", content, display: true }, { triggerTurn: false });
@@ -41,6 +41,13 @@ export function registerQueueCommands(app: App): void {
     const root = projectRoot(ctx.cwd);
     const controller = (running = new AbortController());
     const line = (text: string) => { try { ctx.ui.setWidget("waicc-queue", [`🌙 WAICC queue: ${text}   (/waicc-queue stop)`]); } catch { /* only a hint */ } };
+    // Kept in the queue file too, so the tracker page shows where the running task is.
+    const step = (id: number, text: string | undefined) => {
+      try {
+        updateQueue(root, (q) => { const item = q.items.find((i) => i.id === id); if (item) item.step = text; });
+      } catch { /* the page then shows the step before */ }
+      track(ctx);
+    };
     try {
       for (;;) {
         if (controller.signal.aborted) break;
@@ -54,19 +61,21 @@ export function registerQueueCommands(app: App): void {
           updateQueue(root, (q) => Object.assign(q.items.find((i) => i.id === item.id)!, { status: "failed", finishedAt: new Date().toISOString(), outcome: `No branch folder: ${error instanceof Error ? error.message : String(error)}` }));
           continue;
         }
-        updateQueue(root, (q) => Object.assign(q.items.find((i) => i.id === item.id)!, { status: "running", startedAt: new Date().toISOString(), folder, branch }));
+        updateQueue(root, (q) => Object.assign(q.items.find((i) => i.id === item.id)!, { status: "running", startedAt: new Date().toISOString(), folder, branch, step: "starting" }));
         line(`${item.id} · ${label(item)} · starting`);
+        track(ctx);
         let result;
         try {
           result = await runItem(item, folder, reportFileFor(root, item.id), {
             // Commands run only in a trusted project, so its branch folders are trusted too.
             dispatch, trusted: true, spawn: app.services.queuePi, ...options,
-            onProgress: (_i, text) => line(`${item.id} · ${label(item)} · ${text}`),
+            onProgress: (_i, text) => (line(`${item.id} · ${label(item)} · ${text}`), step(item.id, text)),
           }, controller.signal);
         } catch (error) {
           result = { status: "failed" as const, outcome: error instanceof Error ? error.message : String(error), url: null, sessionId: undefined };
         }
-        updateQueue(root, (q) => Object.assign(q.items.find((i) => i.id === item.id)!, { ...result, finishedAt: new Date().toISOString() }));
+        updateQueue(root, (q) => Object.assign(q.items.find((i) => i.id === item.id)!, { ...result, step: undefined, finishedAt: new Date().toISOString() }));
+        track(ctx);
         const message = `Queue ${item.id} (${label(item)}): ${result.status}${result.url ? ` · ${result.url}` : ""}. ${result.outcome ?? ""}`.trim();
         notice(ctx, result.status === "shipped" || result.status === "reviewed" ? "info" : "warning", message);
         ctx.ui.notify(message, result.status === "failed" ? "warning" : "info");
@@ -122,7 +131,7 @@ export function registerQueueCommands(app: App): void {
     ensure(sub === "run", usage);
     ensure(!running, "The queue is already running in this Pi; /waicc-queue stop ends it.");
     // A task left running by a Pi that has since closed is not running any more.
-    updateQueue(root, (q) => q.items.filter((i) => i.status === "running").forEach((i) => Object.assign(i, { status: "stopped", outcome: "Interrupted: the Pi that ran the queue closed. Its folder is kept." })));
+    updateQueue(root, (q) => q.items.filter((i) => i.status === "running").forEach((i) => Object.assign(i, { status: "stopped", step: undefined, outcome: "Interrupted: the Pi that ran the queue closed. Its folder is kept." })));
     for (let i = 0; i < words.length; i += 2) ensure(passed.includes(words[i]) && words[i + 1] && !words[i + 1].startsWith("-"), `/waicc-queue run takes only ${passed.join(", ")}, each with a profile name`);
     const dispatch = words.join(" ");
     parseDispatchArgs(`--auto --ship ${dispatch}`);
