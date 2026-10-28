@@ -295,6 +295,8 @@ test("a follow-up review starts fresh by default; with resumeReviews Claude resu
   const same = prepareDispatch(root, s.id, { via: "claude", resumeReview: true });
   assert.deepEqual(same.args.slice(same.args.indexOf("--resume"), same.args.indexOf("--resume") + 2), ["--resume", "1ff5a5bb-4b08-4e70-9ebf-47778c0f474e"]);
   assert.ok(same.args.includes("Edit,Write,NotebookEdit,Bash"), "still no edit tools");
+  // Ended too, which removes its MCP config from the temp folder.
+  await runDispatch(same, async () => ({ stdout: "", stderr: "", code: 0, killed: false }));
 });
 
 test("standalone code review captures its scope atomically and records unavailable checks honestly", (t) => {
