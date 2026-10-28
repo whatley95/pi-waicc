@@ -131,6 +131,9 @@ This path is interactive and needs a configured model, so it is not useful to an
 - The `pi` mode gives each RPC command 30 s (`WAICC_DRIVER_TIMEOUT=<seconds>` to change).
   It prints `FAIL no response to …`, `FAIL could not start Pi …` or `FAIL Pi exited early …` and exits 1 rather than hanging.
   Raise the timeout before running model-backed commands.
+- A dispatched first review of an older Git commit (`--rev`/`--mr`) runs in a temporary
+  `waicc-review-<id>` worktree, which `runDispatch` removes. Call `runDispatch` after `prepareDispatch`
+  in tests, or the worktree stays (`tests/review-checkout.test.ts`). Its files follow `core.autocrlf`.
 - Status names to assert on are `DRAFT`, `WAITING_FOR_REPLY`, `AWAITING_ASSESSMENT` and `READY_FOR_HANDOFF`.
   There is no `ASSESSING`. `verified` is always `false` by design.
 - `prepare` requires each `sourceQuote` to occur verbatim in the original request.
