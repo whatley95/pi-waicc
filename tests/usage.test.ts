@@ -149,3 +149,12 @@ test("Claude on a claude.ai subscription is marked API-equivalent; with an API k
   pi.read(JSON.stringify({ type: "message_end", message: { role: "assistant", usage: { input: 50, output: 5, cost: { total: 0 } } } }));
   assert.equal(pi.get()!.costUsd, null, "a Pi model with no price set reports $0, shown as without a price");
 });
+
+test("token counts switch unit where they would round up to 1000, on Pi and on the page", () => {
+  const text = (n: number) => usageText({ inputTokens: n, cachedTokens: 0, outputTokens: 0, costUsd: null });
+  const cases: [number, string][] = [[999, "999"], [1_000, "1k"], [999_499, "999k"], [999_500, "1.0M"], [999_949_999, "999.9M"], [999_950_000, "1.00B"], [1_234_000_000, "1.23B"]];
+  assert.deepEqual(cases.map(([n]) => text(n)), cases.map(([, shown]) => `${shown} tokens`));
+  const page = readFileSync(new URL("../templates/tracker.html", import.meta.url), "utf8");
+  const tok = new Function(`${/const tok = [^\n]+/.exec(page)![0]}; return tok;`)() as (n: number) => string;
+  assert.deepEqual(cases.map(([n]) => tok(n)), cases.map(([, shown]) => shown));
+});
