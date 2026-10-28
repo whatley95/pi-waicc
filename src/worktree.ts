@@ -75,19 +75,41 @@ export function createIsolation(root: string, id: string): Isolation {
       mkdirSync(dirname(join(workdir, path)), { recursive: true });
       copyFileSync(join(root, path), join(workdir, path));
     }
-    const linked: string[] = [];
-    for (const name of dependencyFolders) {
-      const target = join(root, name);
-      if (!existsSync(target) || !lstatSync(target).isDirectory()) continue;
-      // Only ignored folders: anything tracked or unignored is already in the snapshot.
-      if (spawnSync("git", ["check-ignore", "-q", name], { cwd: root, windowsHide: true }).status !== 0) continue;
-      symlinkSync(target, join(workdir, name), process.platform === "win32" ? "junction" : "dir");
-      linked.push(name);
-    }
-    return { worktree, workdir, prefix, base, source: source.fingerprint, linked };
+    return { worktree, workdir, prefix, base, source: source.fingerprint, linked: linkDependencies(root, workdir) };
   } finally {
     rmSync(index, { force: true });
   }
+}
+
+/** Links the checkout's ignored dependency folders into a copy, so checks can run there; returns their names. */
+function linkDependencies(root: string, workdir: string): string[] {
+  const linked: string[] = [];
+  for (const name of dependencyFolders) {
+    const target = join(root, name);
+    if (!existsSync(target) || !lstatSync(target).isDirectory() || existsSync(join(workdir, name))) continue;
+    // Only ignored folders: anything tracked or unignored is already in the copy.
+    if (spawnSync("git", ["check-ignore", "-q", name], { cwd: root, windowsHide: true }).status !== 0) continue;
+    symlinkSync(target, join(workdir, name), process.platform === "win32" ? "junction" : "dir");
+    linked.push(name);
+  }
+  return linked;
+}
+
+/** The commit a review covers, checked out read-only for its reviewer when the working folder is at another commit. */
+export interface ReviewCheckout {
+  worktree: string;
+  /** The project inside it: the worktree itself, or a sub-project's folder in it. */
+  workdir: string;
+  commit: string;
+  linked: string[];
+}
+export function createReviewCheckout(root: string, id: string, commit: string): ReviewCheckout {
+  const prefix = gitPrefix(root) ?? "";
+  // Long, physical path, as for an isolated copy.
+  const worktree = join(realpathSync.native(tmpdir()), `waicc-review-${id}`);
+  git(root, ["worktree", "add", "--detach", "--quiet", worktree, commit]);
+  const workdir = join(worktree, prefix.replace(/\/$/, ""));
+  return { worktree, workdir, commit, linked: linkDependencies(root, workdir) };
 }
 
 /** Every file the agent added, changed or deleted relative to the snapshot; ignored output is left out. */
@@ -133,7 +155,7 @@ export function applyIsolatedChanges(root: string, pin: RecipientPin, isolation:
   }
 }
 
-export function removeIsolation(root: string, isolation: Isolation): void {
+export function removeIsolation(root: string, isolation: Pick<Isolation, "worktree" | "workdir" | "linked">): void {
   // Unlink dependency folders first, removing only the link, so removal can never reach the checkout's copy.
   for (const name of isolation.linked ?? []) {
     const link = join(isolation.workdir ?? isolation.worktree, name);
