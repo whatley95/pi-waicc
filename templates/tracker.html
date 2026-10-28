@@ -101,6 +101,7 @@
   .pill.good { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
   .pill.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
   .pill.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+  a.pill { text-decoration: none; }
 
   .detail { margin-top: 22px; }
   .detail-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -304,13 +305,14 @@
     else
       state = lead ? `<div class="head">${pill(lead.status)}<span class="small">${esc(lead.title)}</span></div><div class="tiny muted">idle · last activity ${ago(p.updatedAt)}</div>`
         : `<div class="tiny muted">No open session · ${ago(p.updatedAt)}</div>`;
+    state += interruptedNote(p);
     const done = lead?.tasks.length ? lead.tasks.filter((t) => t.reported).length : 0;
     const progress = lead?.tasks.length ? `<div><div class="tiny muted" style="display:flex;justify-content:space-between"><span>tasks reported done</span><span>${done}/${lead.tasks.length}</span></div><div class="bar"><i style="width:${Math.round(100 * done / lead.tasks.length)}%"></i></div></div>` : "";
     return `<button type="button" class="card glass${p.key === selected ? " selected" : ""}${p.live.length && !stale(p) ? " live" : ""}" data-key="${esc(p.key)}">
       <div class="head"><span class="name">${esc(p.name)}</span></div><div class="path" title="${esc(p.root)}${p.extension ? ` · pi-waicc ${esc(p.extension.version ?? "")} build ${esc(p.extension.build)}` : ""}">${esc(p.root)}</div>
       ${mainModels(p).length ? `<div class="tiny muted" title="${esc(mainModels(p).join(", "))}">main agent · ${esc(mainModels(p).slice(0, 3).map(modelName).join(", "))}</div>` : ""}
       ${state}${progress}
-      <div class="chips"><span class="chip">${openCount} open</span>${lead?.change && lead.status !== "CLOSED" ? `<span class="chip mr">${esc(changeName(lead.change))}</span>` : ""}${p.extension?.outdated ? `<span class="chip attn" title="pi-waicc was updated on disk; this project's Pi chat still runs the copy it loaded (${esc(p.extension.build)}). Type /reload in it.">updated · type /reload</span>` : ""}${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
+      <div class="chips"><span class="chip">${openCount} open</span>${lead?.change && lead.status !== "CLOSED" ? `<span class="chip mr">${esc(changeName(lead.change))}</span>` : ""}${queueChip(p)}${shippedPipeline(p)}${p.extension?.outdated ? `<span class="chip attn" title="pi-waicc was updated on disk; this project's Pi chat still runs the copy it loaded (${esc(p.extension.build)}). Type /reload in it.">updated · type /reload</span>` : ""}${decisions ? `<span class="chip attn">${decisions} decision${decisions > 1 ? "s" : ""} for you</span>` : ""}${p.olderVersion ? `<span class="chip" title="This project's Pi runs an older pi-waicc that does not report spend. Run pi update, then restart Pi there.">older version · restart Pi</span>` : `<span class="chip money" title="${esc(spendSub(today))}">today ${spendText(today)}</span>`}</div>
     </button>`;
   }
 
@@ -344,8 +346,47 @@
       : c.mergeRequest ? `nothing posted to ${where} yet` : "";
     return `<div class="tiny muted" style="margin:6px 0">Reviews ${esc(c.label)}${posted ? ` · ${esc(posted)}` : ""}${c.awaitingPost ? ` · <span style="color:var(--warn)">ready to post${c.toPost ? ` (${plural(c.toPost, "finding")})` : ""}: <code>/waicc-mr-comments</code></span>` : ""}</div>`;
   }
+  // A Pi that closed or crashed while its agents ran: they stopped with it.
+  const interruptedNote = (p) => (p.interrupted?.length
+    ? `<div class="small" style="color:var(--warn)">Pi closed while ${p.interrupted.map((run) => short(run.label)).join(", ")} was running (${ago(p.updatedAt)}). Open Pi there; /waicc-status shows where it got to.</div>` : "");
+  // Where it came from and where it went: the issue, the merge request it shipped as, and its pipeline.
+  const linkChip = (url, text, cls = "chip mr") => (webLink(url)
+    ? ` <a class="${cls}" href="${esc(webLink(url))}" target="_blank" rel="noopener noreferrer" title="Open it">${esc(text)} ↗</a>` : ` <span class="${cls}">${esc(text)}</span>`);
+  const pipelineTone = { passed: ["good", "CI passed"], failed: ["bad", "CI failed"], fixing: ["warn", "CI failed · fixing"], watching: ["warn", "CI running"], ended: ["", "CI ended"], "not-watching": ["", "CI not watched"] };
+  // A card is a button, so it shows the chip without a link inside it.
+  const pipelineChip = (s, link = true) => {
+    if (!s.pipeline) return "";
+    const [tone, text] = pipelineTone[s.pipeline.state] ?? ["", s.pipeline.state];
+    const url = link && webLink(s.pipeline.url), title = esc(s.pipeline.text ?? "");
+    return url ? ` <a class="pill ${tone}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${title}">${esc(text)} ↗</a>`
+      : ` <span class="pill ${tone}" title="${title}">${esc(text)}</span>`;
+  };
+  const requestName = (provider, number) => (number === null || number === undefined ? "merge request" : provider === "github" ? `PR #${number}` : `MR !${number}`);
+  const origin = (s) => [
+    s.issue ? linkChip(s.issue.url, `#${s.issue.number}`, "chip") : "",
+    s.shipped ? linkChip(s.shipped.url, `${s.shipped.url ? requestName(s.shipped.provider, s.shipped.number) : s.shipped.branch} → ${s.shipped.target}`) : "",
+    pipelineChip(s),
+  ].join("");
+  // On the card: the newest shipped change's pipeline, while it matters.
+  const shippedPipeline = (p) => {
+    const s = p.sessions.filter((x) => x.pipeline).sort((a, b) => b.pipeline.at.localeCompare(a.pipeline.at))[0];
+    return s && s.pipeline.state !== "passed" ? pipelineChip(s, false) : "";
+  };
+  const queueChip = (p) => {
+    if (!p.queue) return "";
+    const running = p.queue.items.find((i) => i.status === "running");
+    return p.queue.waiting || running ? `<span class="chip" title="${esc(running ? `${running.id} · ${running.task}: ${running.step ?? "running"}` : "")}">queue · ${running ? "1 running · " : ""}${p.queue.waiting} waiting</span>` : "";
+  };
+  const queueMark = { waiting: "⏳", running: "▶️", shipped: "✅", reviewed: "🟡", stopped: "⏹️", failed: "❌" };
+  function queueBox(p) {
+    if (!p.queue) return "";
+    const rows = p.queue.items.map((i) => `<tr><td class="num">${i.id}</td><td>${queueMark[i.status] ?? ""} ${esc(i.task)}${i.status === "running" && i.step ? `<div class="tiny muted">${esc(i.step)}</div>` : ""}${i.outcome && i.status !== "running" ? `<div class="tiny muted">${esc(i.outcome)}</div>` : ""}</td>
+      <td>${esc(i.status)}</td><td>${i.url ? linkChip(i.url, "open") : ""}${i.folder ? `<div class="tiny muted"><code>${esc(i.folder)}</code></div>` : ""}</td></tr>`).join("");
+    return `<div class="glass section"><h3>Overnight queue · ${p.queue.waiting} waiting</h3><div class="scroll"><table><tr><th>#</th><th>Task</th><th>State</th><th>Where</th></tr>${rows}</table></div>
+      <div class="tiny muted">A reviewed task waits in its folder for <code>/waicc-ship</code>. <code>/waicc-queue</code> in Pi lists them too.</div></div>`;
+  }
   function sessionHead(p, s) {
-    return `<span class="session-head">${pill(s.status)} <b>${esc(s.title)}</b>${changeChip(s)} <span class="small muted">${esc(s.phase)} · v${s.contractVersion} · ${ago(s.updatedAt)}${s.id === p.selectedSessionId ? " · selected in Pi" : ""}</span> <span class="chip money" title="${esc(spendSub(sessionSpend(s)))}">${spendText(sessionSpend(s))}</span></span>`;
+    return `<span class="session-head">${pill(s.status)} <b>${esc(s.title)}</b>${changeChip(s)}${origin(s)} <span class="small muted">${esc(s.phase)} · v${s.contractVersion} · ${ago(s.updatedAt)}${s.id === p.selectedSessionId ? " · selected in Pi" : ""}</span> <span class="chip money" title="${esc(spendSub(sessionSpend(s)))}">${spendText(sessionSpend(s))}</span></span>`;
   }
 
   function overview(p) {
@@ -358,9 +399,12 @@
         ${s.tasks.map((t) => `<tr><td>${esc(t.id)}</td><td>${esc(t.title)}</td><td>${t.reported ? `<span class="ok">✓ reported</span>` : `<span class="na">—</span>`}</td></tr>`).join("")}</table></div>
         <div class="tiny muted">"Reported" is the coding agent's claim in its latest whole-work report; review checks it.</div>` : "";
       const requirements = s.requirements.length ? fold(`${s.id}:req`, `<span class="small">Requirements (${s.requirements.length})</span>`, `<ul class="small">${s.requirements.map((r) => `<li><b>${esc(r.id)}</b> ${esc(r.text)}</li>`).join("")}</ul>`, false) : "";
-      return `<div class="glass section">${fold(`${p.key}:${s.id}`, sessionHead(p, s), `<div class="tiny muted" style="margin:6px 0">Session <code>${esc(s.id)}</code> · coding by ${esc(s.implementationOwner)}</div>${changeLine(s)}${budgetBar(p, s)}${requirements}${tasks}`, s.status !== "CLOSED")}</div>`;
+      const stale = s.staleReason ? `<div class="small" style="color:var(--bad);margin:6px 0">${esc(s.staleReason)}: this pass no longer holds. <code>/waicc-review</code> asks for a fresh one.</div>` : "";
+      const shipped = s.shipped ? `<div class="tiny muted" style="margin:6px 0">Shipped ${ago(s.shipped.at)} as <code>${esc(s.shipped.branch)}</code> (${esc(s.shipped.commit.slice(0, 10))}) into <code>${esc(s.shipped.target)}</code>${s.pipeline ? ` · ${esc(s.pipeline.text ?? "")}` : ""}</div>` : "";
+      return `<div class="glass section">${fold(`${p.key}:${s.id}`, sessionHead(p, s), `<div class="tiny muted" style="margin:6px 0">Session <code>${esc(s.id)}</code> · coding by ${esc(s.implementationOwner)}</div>${stale}${shipped}${changeLine(s)}${budgetBar(p, s)}${requirements}${tasks}`, s.status !== "CLOSED")}</div>`;
     }).join("");
-    return `${live}${mainAgents(p)}${notices}${sessions || `<p class="small muted">No WAICC sessions in this project yet.</p>`}`;
+    const interrupted = interruptedNote(p) ? `<div class="glass section">${interruptedNote(p)}</div>` : "";
+    return `${live}${interrupted}${mainAgents(p)}${queueBox(p)}${notices}${sessions || `<p class="small muted">No WAICC sessions in this project yet.</p>`}`;
   }
   // Each Pi chat in this project: the main agent's model now, and what it used today and in all.
   function mainAgents(p) {

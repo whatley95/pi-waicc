@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { atomicWrite, json, now, readJson, runtimePath, withLock } from "./files.ts";
 import type { GitLabCall } from "./gitlab.ts";
 import type { Shipped } from "./types.ts";
 
@@ -87,4 +90,31 @@ export async function githubChecks(root: string, shipped: Shipped, gh: GhRunner 
 /** What the main agent gets to fix a failed pipeline: the job names and their log tails, as data. */
 export function failureText(result: PipelineResult): string {
   return result.failed.map((job) => `### ${job.name}${job.url ? ` (${job.url})` : ""}\n\n\`\`\`text\n${job.log || "(no log)"}\n\`\`\``).join("\n\n");
+}
+
+/** The last known state of a shipped change's pipeline, per session, for the tracker page. */
+export interface PipelineMark {
+  state: "watching" | "passed" | "fixing" | "failed" | "ended" | "not-watching";
+  text: string;
+  url: string | null;
+  commit: string;
+  at: string;
+}
+const marksPath = (root: string) => join(root, runtimePath, "pipelines.json");
+export function readPipelines(root: string): Record<string, PipelineMark> {
+  try {
+    return existsSync(marksPath(root)) ? readJson<Record<string, PipelineMark>>(marksPath(root)) : {};
+  } catch {
+    return {};
+  }
+}
+/** Records how a session's pipeline stands; the 50 most recent sessions are kept. Never fails the caller. */
+export function recordPipeline(root: string, sessionId: string, mark: Omit<PipelineMark, "at">): void {
+  try {
+    withLock(root, () => {
+      const marks = { ...readPipelines(root), [sessionId]: { ...mark, at: now() } };
+      const kept = Object.entries(marks).sort((a, b) => b[1].at.localeCompare(a[1].at)).slice(0, 50);
+      atomicWrite(marksPath(root), json(Object.fromEntries(kept)));
+    });
+  } catch { /* the page then shows the pipeline as it was last recorded */ }
 }

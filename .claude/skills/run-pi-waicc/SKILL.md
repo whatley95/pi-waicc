@@ -98,6 +98,16 @@ a fake RPC peer through `services.queuePi`, as `tests/queue.test.ts` does. To ch
 `pi` starts and loads WAICC, send only `get_commands` to `spawnPi(folder, { PI_CODING_AGENT_DIR: <temp> }, true)`,
 then kill it.
 
+**The tracker page is off in tests** (`tests/isolate.ts` sets `WAICC_TRACKER=off`). To check it,
+follow `tests/tracker-truth.test.ts`:
+- point `PI_CODING_AGENT_DIR` at a temporary folder and delete `WAICC_TRACKER`;
+- call `projectStatus(root)` / `publish(...)`, then read `data.js` with `runInNewContext`;
+- render `templates/tracker.html`'s script the same way to assert on the markup.
+
+After changing a file, call `forgetSources()`: the tracker reads the source again only every
+30 s, so a stale review would not show yet. A crashed Pi is simulated with the pid of a process
+that has exited (`spawnSync(process.execPath, ["-e", ""]).pid`).
+
 See `driver.mjs` → `roundtrip()` for working contract/reply/assessment bodies, and `docs/PROTOCOL.md` for the schema.
 For the extension's tool layer (`waicc_prepare` etc.) without the Pi runtime, the
 pattern is `tests/extension.test.ts`, which uses Pi's own `loadExtensions()`.
