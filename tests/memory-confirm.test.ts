@@ -42,7 +42,7 @@ test("/waicc-memory confirm and revoke work without IDs: pick from a list, or al
 
   // The reported error: no ID typed. Now it lists the candidates instead.
   await memory("confirm", plain);
-  assert.match(notices.at(-1)!, new RegExp(`^Usage: /waicc-memory confirm <id>\|all\. Candidates: ${policy.id} decision: Use the framework-native theme policy \(from theme\.ts\); ${guard.id} lesson`));
+  assert.match(notices.at(-1)!, new RegExp(`^Usage: /waicc-memory confirm <id>\\|all\\. Candidates: ${policy.id} decision: Use the framework-native theme policy \\(from theme\\.ts\\); ${guard.id} lesson`));
   assert.match(notices.at(-1)!, /1 stale candidate cannot be confirmed: its source changed/);
   await memory("confirm nope", plain);
   assert.match(notices.at(-1)!, /^Unknown memory ID "nope"\. Candidates:/);
