@@ -19,7 +19,7 @@ import {
 } from "../src/workflow.ts";
 import { curate, propose } from "../src/memory.ts";
 
-test("Pi 1.2.0's actual extension loader accepts commands and can execute handoff preparation", async (t) => {
+test("Pi 1.4.0's actual extension loader accepts commands and can execute handoff preparation", async (t) => {
   const { loadExtensions } =
     await import("../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js");
   const result = await loadExtensions([resolve("src/index.ts")], process.cwd());

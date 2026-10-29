@@ -3,7 +3,7 @@
 //   node .claude/skills/run-pi-waicc/driver.mjs roundtrip [--keep]
 //   node .claude/skills/run-pi-waicc/driver.mjs pi <project-dir> "/waicc-status all" ["/waicc-use <id>" ...]
 // `roundtrip` exercises the standalone CLI end to end in a throwaway Git project
-// (no Pi process, no model). `pi` launches the pinned Pi 1.2.0 in RPC mode with this
+// (no Pi process, no model). `pi` launches the pinned Pi 1.4.0 in RPC mode with this
 // extension loaded and sends each argument as a prompt; output is the extension's
 // notify/custom messages. Commands that call pi.sendUserMessage (/waicc-planning,
 // /waicc-review, /waicc-continue on a waiting reply) start a model turn - avoid them

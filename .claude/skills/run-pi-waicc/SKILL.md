@@ -1,6 +1,6 @@
 ---
 name: run-pi-waicc
-description: Run, drive, smoke-test or debug the pi-waicc Pi extension and its standalone waicc CLI. Use to start a WAICC session, prepare a contract/handoff, simulate an agent reply.json, continue/assess a round, export, or load the extension in a real Pi 1.2.0 process and send /waicc-* slash commands.
+description: Run, drive, smoke-test or debug the pi-waicc Pi extension and its standalone waicc CLI. Use to start a WAICC session, prepare a contract/handoff, simulate an agent reply.json, continue/assess a round, export, or load the extension in a real Pi 1.4.0 process and send /waicc-* slash commands.
 ---
 
 # Run pi-waicc
@@ -10,7 +10,7 @@ pi-waicc is a Pi coding-agent extension (`src/index.ts`) plus a standalone CLI
 `.claude/skills/run-pi-waicc/driver.mjs`:
 
 - `roundtrip`: the whole contract → handoff → reply → continue → assess → export loop through the CLI in a throwaway Git repo. It needs no Pi process and no model.
-- `pi`: launches the **pinned** Pi 1.2.0 from `node_modules` in RPC mode with the extension loaded via `-e`, then sends each argument as a prompt and prints the extension's output.
+- `pi`: launches the **pinned** Pi 1.4.0 from `node_modules` in RPC mode with the extension loaded via `-e`, then sends each argument as a prompt and prints the extension's output.
 
 All paths are relative to the repo root. Verified on native Windows 11 with Node 22.22 (both Git Bash and PowerShell).
 
@@ -36,7 +36,7 @@ Expected stages: `DRAFT` → `WAITING_FOR_REPLY` → (`reply.json` written) `AWA
 
 ## Live check with a scripted model (no provider, no cost)
 
-`live-picker.mjs` runs the real Pi 1.2.0 in RPC mode against a local fake OpenAI-compatible
+`live-picker.mjs` runs the real Pi 1.4.0 in RPC mode against a local fake OpenAI-compatible
 server that answers with a script: `waicc_status`, then `waicc_suggest_command`, then a short
 reply. It uses its own temporary `PI_CODING_AGENT_DIR`, so the user's `~/.pi` is untouched.
 
