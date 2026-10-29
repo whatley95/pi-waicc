@@ -93,7 +93,24 @@ node src/cli.ts --root <project> continue <sid>              # ingest rounds/<ri
 node src/cli.ts --root <project> assess <sid> assessment.json
 node src/cli.ts --root <project> export <sid>
 node src/cli.ts --root <project> ship <sid> --dry-run        # READY_TO_CLOSE only: branch, files, target; changes nothing
+node src/cli.ts --help                                       # every command and flag (about 30)
 ```
+
+**Dispatch spends the user's agent accounts.** `waicc dispatch` and `/waicc-dispatch` start the real
+`claude`, `codex`, `pi` or `agy` CLI, which calls a paid model. In tests, pass a fake `AgentRunner`
+to `runDispatch` that submits the reply itself, as `tests/dispatch.test.ts` and
+`tests/monorepo.test.ts` do. Never add `--dangerously-skip-permissions` to agy.
+
+**The MCP server** (`waicc mcp`) speaks JSON-RPC over stdio, so stdout carries only protocol
+messages: debug output goes to stderr. To drive it, spawn
+`node src/cli.ts --root <project> mcp --session <sid> --request <rid>` and write JSON-RPC lines
+to its stdin (`tests/dispatch.test.ts`, first test).
+
+**Settings that stay user-only.** `~/.pi/agent/waicc-agents.json` may set gitlab, sandbox,
+alerts, budget, policies, autoDecide, autoAdvisor, memory, autoContinue, autoCompactTokens,
+resumeReviews and autoShip; a project's `.pi/waicc-agents.json` must not (`src/profiles.ts`).
+Keep that when adding a setting, and don't edit the user's real file: point
+`PI_CODING_AGENT_DIR` at a temporary folder.
 
 **Never ship for real while testing.** `/waicc-ship` and `ship --yes` commit, push and open a
 merge request on the project's remote. To exercise them, follow `tests/ship.test.ts`: a throwaway
@@ -120,6 +137,15 @@ See `driver.mjs` → `roundtrip()` for working contract/reply/assessment bodies,
 For the extension's tool layer (`waicc_prepare` etc.) without the Pi runtime, the
 pattern is `tests/extension.test.ts`, which uses Pi's own `loadExtensions()`.
 
+## Before opening a PR
+
+1. `npm run typecheck`, then the test files you touched, then `npm test` once.
+2. For changes to commands, the picker or hooks: the live check above (all 11 lines `ok`).
+3. Update `README.md`, `docs/PROTOCOL.md` and this skill in the same PR when behavior changes.
+4. `main` only accepts PRs with green `check` jobs on Ubuntu, macOS and Windows.
+5. The repository is public: examples use placeholders (gitlab.example.com, 10.0.0.5,
+   team/app, alice), never real company hosts, projects or people.
+
 ## Run (human path)
 
 `pi install /absolute/path/to/pi-waicc`, then type `/waicc-planning …` inside Pi's TUI.
@@ -133,7 +159,7 @@ This path is interactive and needs a configured model, so it is not useful to an
 - **`pi -p` (print mode) shows nothing for `/waicc-status`**: the command runs, but its
   output is a custom message that text and json print modes don't emit. That's why the driver uses `--mode rpc`
   plus `get_messages`.
-- The driver uses `node_modules/.../pi-coding-agent/dist/cli.js` (pinned 1.2.0), not the
+- The driver uses `node_modules/.../pi-coding-agent/dist/cli.js` (pinned 1.4.0), not the
   global `pi`, and passes `-ne --offline --no-session -a`. Without `-a` (trust),
   every command only notifies "Trust the project in Pi…".
 - The `pi` mode gives each RPC command 30 s (`WAICC_DRIVER_TIMEOUT=<seconds>` to change).
@@ -147,8 +173,10 @@ This path is interactive and needs a configured model, so it is not useful to an
   or `sweepReviewCheckouts` then removes it.
 - Each test file's process removes its `PI_CODING_AGENT_DIR` on exit. A test that prepares a dispatch
   it never runs must remove `plan.scratch`, or the MCP config is left in the temp folder.
-- Status names to assert on are `DRAFT`, `WAITING_FOR_REPLY`, `AWAITING_ASSESSMENT` and `READY_FOR_HANDOFF`.
-  There is no `ASSESSING`. `verified` is always `false` by design.
+- Status names are the `SessionStatus` union in `src/types.ts`: the loop above uses `DRAFT`,
+  `WAITING_FOR_REPLY`, `AWAITING_ASSESSMENT` and `PLAN_READY`; others include `READY_FOR_HANDOFF`,
+  `NEEDS_CHANGES`, `READY_TO_CLOSE` and `CLOSED`. There is no `ASSESSING`. `verified` is always
+  `false` by design.
 - `prepare` requires each `sourceQuote` to occur verbatim in the original request.
 - Start the reply from the generated `reply.example.json`, because its identity fields must stay unchanged. Then write it as `reply.json` in the same round dir.
 
