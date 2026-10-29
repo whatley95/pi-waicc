@@ -1,4 +1,4 @@
-// Live check: a real Pi 1.2.0 (RPC) with WAICC loaded, driven by a scripted local "model".
+// Live check: a real Pi 1.4.0 (RPC) with WAICC loaded, driven by a scripted local "model".
 // Usage: node .claude/skills/run-pi-waicc/live-picker.mjs <repo> <project> <sessionId> (see SKILL.md)
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
@@ -74,7 +74,7 @@ const next = (match, ms = 60_000) => new Promise((ok, fail) => {
 const check = (ok, what) => say(`${ok ? "ok  " : "FAIL"} ${what}`);
 try {
   const cmds = await send({ type: "get_commands" });
-  check(cmds.data.commands.some((c) => c.name === "waicc-list"), "WAICC loaded in Pi 1.2.0");
+  check(cmds.data.commands.some((c) => c.name === "waicc-list"), "WAICC loaded in Pi 1.4.0");
 
   // 1. A typed command: the running line appears, then clears.
   log.length = 0;
