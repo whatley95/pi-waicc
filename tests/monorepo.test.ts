@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path";
 import { prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
 import { initialize, loadSession } from "../src/files.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
-import { initProject, projectRoot, snapshot } from "../src/source.ts";
+import { initProject, projectRoot, snapshot, sourceLimits } from "../src/source.ts";
 import { assess, createSession, delegateWork, ingest, prepare } from "../src/workflow.ts";
 import { removeIsolation } from "../src/worktree.ts";
 import type { Contract } from "../src/types.ts";
@@ -131,7 +131,13 @@ test("Claude or Codex coding in a sub-project gets the whole monorepo as context
 
 test("an over-sized project points to /waicc-init", (t) => {
   const big = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
-  t.after(() => rmSync(big, { recursive: true, force: true }));
-  for (let i = 0; i <= 10_000; i++) writeFileSync(join(big, `f${i}.txt`), "");
-  assert.throws(() => snapshot(big), /Source exceeds 10,000 files\. In a monorepo, run \/waicc-init \(CLI: waicc init\) inside the service folder/);
+  // A lowered limit: 10,001 real files take half a minute to write on Windows.
+  const limit = sourceLimits.direct;
+  sourceLimits.direct = 3;
+  t.after(() => {
+    sourceLimits.direct = limit;
+    rmSync(big, { recursive: true, force: true });
+  });
+  for (let i = 0; i <= 3; i++) writeFileSync(join(big, `f${i}.txt`), "");
+  assert.throws(() => snapshot(big), /Source exceeds 3 files\. In a monorepo, run \/waicc-init \(CLI: waicc init\) inside the service folder/);
 });

@@ -107,3 +107,24 @@ test("cached file digests keep fingerprints and miss no change, even one that ke
   }
   assert.throws(() => snapshot(root), /Unsupported source entry: link\.txt|Source symlink/);
 });
+
+test("Git's index and files come from one call, fingerprinted exactly as `git ls-files --stage` prints them", (t) => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
+  t.after(() => {
+    assert.ok(basename(root).startsWith("waicc-test-"));
+    rmSync(root, { recursive: true, force: true });
+  });
+  git(root, "init", "-q", "-b", "main");
+  mkdirSync(join(root, "sub"));
+  writeFileSync(join(root, ".gitignore"), "*.log\n");
+  writeFileSync(join(root, "a.txt"), "a\n");
+  writeFileSync(join(root, "sub", "b.txt"), "b\n");
+  git(root, "add", ".");
+  git(root, "commit", "-q", "-m", "Start");
+  writeFileSync(join(root, "new.txt"), "untracked\n");
+  writeFileSync(join(root, "skip.log"), "ignored\n");
+  const s = snapshot(root);
+  // Recorded handoffs keep this fingerprint, so it must not change with how Git is asked.
+  assert.equal(s.vcsState, createHash("sha256").update(execFileSync("git", ["ls-files", "--stage", "-z"], { cwd: root })).digest("hex"));
+  assert.deepEqual(Object.keys(s.files).sort(), [".gitignore", "a.txt", "new.txt", "sub/b.txt"]);
+});
