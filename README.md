@@ -47,7 +47,7 @@ Or `/waicc-dispatch --auto --ship` after `/waicc-planning` to plan, build, revie
 ## Install
 
 Requires **Node.js 22.19+** and the **`@earendil-works` Pi coding-agent host**.
-Developed and tested on native Windows with Pi 1.2.0; other platforms have not yet
+Developed and tested on native Windows with Pi 1.4.0; other platforms have not yet
 been verified.
 
 ```sh
@@ -2047,7 +2047,7 @@ Node does not strip types from files under `node_modules`.
 
 The automated suite covers contract and dependency validation, reply identity and
 freshness, crash recovery, writer locks, path boundaries, Git/SVN evidence, memory,
-exports, recipient pin/resume/tool boundaries, and actual Pi 1.2.0 extension loading
+exports, recipient pin/resume/tool boundaries, and actual Pi 1.4.0 extension loading
 and handoff-tool execution. Live-model
 output quality still needs validation on real project work.
 
