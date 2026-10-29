@@ -4,7 +4,6 @@ import {
   lstatSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   type Stats,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -140,33 +139,39 @@ export function snapshot(root: string): SourceSnapshot {
     /^\.pi\/pi-waicc(?:\/|$)/i.test(path) ||
     (excluded(path) && !tracked.has(path));
   if (vcs === "git") {
+    // One Git call lists both: untracked files as bare paths, index entries as
+    // "mode blob stage\tpath" (starting git costs far more than reading its output).
     const output = command(
       "git",
-      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      ["ls-files", "-z", "--stage", "--cached", "--others", "--exclude-standard"],
       root,
     );
     ensure(
       output !== null,
       "Cannot enumerate Git source files; refusing incomplete source evidence",
     );
-    paths = output.split("\0").filter(Boolean);
+    const staged: string[] = [];
+    for (const entry of output.split("\0")) {
+      if (!entry) continue;
+      if (/^\d{6} [0-9a-f]{40,64} \d\t/.test(entry)) {
+        staged.push(entry);
+        paths.push(entry.slice(entry.indexOf("\t") + 1));
+      } else paths.push(entry);
+    }
     // A sub-project's own tree, not the repository's commit: other projects' commits
     // in the same monorepo must not look like a change here.
     revision = prefix
       ? command("git", ["rev-parse", "--verify", `HEAD:${prefix.replace(/\/$/, "")}`], root)?.trim() ?? null
       : command("git", ["rev-parse", "--verify", "HEAD"], root)?.trim() ?? null;
-    const index = command("git", ["ls-files", "--stage", "-z"], root);
-    ensure(index !== null, "Cannot fingerprint the Git index");
-    index
-      .split("\0")
-      .filter(Boolean)
-      .forEach((entry) => {
-        const path = entry.slice(entry.indexOf("\t") + 1).replaceAll("\\", "/");
-        tracked.add(path);
-        // "mode blob stage\tpath": the blob is Git's own fingerprint of the indexed content.
-        const [mode, blob] = entry.slice(0, entry.indexOf("\t")).split(" ");
-        blobs.set(path, { mode, blob });
-      });
+    // Exactly what `git ls-files --stage -z` prints, so recorded fingerprints stay valid.
+    const index = staged.map((entry) => `${entry}\0`).join("");
+    for (const entry of staged) {
+      const path = entry.slice(entry.indexOf("\t") + 1).replaceAll("\\", "/");
+      tracked.add(path);
+      // "mode blob stage\tpath": the blob is Git's own fingerprint of the indexed content.
+      const [mode, blob] = entry.slice(0, entry.indexOf("\t")).split(" ");
+      blobs.set(path, { mode, blob });
+    }
     vcsState = digest(index);
   } else {
     if (vcs === "svn") {
@@ -229,7 +234,7 @@ export function snapshot(root: string): SourceSnapshot {
         else paths.push(path);
         ensure(
           paths.length <= sourceLimits.direct,
-          "Source exceeds 10,000 files. In a monorepo, run /waicc-init (CLI: waicc init) inside the service folder to make it its own WAICC project.",
+          `Source exceeds ${sourceLimits.direct.toLocaleString("en")} files. In a monorepo, run /waicc-init (CLI: waicc init) inside the service folder to make it its own WAICC project.`,
         );
       }
     };

@@ -20,8 +20,16 @@ Node ≥ 22.19 runs the `.ts` sources directly (type stripping), so there is no 
 
 ```sh
 npm install --ignore-scripts
-npm run check          # tsc --noEmit + full node:test suite (~200 tests), ~1 min
+npm run check          # tsc --noEmit + full node:test suite (~400 tests), ~6 min on Windows
+node --import ./tests/isolate.ts --test tests/X.test.ts   # one file
 ```
+
+The suite's time is mostly process starts: on Windows each `git` or `node` child costs
+~200 ms, so a test's speed is roughly how many it spawns. `GIT_TRACE2=<file>` counts git
+calls (`grep -c ' start '`). Don't write thousands of real files to reach a limit; lower
+`sourceLimits` for the test instead. Node 22's `--experimental-test-coverage` misreports
+over the whole suite (it merged `assessment.ts` to 4% while two files alone cover 55%);
+trust it only for a few files at a time.
 
 ## Run (agent path)
 
