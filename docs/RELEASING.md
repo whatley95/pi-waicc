@@ -6,12 +6,25 @@ passes.
 
 ## One-time setup
 
+The Release workflow publishes with npm [trusted publishing](https://docs.npmjs.com/trusted-publishers):
+npm checks that the upload comes from this repository's workflow, so no npm token is stored
+in GitHub. A trusted publisher is set in the package's settings, so the package has to exist
+first, and the first version is published by hand.
+
 1. Sign in at [npmjs.com](https://www.npmjs.com) (create the account if needed) and enable
    two-factor authentication.
-2. Create an **Automation** access token (Account → Access Tokens → Generate New Token →
-   Classic → Automation). Automation tokens publish from CI without a one-time code.
-3. In GitHub: repository **Settings → Secrets and variables → Actions → New repository
-   secret**, name `NPM_TOKEN`, value the token.
+2. Publish the first version from a clean checkout of `main` (see
+   [Publishing by hand](#publishing-by-hand)), then tag that commit, for example
+   `git tag v0.1.0 && git push origin v0.1.0`. The workflow then fails at `npm publish`,
+   because the version is already on npm; nothing else happens.
+3. On npmjs.com, open the package → **Settings → Trusted publishing → GitHub Actions**, and
+   enter the owner `whatley95`, the repository `pi-waicc` and the workflow file `release.yml`
+   (no environment). The fields are case-sensitive.
+4. Under **Publishing access**, choose **Require two-factor authentication and disallow
+   tokens**: from then on only this workflow, or you with a one-time code, can publish.
+
+npm no longer issues classic or automation tokens. Granular tokens that can publish expire,
+so a stored token would keep breaking releases; trusted publishing has nothing to renew.
 
 ## Each release
 
@@ -25,8 +38,9 @@ passes.
    ```
 
 3. The **Release** workflow checks that the tag matches `package.json`, runs every test and
-   the build (`prepack`), then runs `npm publish --provenance --access public`. A failing
-   test publishes nothing.
+   the build (`prepack`), then runs `npm publish --access public` through trusted
+   publishing, which also attaches provenance (the package links back to the workflow run).
+   A failing test publishes nothing.
 
 ## After the first release
 
