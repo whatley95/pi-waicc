@@ -1,14 +1,14 @@
 name: Release
 
-# Publishes to npm when a version tag such as v0.1.0 is pushed. Needs the NPM_TOKEN secret
-# (an npm automation token); see docs/RELEASING.md.
+# Publishes to npm when a version tag such as v0.2.0 is pushed, through npm trusted
+# publishing (OIDC): no token is stored anywhere. See docs/RELEASING.md for the one-time setup.
 on:
   push:
     tags: ["v*.*.*"]
 
 permissions:
   contents: read
-  id-token: write # npm provenance: the package links back to this workflow run
+  id-token: write # trusted publishing: npm checks this workflow run instead of a token
 
 jobs:
   publish:
@@ -20,6 +20,8 @@ jobs:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
           cache: npm
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships npm 10.
+      - run: npm install -g npm@^11.5.1
       - name: Tag matches package.json
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -27,6 +29,5 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y subversion bubblewrap
       - run: npm ci --ignore-scripts
       # prepack runs the full check and the build, so a failing test publishes nothing.
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Provenance is added automatically for a public package published this way.
+      - run: npm publish --access public
