@@ -1,0 +1,18 @@
+# Weekly update PRs; CI on all three systems decides whether each one is safe.
+version: 2
+updates:
+  # Includes the pinned Pi, so the tests follow the Pi version people actually run.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev:
+        dependency-type: development
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
