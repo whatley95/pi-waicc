@@ -380,6 +380,11 @@ To show the current setting, turn it off, or re-enable it:
 Trivial one-step edits, explanations, status questions and exploratory discussion
 should not start new contracts. Whether tracked planning would help is model judgment,
 not a guaranteed classifier.
+A request can also grow while the agent works on it: "get main into this branch" is one command
+until it stops on conflicts. The model is told to decide again when that happens, and when a
+shell command's output shows merge conflicts, WAICC adds a note to that output (once per
+request): stop before resolving anything, tell you, and start planning. The note only advises;
+the model still decides, and nothing is created until it calls `waicc_start_planning`.
 Put `[no-plan]` at the beginning of a message to mechanically skip automatic startup
 for that input. It does **not** bypass an existing contract's scope or coding guards.
 Manual `/waicc-planning` is always available.
