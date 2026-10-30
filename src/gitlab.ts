@@ -84,7 +84,7 @@ const certificates = (): string[] | undefined => {
   }
 };
 
-export type GitLabCall = (method: "GET" | "POST", path: string, body?: unknown) => Promise<any>;
+export type GitLabCall = (method: "GET" | "POST" | "PUT", path: string, body?: unknown) => Promise<any>;
 /** Calls the API with the host's token; errors carry GitLab's own message. */
 export function gitlabClient(project: GitLabProject, settings: GitLabHost): GitLabCall {
   ensure(settings.token, `No GitLab token for ${project.host}: set "token" or "tokenEnv" for it under "gitlab" in your user file`);
@@ -151,12 +151,18 @@ export const tokenPageUrl = (project: GitLabProject): string =>
 export interface MergeRequestInfo {
   title: string; description: string; webUrl: string; state: string;
   diffRefs: { baseSha: string; startSha: string; headSha: string } | null;
+  source: string; target: string; draft: boolean; conflicts: boolean;
+  /** The head commit's pipeline: GitLab's status word (success, running, failed…), or null without one. */
+  pipeline: { status: string; url: string | null } | null;
 }
 export async function mergeRequestInfo(call: GitLabCall, number: number): Promise<MergeRequestInfo> {
   const mr = await call("GET", `/merge_requests/${number}`);
   return {
     title: String(mr?.title ?? ""), description: String(mr?.description ?? ""), webUrl: String(mr?.web_url ?? ""), state: String(mr?.state ?? ""),
     diffRefs: mr?.diff_refs?.head_sha ? { baseSha: mr.diff_refs.base_sha, startSha: mr.diff_refs.start_sha, headSha: mr.diff_refs.head_sha } : null,
+    source: String(mr?.source_branch ?? ""), target: String(mr?.target_branch ?? ""),
+    draft: Boolean(mr?.draft ?? mr?.work_in_progress), conflicts: Boolean(mr?.has_conflicts),
+    pipeline: mr?.head_pipeline?.status ? { status: String(mr.head_pipeline.status), url: mr.head_pipeline.web_url ? String(mr.head_pipeline.web_url) : null } : null,
   };
 }
 

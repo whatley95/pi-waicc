@@ -288,6 +288,21 @@ request has new commits since the review (fetch and review again first), when it
 open, or without Pi's interactive screen. Only you can post: it is a command, never a tool the
 main agent can call.
 
+**Approve or merge it once the review passed.** When the main agent assessed the review as
+ready (the session is `READY_TO_CLOSE`):
+
+```text
+/waicc-mr-merge
+```
+
+shows the merge request, its branches and pipeline, and lets you choose: merge now, merge when
+the pipeline passes (while it is running), approve only, or cancel. A draft or a merge request
+with conflicts can only be approved. It asks whether to delete the source branch, then a last
+confirmation names the target branch. WAICC merges exactly the commit the review passed: if
+anything was pushed after the review, it stops and asks you to review the new commits, and
+GitLab itself refuses a merge whose commit moved in between. After the merge it offers to close
+the session. Like posting, only you can run it; the main agent never merges.
+
 It needs a GitLab personal access token with the `api` scope, set per host in your user file
 (a project file setting `gitlab` is rejected, so a repository cannot point your token at its own
 server):
@@ -1437,6 +1452,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-review --mr <n> [--remote r] [--into branch] [focus]` | Review a GitLab merge request or GitHub pull request, fetched with plain git; again later to pick up new commits |
 | `/waicc-review --mr --list [--remote r]`         | Pick a merge request to review from a list (open ones with titles when your GitLab host is set up) |
 | `/waicc-mr-comments`                             | Post the assessed merge request review to GitLab: line comments and a summary, after you choose and confirm |
+| `/waicc-mr-merge`                                | Approve or merge the reviewed GitLab merge request once its review passed, only at the reviewed commit |
 | `/waicc-review --contract <focus>`               | Explicit specification-only review, not code-change approval |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |

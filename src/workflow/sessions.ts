@@ -93,6 +93,25 @@ export function postedComments(cwd: string, id: string): PostedComments[] {
   return Object.keys(s.artifacts).filter((path) => /^mr-comments\/[^/]+\.json$/.test(path)).sort()
     .map((path) => JSON.parse(artifact(root, s, path)) as PostedComments);
 }
+export interface MergeRequestAction {
+  at: string; requestId: string; headSha: string; webUrl: string;
+  action: "approved" | "merged" | "merge_when_pipeline_succeeds";
+  mergeCommit: string | null; removeSourceBranch: boolean;
+}
+/** What /waicc-mr-merge did on the merge request, kept in the session. */
+export function recordMergeRequestAction(cwd: string, id: string, done: MergeRequestAction): Session {
+  const root = projectRoot(cwd);
+  return withLock(root, () => {
+    const s = loadSession(root, id);
+    return commit(root, s, "merge-request.merged", { [`mr-merge/${now().replace(/[^0-9]/g, "")}-${randomUUID().slice(0, 8)}.json`]: json(done) });
+  });
+}
+export function mergeRequestActions(cwd: string, id: string): MergeRequestAction[] {
+  const root = projectRoot(cwd);
+  const s = loadSession(root, id);
+  return Object.keys(s.artifacts).filter((path) => /^mr-merge\/[^/]+\.json$/.test(path)).sort()
+    .map((path) => JSON.parse(artifact(root, s, path)) as MergeRequestAction);
+}
 /** One atomic planning-only start per captured Pi input, including retry after an interrupted bind. */
 export function createAutoPlanningSession(cwd: string, requirements: string, chatId: string, requestId: string): Session {
   const root = projectRoot(cwd);

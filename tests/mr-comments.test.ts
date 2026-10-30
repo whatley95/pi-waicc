@@ -14,14 +14,18 @@ import { mergeRequestUrl, projectStatus } from "../src/tracker.ts";
 import { runInNewContext } from "node:vm";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { resolveRevision } from "../src/revision.ts";
-import { assess, createRevisionReview, ingest, postedComments, prepare } from "../src/workflow.ts";
+import { assess, createRevisionReview, ingest, mergeRequestActions, postedComments, prepare } from "../src/workflow.ts";
+import { loadSession } from "../src/files.ts";
 import type { Contract } from "../src/types.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", windowsHide: true }).trim();
 
-/** A merge request review that the main agent has assessed: one finding on a line, one general, one disputed, one note. */
-function assessedReview(t: TestContext) {
+/**
+ * A merge request review that the main agent has assessed: one finding on a line, one general, one disputed, one note.
+ * With pass, a clean review the main agent accepted as ready.
+ */
+function assessedReview(t: TestContext, pass = false) {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
   const agentDir = join(base, "agent"), root = join(base, "repo");
   mkdirSync(agentDir);
@@ -51,6 +55,15 @@ function assessedReview(t: TestContext) {
   prepare(root, s.id, contract, "review", "Review it", 0, { kind: "code", completion: {
     summary: "Adds sync", tasks: [{ taskId: "T1", evidence: "services/status/app.js" }],
     checks: [{ description: "Tests", outcome: "not_run", evidence: "None in this repo" }], findings: [] } });
+  if (pass) {
+    submitRecipientReply(root, receiveHandoff(root, s.id).pin, {
+      outcome: "ready", summary: "sync() is fine.", questions: [], findings: [],
+      coverage: [{ requirementId: "R1", status: "addressed", evidence: "services/status/app.js" }],
+      checks: [{ description: "Read the patch", outcome: "passed", evidence: "changes.patch" }],
+    });
+    const passed = assess(root, s.id, { requestId: ingest(root, s.id).rounds.at(-1)!.id, decision: "ready", rationale: "Checked", dispositions: [] });
+    return { base, agentDir, root, s: passed, head: range.to, start: range.from };
+  }
   submitRecipientReply(root, receiveHandoff(root, s.id).pin, {
     outcome: "needs_changes", summary: "sync() crashes on null input.", questions: [],
     findings: [
@@ -128,16 +141,18 @@ test("findings become comments on their lines or in the summary; disputed findin
 });
 
 /** The extension with a fake GitLab that records every call, and a Pi screen that answers as told. */
-async function run(t: TestContext, answers: { select: (options: string[]) => string; confirm?: boolean[]; input?: string[]; hasUI?: boolean }, gitlab: Partial<Record<string, (body: any) => any>> = {}) {
+async function run(t: TestContext, answers: { select: (options: string[]) => string; confirm?: boolean[]; input?: string[]; hasUI?: boolean; pass?: boolean }, gitlab: Partial<Record<string, (body: any) => any>> = {}) {
   forgetSessionTokens();
-  const review = assessedReview(t);
+  const review = assessedReview(t, answers.pass);
   const calls: [string, string, any][] = [], notices: string[] = [], opened: string[] = [], saved: [string, string][] = [];
   const fake = (): GitLabCall => async (method, path, body) => {
     calls.push([method, path, body]);
     const handler = gitlab[`${method} ${path}`];
     if (handler) return handler(body);
     if (path === "/user") return { username: "whatley" };
-    if (method === "GET") return { title: "Add sync", description: "Adds sync()", web_url: "https://gitlab.example.com/team/app/-/merge_requests/7", state: "opened", diff_refs: { base_sha: review.start, start_sha: review.start, head_sha: review.head } };
+    if (method === "GET") return { title: "Add sync", description: "Adds sync()", web_url: "https://gitlab.example.com/team/app/-/merge_requests/7", state: "opened", diff_refs: { base_sha: review.start, start_sha: review.start, head_sha: review.head },
+      source_branch: "feature/sync", target_branch: "develop", head_pipeline: { status: "success", web_url: "https://gitlab.example.com/team/app/-/pipelines/3" } };
+    if (method === "PUT") return { state: "merged", merge_commit_sha: "abc123" };
     return path.endsWith("/discussions") ? { id: "d1", notes: [{ id: 11 }] } : { id: 99 };
   };
   const commands = new Map<string, any>();
@@ -159,7 +174,8 @@ async function run(t: TestContext, answers: { select: (options: string[]) => str
   await commands.get("waicc-use").handler(review.s.id, ctx);
   writeFileSync(join(review.agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-secret-1" } } }));
   const post = () => commands.get("waicc-mr-comments").handler("", ctx).catch((e: Error) => notices.push(`error: ${e.message}`));
-  return { ...review, calls, notices, opened, saved, post };
+  const merge = () => commands.get("waicc-mr-merge").handler("", ctx).catch((e: Error) => notices.push(`error: ${e.message}`));
+  return { ...review, calls, notices, opened, saved, post, merge };
 }
 
 test("after you pick and confirm, findings go on their lines and the rest into one summary, and nothing is posted twice", async (t) => {
@@ -365,4 +381,71 @@ test("the API client sends the token only as a header, reads GitLab's errors, an
   assert.equal(seen[0].token, "glpat-x");
   assert.deepEqual(JSON.parse(seen[0].body), { body: "hi" });
   await assert.rejects(call("GET", "/merge_requests/8"), /GitLab GET \/merge_requests\/8 failed \(HTTP 404\): 404 Not found/);
+});
+
+test("/waicc-mr-merge merges a passed review only at the reviewed commit, after you choose and confirm, then offers to close", async (t) => {
+  let offered: string[] = [];
+  const h = await run(t, { pass: true, select: (options) => (offered = options, options[0]), confirm: [true, true, true] });
+  await h.merge();
+  assert.deepEqual(offered, ["Merge now", "Approve only", "Cancel"]);
+  assert.deepEqual(h.calls.filter(([method]) => method !== "GET"), [["PUT", "/merge_requests/7/merge", { sha: h.head, should_remove_source_branch: true }]],
+    "the reviewed commit, so GitLab refuses anything pushed since");
+  assert.match(h.notices.join("\n"), /Merged !7 into develop: https:\/\/gitlab\.example\.com/);
+  assert.deepEqual(mergeRequestActions(h.root, h.s.id).map((a) => [a.action, a.headSha, a.mergeCommit]), [["merged", h.head, "abc123"]]);
+  assert.equal(loadSession(h.root, h.s.id).status, "CLOSED");
+
+  // A running pipeline: merge once it passes.
+  const running = await run(t, { pass: true, select: (options) => (offered = options, options[0]), confirm: [false, true] }, {
+    "GET /merge_requests/7": () => ({ title: "x", web_url: "u", state: "opened", source_branch: "f", target_branch: "develop", head_pipeline: { status: "running" },
+      diff_refs: { base_sha: running.start, start_sha: running.start, head_sha: running.head } }),
+    "PUT /merge_requests/7/merge": () => ({ state: "opened", merge_when_pipeline_succeeds: true }),
+  });
+  await running.merge();
+  assert.deepEqual(offered, ["Merge when the pipeline passes", "Merge now, without waiting", "Approve only", "Cancel"]);
+  assert.deepEqual(running.calls.at(-1), ["PUT", "/merge_requests/7/merge", { sha: running.head, should_remove_source_branch: false, merge_when_pipeline_succeeds: true }]);
+  assert.equal(mergeRequestActions(running.root, running.s.id)[0].action, "merge_when_pipeline_succeeds");
+  assert.notEqual(loadSession(running.root, running.s.id).status, "CLOSED", "not merged yet, so closing is not offered");
+
+  // Approving only: a POST with the same commit.
+  const approve = await run(t, { pass: true, select: () => "Approve only", confirm: [true] });
+  await approve.merge();
+  assert.deepEqual(approve.calls.at(-1), ["POST", "/merge_requests/7/approve", { sha: approve.head }]);
+});
+
+test("/waicc-mr-merge changes nothing for a review that did not pass, a moved merge request, a draft, a no or a GitLab refusal", async (t) => {
+  const failed = await run(t, { select: (options) => options[0] });
+  await failed.merge();
+  assert.match(failed.notices.at(-1)!, /Only a passed review can be merged, and this session is NEEDS_CHANGES/);
+  assert.equal(failed.calls.length, 0, "not even a read");
+
+  const moved = await run(t, { pass: true, select: (options) => options[0] }, {
+    "GET /merge_requests/7": () => ({ title: "x", web_url: "u", state: "opened", diff_refs: { base_sha: "a", start_sha: "a", head_sha: "ffffffffffffffffffffffffffffffffffffffff" } }),
+  });
+  await moved.merge();
+  assert.match(moved.notices.at(-1)!, /has changed since the review passed \(it is at ffffffffff, the review saw [0-9a-f]{10}\)\. Run \/waicc-review --mr 7/);
+  assert.equal(moved.calls.filter(([method]) => method !== "GET").length, 0);
+
+  let offered: string[] = [];
+  const draft = await run(t, { pass: true, select: (options) => (offered = options, "Cancel") }, {
+    "GET /merge_requests/7": () => ({ title: "x", web_url: "u", state: "opened", draft: true, diff_refs: { base_sha: draft.start, start_sha: draft.start, head_sha: draft.head } }),
+  });
+  await draft.merge();
+  assert.deepEqual(offered, ["Approve only", "Cancel"], "GitLab would refuse to merge a draft");
+  assert.equal(draft.notices.at(-1), "Nothing was changed.");
+
+  const no = await run(t, { pass: true, select: (options) => options[0], confirm: [true, false] });
+  await no.merge();
+  assert.equal(no.calls.filter(([method]) => method !== "GET").length, 0, "the final confirmation said no");
+
+  const refused = await run(t, { pass: true, select: (options) => options[0], confirm: [true, true] }, {
+    "PUT /merge_requests/7/merge": () => { throw Object.assign(new Error("SHA does not match HEAD of source branch"), { status: 409 }); },
+  });
+  await refused.merge();
+  assert.match(refused.notices.at(-1)!, /^Nothing was merged: merge request !7 changed just now/);
+  assert.deepEqual(mergeRequestActions(refused.root, refused.s.id), []);
+  assert.notEqual(loadSession(refused.root, refused.s.id).status, "CLOSED");
+
+  const headless = await run(t, { pass: true, select: (options) => options[0], hasUI: false });
+  await headless.merge();
+  assert.match(headless.notices.at(-1)!, /needs your confirmation in Pi's interactive screen/);
 });
