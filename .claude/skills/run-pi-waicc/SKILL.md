@@ -112,8 +112,9 @@ resumeReviews and autoShip; a project's `.pi/waicc-agents.json` must not (`src/p
 Keep that when adding a setting, and don't edit the user's real file: point
 `PI_CODING_AGENT_DIR` at a temporary folder.
 
-**Never ship for real while testing.** `/waicc-ship` and `ship --yes` commit, push and open a
-merge request on the project's remote. To exercise them, follow `tests/ship.test.ts`: a throwaway
+**Never ship or merge for real while testing.** `/waicc-ship` and `ship --yes` commit, push and open a
+merge request on the project's remote; `/waicc-mr-merge` merges one on GitLab (test it with the
+fake `services.gitlab` in `tests/mr-comments.test.ts`). To exercise them, follow `tests/ship.test.ts`: a throwaway
 repository whose `origin` URL looks like GitLab or GitHub but whose push URL
 (`git remote set-url --push`) is a local bare repository, with fake GitLab/GitHub openers.
 

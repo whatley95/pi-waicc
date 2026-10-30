@@ -5,7 +5,7 @@ import { addGitlabHost, gitlabHost, userConfigPath } from "../profiles.ts";
 import { chooseRemote, remoteMergeRequests, repositoryPrefix } from "../revision.ts";
 import { projectRoot } from "../source.ts";
 import { openPage } from "../tracker.ts";
-import { postedComments, recordPostedComments, type PostedComments } from "../workflow.ts";
+import { closeSession, postedComments, recordMergeRequestAction, recordPostedComments, type PostedComments } from "../workflow.ts";
 import { ensure } from "../validation.ts";
 import { githubIssue, gitlabIssue, type FetchedIssue } from "../issues.ts";
 import type { App } from "./app.ts";
@@ -269,6 +269,82 @@ export function registerMergeRequestCommands(app: App): void {
       }
       ctx.ui.notify(`Posted ${done} to merge request !${mr.number}: ${info.webUrl}`, "info");
       pi.sendMessage({ customType: "waicc-mr-comments", content: `Posted ${done} to ${info.webUrl}.`, display: true }, { triggerTurn: false });
+    },
+  );
+  command(
+    "waicc-mr-merge",
+    "Approve or merge the reviewed GitLab merge request once its review passed, only at the reviewed commit (human action)",
+    async (_args, ctx) => {
+      ensure(ctx.hasUI, "Merging a merge request needs your confirmation in Pi's interactive screen");
+      const id = selected(ctx);
+      const root = projectRoot(ctx.cwd);
+      const s = loadSession(root, id);
+      const mr = s.revisionReview?.mergeRequest;
+      ensure(mr, "This session is not a merge request review; start one with /waicc-review --mr <number>");
+      ensure(mr.provider === "gitlab", "Merging is supported for GitLab merge requests; GitHub pull requests are not yet");
+      // Only a passing code review: a finding the main agent accepted keeps the session in NEEDS_CHANGES.
+      const round = s.reviewApproval?.kind === "code" ? s.rounds.find((r) => r.id === s.reviewApproval!.requestId) : undefined;
+      ensure(s.status === "READY_TO_CLOSE" && s.contractReview === "PASS" && round?.review?.kind === "code" && round.review.revision,
+        `Only a passed review can be merged, and this session is ${s.status}: /waicc-dispatch the review, then /waicc-continue so the main agent assesses it`);
+      ensure(mr.url, "The merge request's remote URL was not recorded; fetch it again with /waicc-review --mr");
+      const project = await (services.gitlabOrigin ?? canonicalProject)(gitlabProject(mr.url));
+      const host = resolveGitlabHost(ctx.cwd, project.host)?.token ? resolveGitlabHost(ctx.cwd, project.host)! : await setupGitlabHost(app, ctx, project);
+      if (!host) return;
+      const call = (services.gitlab ?? gitlabClient)(project, host);
+      const info = await mergeRequestInfo(call, mr.number);
+      const reviewed = round.review.revision.to;
+      ensure(info.state === "opened", `Merge request !${mr.number} is ${info.state || "not open"}; nothing was changed`);
+      ensure(info.diffRefs?.headSha === reviewed,
+        `Merge request !${mr.number} has changed since the review passed (it is at ${short(info.diffRefs?.headSha ?? "unknown")}, the review saw ${short(reviewed)}). Run /waicc-review --mr ${mr.number} to review the new commits first.`);
+
+      const pipeline = info.pipeline?.status ?? "none";
+      const running = ["created", "waiting_for_resource", "preparing", "pending", "running", "scheduled"].includes(pipeline);
+      // GitLab refuses these anyway; saying why up front beats its error.
+      const blocked = info.draft ? "it is a draft" : info.conflicts ? `it has conflicts with ${info.target}` : null;
+      const options = [
+        ...(blocked ? [] : running ? ["Merge when the pipeline passes", "Merge now, without waiting"] : [pipeline === "success" || pipeline === "none" ? "Merge now" : `Merge now, although the pipeline is ${pipeline}`]),
+        "Approve only", "Cancel",
+      ];
+      const picked = await ctx.ui.select(
+        `Merge request !${mr.number}: ${oneLine(info.title, 70)} · ${info.source} → ${info.target} · review passed at ${short(reviewed)} · pipeline ${pipeline}${blocked ? ` · cannot merge: ${blocked}` : ""}`,
+        options,
+      );
+      if (!picked || picked === "Cancel") return ctx.ui.notify("Nothing was changed.", "info");
+      const approve = picked === "Approve only", whenPassed = picked === "Merge when the pipeline passes";
+      const removeSourceBranch = !approve && await ctx.ui.confirm(`Delete ${info.source} after the merge?`, `GitLab deletes the source branch ${info.source} once the merge is done. Say no to keep it.`);
+      if (!(await ctx.ui.confirm(approve ? `Approve merge request !${mr.number}?` : `Merge !${mr.number} into ${info.target}?`,
+        approve
+          ? `Adds your approval at ${short(reviewed)}, the commit the review passed, on ${info.webUrl}. Everyone on the merge request sees it.`
+          : `${whenPassed ? "GitLab merges once the pipeline passes" : "Merges now"}: ${info.source} → ${info.target} at ${short(reviewed)}, the commit the review passed. GitLab refuses if anything was pushed since. WAICC cannot undo a merge.`)))
+        return ctx.ui.notify("Nothing was changed.", "info");
+
+      let result: any;
+      try {
+        result = approve
+          ? await call("POST", `/merge_requests/${mr.number}/approve`, { sha: reviewed })
+          : await call("PUT", `/merge_requests/${mr.number}/merge`, { sha: reviewed, should_remove_source_branch: removeSourceBranch, ...(whenPassed ? { merge_when_pipeline_succeeds: true } : {}) });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // 409: the head moved between the check above and the merge.
+        ctx.ui.notify((error as { status?: number }).status === 409
+          ? `Nothing was merged: merge request !${mr.number} changed just now. Run /waicc-review --mr ${mr.number} to review the new commits first.`
+          : `Nothing was ${approve ? "approved" : "merged"}: ${message}`, "error");
+        return;
+      }
+      const merged = !approve && result?.state === "merged";
+      const action = approve ? "approved" : merged ? "merged" : "merge_when_pipeline_succeeds";
+      recordMergeRequestAction(ctx.cwd, id, { at: new Date().toISOString(), requestId: round.id, headSha: reviewed, webUrl: info.webUrl, action,
+        mergeCommit: merged ? String(result?.merge_commit_sha ?? result?.squash_commit_sha ?? "") || null : null, removeSourceBranch });
+      const done = approve ? `Approved merge request !${mr.number}` : merged ? `Merged !${mr.number} into ${info.target}` : `Merge request !${mr.number} merges into ${info.target} once its pipeline passes`;
+      ctx.ui.notify(`${done}: ${info.webUrl}`, "info");
+      pi.sendMessage({ customType: "waicc-mr-merge", content: `${done}: ${info.webUrl}.`, display: true }, { triggerTurn: false });
+      if (merged && await ctx.ui.confirm("Close this WAICC session?", `The review passed and !${mr.number} is merged. Close the session? Its history stays, and /waicc-reopen undoes it.`))
+        try {
+          closeSession(ctx.cwd, id, `Merged !${mr.number} into ${info.target} at ${short(reviewed)}`);
+          ctx.ui.notify("Closed the session.", "info");
+        } catch (error) {
+          ctx.ui.notify(`The merge is done, but the session stays open: ${error instanceof Error ? error.message : String(error)}`, "warning");
+        }
     },
   );
 }
