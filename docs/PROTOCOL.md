@@ -971,7 +971,11 @@ existing main model's judgment, not a second model call or a runtime classifier
 guarantee. Tracked steps, dependencies, separate completion checks or coordinated
 changes justify a proportional plan even for small/non-complex work. Trivial one-step
 edits and conversational questions need no new contract. Continue an already selected
-objective without restarting planning. The hooks themselves never create a contract. The tool captures the
+objective without restarting planning. While the token is live, the first `bash` or `powershell`
+result matching Git's conflict output (`CONFLICT (`, `Automatic merge failed`, `error: could not
+apply`, `Resolve all conflicts manually`, `Unmerged paths:`) gets one extra text part telling the
+model to stop before resolving and start planning with that token; the output itself is unchanged.
+The hooks themselves never create a contract. The tool captures the
 exact input (maximum 64,000 characters), with objective planning and no plan
 approval/development grant. `session.autoPlanning` records chatId, requestId and
 requirementsDigest; a deterministic origin-derived session ID and the project
