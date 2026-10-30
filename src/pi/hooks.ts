@@ -17,6 +17,9 @@ import { loadAgentConfig } from "../profiles.ts";
 import type { App } from "./app.ts";
 import { stopPipelineWatches } from "./pipelines.ts";
 
+/** Git's words for a merge, rebase, cherry-pick or stash that stopped on conflicts. */
+export const mergeConflict = /^CONFLICT \(|Automatic merge failed|^error: could not apply|Resolve all conflicts manually|^Unmerged paths:/m;
+
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
   const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
@@ -307,6 +310,18 @@ export function registerHooks(app: App): void {
         display: false,
       },
     };
+  });
+  // The planning decision is made when the input arrives; a request that looked like one command
+  // can turn into real work mid-turn. Merge conflicts are the clearest sign: say so once, then.
+  const grown = new Set<string>();
+  pi.on("tool_result", async (event, ctx) => {
+    if (!["bash", "powershell"].includes(event.toolName)) return;
+    const request = automaticRequests.current(ctx);
+    if (!request || grown.has(request.id)) return;
+    const output = event.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+    if (!mergeConflict.test(output)) return;
+    grown.add(request.id);
+    return { content: [...event.content, { type: "text" as const, text: `\n\nWAICC: this output shows merge conflicts, so the request is no longer one command: each conflict needs a decision, then a build and checks. Stop here before resolving or editing anything: leave the merge in progress (or abort it if the human prefers), tell the human, and start planning with waicc_start_planning (requestId ${request.id}) so the resolution is planned and reviewed. Skip this only if the human already said not to plan.` }] };
   });
   pi.on("tool_call", async (event, ctx) => {
     const binding = bindings.get(key(ctx));
