@@ -27,6 +27,17 @@ import { AutoPlanningRequests } from "../auto-planning.ts";
 import { type ChatBinding, compactionInstructions, recipientReads, guidance } from "./shared.ts";
 import type { Runs } from "./runs.ts";
 
+/**
+ * Command output for the chat, which Pi also sends to the model. A source snapshot's `files` map
+ * lists every path in the project (a monorepo's ran past a million tokens), so it shows as a count.
+ */
+export const chatJson = (value: unknown): string =>
+  `${JSON.stringify(value, function (this: Record<string, unknown>, key, field) {
+    return key === "files" && typeof this.fingerprint === "string" && field && typeof field === "object" && !Array.isArray(field)
+      ? `${Object.keys(field).length} files (fingerprinted in the session file)`
+      : field;
+  }, 2)}\n`;
+
 export interface Services {
   copyText?: ClipboardWriter; runCheck?: CheckRunner; runAgent?: AgentRunner; openPage?: (path: string) => boolean;
   notifyDesktop?: (title: string, body: string) => boolean;
@@ -236,7 +247,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   }
   function show(ctx: ExtensionContext, content: unknown): void {
     pi.sendMessage(
-      { customType: "waicc", content: json(content), display: true },
+      { customType: "waicc", content: chatJson(content), display: true },
       { triggerTurn: false },
     );
   }
