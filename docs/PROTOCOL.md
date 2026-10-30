@@ -1190,6 +1190,17 @@ counts, set-aside findings and the remaining findings by severity. Whatever was 
 in `mr-comments/<time>-<id>.json` (`requestId`, `headSha`, `webUrl`, each finding's id, key,
 `inline` and note id, and the summary note id), even when a later post failed.
 
+`/waicc-mr-merge` is a human command that requires Pi's UI. It refuses unless the session is
+`READY_TO_CLOSE` with `contractReview` PASS and a code `reviewApproval`, whose round's
+`review.revision.to` must equal the merge request's `diff_refs.head_sha`; the state must be
+`opened`. A draft or `has_conflicts` request offers only approval. Approval is
+`POST …/merge_requests/:n/approve {sha}`; a merge is `PUT …/merge_requests/:n/merge {sha,
+should_remove_source_branch[, merge_when_pipeline_succeeds]}`, so GitLab itself refuses (409)
+when the head moved after the check. The result is recorded in `mr-merge/<time>-<id>.json`
+(`action`: `approved`, `merged` or `merge_when_pipeline_succeeds`; `requestId`, `headSha`,
+`webUrl`, `mergeCommit`, `removeSourceBranch`). After a completed merge it offers
+`closeSession` with the reason `Merged !n into <target> at <sha>`.
+
 The reviewer checks the entire implementation, requirements/acceptance, integration,
 regressions, check evidence and all prior fixes, returning one consolidated reply.
 Main-agent assessment precedes source edits so the original review remains assessable.

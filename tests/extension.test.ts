@@ -47,6 +47,7 @@ test("Pi 1.4.0's actual extension loader accepts commands and can execute handof
     "waicc-close",
     "waicc-force-close",
     "waicc-reopen",
+    "waicc-mr-merge",
   ])
     assert.ok(result.extensions[0].commands.has(name));
   for (const name of [
