@@ -115,16 +115,15 @@ export function registerDispatchCommands(app: App): void {
       );
       const forceAfter = /^--force(?:\s|$)/.test(input.remainder);
       if (forceFirst || forceAfter) {
-        show(
-          ctx,
-          forceCloseSession(
-            ctx.cwd,
-            selected(ctx, input.id),
-            (forceAfter
-              ? input.remainder.slice("--force".length).trim()
-              : input.remainder) || undefined,
-          ),
+        const id = selected(ctx, input.id);
+        forceCloseSession(
+          ctx.cwd,
+          id,
+          (forceAfter
+            ? input.remainder.slice("--force".length).trim()
+            : input.remainder) || undefined,
         );
+        show(ctx, status(ctx.cwd, id));
       } else {
         coordinator(ctx);
         const id = selected(ctx, input.id);
@@ -138,14 +137,9 @@ export function registerDispatchCommands(app: App): void {
     "Stop a contract immediately: [session-id] [reason]; no review or reason required (human action)",
     async (args, ctx) => {
       const input = sessionCommandInput(args);
-      show(
-        ctx,
-        forceCloseSession(
-          ctx.cwd,
-          selected(ctx, input.id),
-          input.remainder || undefined,
-        ),
-      );
+      const id = selected(ctx, input.id);
+      forceCloseSession(ctx.cwd, id, input.remainder || undefined);
+      show(ctx, status(ctx.cwd, id));
     },
   );
   command(
@@ -161,10 +155,9 @@ export function registerDispatchCommands(app: App): void {
     "Cancel a pending handoff: [session-id] [reason]; defaults to the selected session and a recorded user-cancellation reason",
     async (args, ctx) => {
       const input = sessionCommandInput(args);
-      show(
-        ctx,
-        cancel(ctx.cwd, selected(ctx, input.id), input.remainder || undefined),
-      );
+      const id = selected(ctx, input.id);
+      cancel(ctx.cwd, id, input.remainder || undefined);
+      show(ctx, status(ctx.cwd, id));
     },
   );
   command(
@@ -211,7 +204,8 @@ export function registerDispatchCommands(app: App): void {
     async (args, ctx) => {
       const parts = args.split(/\s+/);
       ensure(parts.length === 1 || parts.length === 2, "Usage: /waicc-limit [specification|implementation|testing|code_review|advisor] <2-20>");
-      show(ctx, setRoundLimit(ctx.cwd, selected(ctx), Number(parts.at(-1)), parts.length === 2 ? parts[0] as RoundPhase : undefined));
+      setRoundLimit(ctx.cwd, selected(ctx), Number(parts.at(-1)), parts.length === 2 ? parts[0] as RoundPhase : undefined);
+      show(ctx, status(ctx.cwd, selected(ctx)));
     },
   );
   command(
