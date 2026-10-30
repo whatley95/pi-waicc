@@ -14,6 +14,7 @@ import { amend, assess, beginDevelopment, cancel, closeSession, createSession, d
   forceCloseSession, ingest, issue, prepare, readContract, reopenSession, resolveDecision, setRoundLimit, status } from "../src/workflow.ts";
 import type { Contract, Reply, Round, Session, WorkCompletion } from "../src/types.ts";
 import { validateContract } from "../src/validation.ts";
+import { chatJson } from "../src/pi/app.ts";
 
 const contract: Contract = {
   title: "Account search", requirements: [{ id: "R1", text: "Account search", sourceQuote: "Add account search" }],
@@ -371,4 +372,19 @@ test("/waicc-decide <ID> recommended and all recommended accept the agent's reco
   assert.equal(readContract(all.root, s2.id).contract.decisions![0].answer, recommendation);
   await g.commands.get("waicc-decide").handler("all recommended", g.ctx);
   assert.match(g.notices.at(-1)!, /no open decisions/);
+});
+
+test("cancel, limit and force-close show the status view, never the session file with every source path", async (t) => {
+  const { root, s } = fixture(t), h = harness(root);
+  await h.commands.get("waicc-use").handler(s.id, h.ctx);
+  for (const [command, args] of [["waicc-limit", "6"], ["waicc-cancel", s.id], ["waicc-force-close", `${s.id} stop`]]) {
+    await h.commands.get(command).handler(args, h.ctx);
+    const shown = h.shown.at(-1);
+    assert.equal(shown.sessionId, s.id, command);
+    assert.equal(typeof shown.rounds, "number", `${command} shows a round count, not the rounds with their source snapshots`);
+  }
+  assert.equal(h.shown.at(-1).status, "CLOSED");
+  // Anything else that reaches the chat lists a snapshot's paths as a count; other `files` fields stay.
+  const text = chatJson({ source: { fingerprint: "f", files: { "a.txt": "h1", "b.txt": "h2" } }, files: { user: "u.json", found: [] } });
+  assert.deepEqual(JSON.parse(text), { source: { fingerprint: "f", files: "2 files (fingerprinted in the session file)" }, files: { user: "u.json", found: [] } });
 });
