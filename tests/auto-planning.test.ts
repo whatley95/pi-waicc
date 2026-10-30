@@ -191,6 +191,23 @@ test("default hooks never create contracts for questions or tiny edits; main-mod
   assert.equal(h.prompts.length, 0);
 });
 
+test("a request that grows mid-turn (merge conflicts) is told once to stop and plan with the same token", async (t) => {
+  const root = fixture(t), h = harness(root);
+  const result = (text: string, toolName = "bash") => h.hooks.get("tool_result")({ type: "tool_result", toolName, toolCallId: "c1", input: {}, content: [{ type: "text", text }] }, h.ctx);
+  const conflict = "Auto-merging app.txt\nCONFLICT (content): Merge conflict in app.txt\nAutomatic merge failed; fix conflicts and then commit the result.";
+  const req = await h.request("get main into this branch");
+  assert.match(req.response.message.content, /Decide again when the work grows during this turn \(merge conflicts/);
+  assert.equal(await result("Already up to date."), undefined, "a clean merge stays one command");
+  assert.equal(await result(conflict, "read"), undefined, "only command output: a file that mentions conflicts is not one");
+  const told = await result(conflict);
+  assert.equal(told.content[0].text, conflict, "the output itself is unchanged");
+  assert.match(told.content[1].text, new RegExp(`^\\n\\nWAICC: this output shows merge conflicts[\\s\\S]*Stop here before resolving[\\s\\S]*waicc_start_planning \\(requestId ${req.token}\\)`));
+  assert.equal(await result(conflict), undefined, "said once per request");
+  await h.hooks.get("agent_end")({}, h.ctx);
+  assert.equal(await result(conflict), undefined, "after the turn there is no token to plan with");
+  assert.equal(listSessions(root).length, 0, "it only advises: the agent decides and starts planning itself");
+});
+
 test("skip marker, slash commands, extension/custom, transformed and streaming inputs cannot supply startup tokens", async (t) => {
   const root = fixture(t), h = harness(root);
   for (const [text, extra] of [
