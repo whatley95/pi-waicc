@@ -26,7 +26,8 @@ export function statusTable(view: unknown, settings: { autoContinue?: boolean } 
       "", "`/waicc-use <session>` selects one here.",
     ].join("\n");
   }
-  if (typeof v.sessionId !== "string") return null;
+  // Only a status view: others (a dispatch notice, decisions) carry a sessionId too.
+  if (typeof v.sessionId !== "string" || !v.roundBudget) return null;
   const pending = v.pending as View | null | undefined;
   const budget = v.roundBudget?.overall as View | undefined;
   const rows: unknown[][] = [

@@ -21,7 +21,7 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   waicc({
     registerCommand() {}, registerTool: (tool: any) => tools.set(tool.name, tool), appendEntry() {},
     on: (event: string, handler: any) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage: (m: any) => shown.push(m), sendUserMessage() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage: (m: any) => { if (m.display) shown.push(m); }, sendUserMessage() {},
   } as unknown as ExtensionAPI);
   const emit = async (event: string, context: unknown) => { for (const handler of handlers.get(event) ?? []) await handler({ type: event }, context); };
   const typed: string[] = [];
@@ -134,7 +134,7 @@ test("every WAICC command shows a running line before its work starts and clears
   const commands = new Map<string, any>(), events: string[] = [];
   waicc({
     registerCommand: (name: string, command: any) => commands.set(name, command), registerTool() {}, on() {}, appendEntry() {},
-    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage: () => events.push("output"), sendUserMessage() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage: (m: any) => { if (m.display) events.push("output"); }, sendUserMessage() {},
   } as unknown as ExtensionAPI);
   const ctx = {
     cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,

@@ -11,7 +11,8 @@ import { json, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
 import type { CheckRunner } from "../checks.ts";
 import type { AgentRunner } from "../dispatch.ts";
-import { alertSettings, decisionSettings, sessionBudget, policyGuidance } from "../profiles.ts";
+import { alertSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance } from "../profiles.ts";
+import { statusTable } from "./status-table.ts";
 import { buildOutdated, loadedBuild } from "../build.ts";
 import { newNeeds, projectStatus, publish, recordChat, trackerEnabled, type LiveRun, type Notice, type ProjectStatus } from "../tracker.ts";
 import { notifyDesktop } from "../alerts.ts";
@@ -303,8 +304,15 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     }
   }
   function show(ctx: ExtensionContext, content: unknown): void {
+    // A status view reads as a table; its full JSON then stays out of sight but still reaches the model.
+    let autoContinue: boolean | undefined;
+    try {
+      autoContinue = loadAgentConfig(ctx.cwd).autoContinue;
+    } catch { /* a broken user file is reported where it is used; the table leaves the row out */ }
+    const glance = statusTable(content, { autoContinue });
+    if (glance) pi.sendMessage({ customType: "waicc-status-table", content: glance, display: true }, { triggerTurn: false });
     pi.sendMessage(
-      { customType: "waicc", content: chatJson(content), display: true },
+      { customType: "waicc", content: chatJson(content), display: !glance },
       { triggerTurn: false },
     );
   }

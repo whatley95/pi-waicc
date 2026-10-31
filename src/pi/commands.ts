@@ -1,5 +1,3 @@
-import { loadAgentConfig } from "../profiles.ts";
-import { statusTable } from "./status-table.ts";
 import { assertRecipientCurrent, assignmentText, receiveHandoff } from "../recipient.ts";
 import { initialize, json, loadSession } from "../files.ts";
 import { decisionSettings } from "../profiles.ts";
@@ -426,13 +424,6 @@ export function registerCommands(app: App): void {
       const view = listing
         ? status(ctx.cwd, undefined, args as SessionListFilter)
         : status(ctx.cwd, args || binding?.sessionId);
-      // The table first, to read at a glance; the full view follows for detail.
-      let autoContinue: boolean | undefined;
-      try {
-        autoContinue = loadAgentConfig(ctx.cwd).autoContinue;
-      } catch { /* a broken user file is reported where it is used; the table leaves the row out */ }
-      const glance = statusTable(view, { autoContinue });
-      if (glance) pi.sendMessage({ customType: "waicc-status-table", content: glance, display: true }, { triggerTurn: false });
       show(ctx, view);
     },
   );

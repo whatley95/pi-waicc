@@ -162,7 +162,7 @@ test("/waicc-dispatch confirms project-file checks before anything runs, and lis
   await approved.commands.get("waicc-use").handler(id, approved.ctx);
   await approved.commands.get("waicc-dispatch").handler("", approved.ctx);
   // The fake agent finishes at once, so find the start message rather than the last one.
-  const started = approved.shown.map((m) => JSON.parse(m.content)).find((m) => m.dispatching);
+  const started = approved.shown.filter((m) => m.customType !== "waicc-status-table").map((m) => JSON.parse(m.content)).find((m) => m.dispatching);
   assert.equal(started.dispatching, true);
   assert.equal(started.profile, "claude");
 });
