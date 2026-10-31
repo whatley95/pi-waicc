@@ -121,6 +121,16 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   assert.match(notices.at(-1)!, /^\/waicc-amend needs your text: finish it in the input box, then press Enter\.$/);
   assert.equal(shown.length, ran, "nothing ran");
 
+  // A session ID is not the reason: /waicc-reopen <id> still needs one. For /waicc-use the ID is all it takes.
+  const id = "43620469-879c-4784-8a24-84386370724f";
+  const reopen = await suggest([{ command: `/waicc-reopen ${id}`, why: "reopen it" }, { command: `/waicc-use ${id}`, why: "select it" }], chat);
+  assert.match(text(reopen), new RegExp(`/waicc-reopen ${id} needs text you did not give`));
+  assert.doesNotMatch(text(reopen), /\/waicc-use [0-9a-f-]+ needs? text/);
+  await emit("agent_end", chat);
+  await settle(() => typed.length > 1);
+  assert.deepEqual(typed.at(-1), `/waicc-reopen ${id} `, "the ID stays; the human types the reason");
+  assert.equal(shown.length, ran, "nothing ran");
+
   // Only real WAICC commands, one line each; no picker without UI.
   await assert.rejects(suggest([{ command: "/reload", why: "x" }], chat), /"\/reload" is not a WAICC command\. Only these can be offered: .*\/waicc-worktree/);
   await assert.rejects(suggest([{ command: "waicc-status", why: "x" }], chat), /is not a WAICC command/);

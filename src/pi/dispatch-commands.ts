@@ -150,6 +150,7 @@ export function registerDispatchCommands(app: App): void {
     async (args, ctx) => {
       const input = sessionCommandInput(args);
       const id = selected(ctx, input.id);
+      ensure(input.remainder.trim(), `Say why it is reopened: /waicc-reopen ${input.id ?? "[session-id]"} <reason>, for example /waicc-reopen ${id} The client asked for CSV export too`);
       reopenSession(ctx.cwd, id, input.remainder);
       bind(ctx, id);
       show(ctx, status(ctx.cwd, id));
