@@ -866,7 +866,13 @@ that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
   - **Decisions:** open ones first, with recommendations and the command to accept them.
   - **Spend:** today, 7 days and all time; a 7-day chart; and totals by who (main agent,
     agents WAICC sent work to, advisor), by agent and model, by step (planning, code review,
-    testing…) and by session.
+    testing…) and by session. **Agents compared, per step** helps you pick profiles: for each
+    agent and model in each step, its runs, how often it replied, the time and cost (or tokens)
+    per run, its output pace, and how the replies WAICC kept ended (for example *ready 3 ·
+    needs changes 2*). Each finished run's line in *Recent runs* also shows its output and pace,
+    such as "38k out, 8k/min" over the whole run, reading and commands included. It is not a
+    streaming speed: Claude reports its tokens only when a run ends. For the main chat's live
+    speed, use a Pi extension such as pi-token-speed.
   - **Advisor:** the main agent's questions when it was stuck, and the answers.
 
 Costs are what each agent reports about its own run, so they are as accurate as its prices:

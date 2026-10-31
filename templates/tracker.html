@@ -464,6 +464,30 @@
       return `<div class="rowbar"><span>${label(r.key)}</span><span class="small" style="font-variant-numeric:tabular-nums">${r.total.usd !== null ? `${money(r.total.usd)} <span class="muted">·</span> ` : `<span class="muted">tokens only ·</span> `}<span class="muted" title="${esc([tokenSplit(r.total), equivNote(r.total)].filter(Boolean).join(" · "))}">${tok(r.total.tokens)} tok · ${spendCount(r.total)}${speedText(r.total) ? ` · ${speedText(r.total)}` : ""}${r.total.equivUsd > 0 ? " · API-equivalent" : ""}</span></span><div class="bar${priced ? "" : " tokens"}"><i style="width:${Math.max(2, Math.round(pct))}%"></i></div></div>`;
     }).join("");
   }
+  // Which agent to pick for which step: per agent, model and step, what one run takes and how it ends.
+  function compareAgents(runs) {
+    const map = new Map();
+    for (const r of runs) {
+      if (r.kind !== "dispatch") continue;
+      const k = `${r.via} ${r.model ?? "(default model)"}\u0000${r.mode}`;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    }
+    if (!map.size) return `<p class="small muted">No dispatched runs yet.</p>`;
+    const rows = [...map].map(([k, list]) => {
+      const [agent, step] = k.split("\u0000"), t = sum(list), n = list.length;
+      const timed = list.filter((r) => r.durationMs);
+      const outcomes = {};
+      for (const r of list) if (r.outcome) outcomes[r.outcome] = (outcomes[r.outcome] ?? 0) + 1;
+      return { agent, step, n, t, replied: list.filter((r) => r.replied).length,
+        avgMs: timed.length ? timed.reduce((a, r) => a + r.durationMs, 0) / timed.length : 0,
+        outcomes: Object.entries(outcomes).sort((a, b) => b[1] - a[1]).map(([o, c]) => `${o.replaceAll("_", " ")} ${c}`).join(" · ") };
+    }).sort((a, b) => a.step.localeCompare(b.step) || b.n - a.n);
+    return `<div class="scroll"><table><tr><th>Agent and model</th><th>Step</th><th>Runs</th><th>Replied</th><th>Time per run</th><th>Per run</th><th>Output</th><th>Replies kept</th></tr>
+      ${rows.map((r) => `<tr><td>${esc(r.agent)}</td><td>${esc(r.step)}</td><td>${r.n}</td><td>${Math.round((100 * r.replied) / r.n)}%</td>
+        <td>${r.avgMs ? dur(r.avgMs) : ""}</td><td>${r.t.usd !== null && r.t.unpriced === 0 ? money(r.t.usd / r.n) : `${tok(Math.round(r.t.tokens / r.n))} tok`}</td>
+        <td>${speedText(r.t) ? esc(speedText(r.t).replace(" per run", "")) : ""}</td><td class="small">${esc(r.outcomes)}</td></tr>`).join("")}</table></div>`;
+  }
   function spendTab(p) {
     const runs = p.runs;
     const week = [...Array(7)].map((_, i) => { const from = startOfDay(6 - i); return { from, t: sum(runs, from, from + 86_400_000) }; });
@@ -479,6 +503,7 @@
         <div class="glass section"><h3>By agent and model</h3>${bars(group(runs, (r) => `${r.kind === "main" ? "main agent" : r.via} ${r.model ?? "(default model)"}`), esc)}</div>
         <div class="glass section"><h3>By step</h3>${bars(group(runs, (r) => r.mode), esc)}</div>
       </div>
+      <div class="glass section"><h3>Agents compared, per step</h3>${compareAgents(runs)}</div>
       <div class="glass section"><h3>By session</h3>${bars(group(runs.filter((r) => r.sessionId), (r) => r.sessionId), (id) => esc(titles.get(id) ?? `older session ${id.slice(0, 8)}`))}</div>
       <p class="tiny muted">Costs are what each agent reports. The main agent is every message in this project's Pi chats; agents WAICC sent work to and the advisor are counted per run. Pi reports dollars at its provider's prices; a model with no price set reports $0 and is shown as "without a price". Claude reports dollars at API prices, marked API-equivalent when it runs on your claude.ai subscription. Codex reports tokens only. A run stopped before it finished may report nothing. Speed: the main agent's output tokens per second of producing replies; dispatched runs as output per minute of the whole run, reading and commands included.</p>`;
   }

@@ -9,6 +9,8 @@ import waicc from "../src/index.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { projectStatus, publish, trackerEnabled, trackerPage, type ProjectStatus } from "../src/tracker.ts";
 import { assess, createSession, ingest, prepare } from "../src/workflow.ts";
+import { prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
+import { runPace } from "../src/usage.ts";
 import type { Contract } from "../src/types.ts";
 
 const contract = (title: string): Contract => ({
@@ -300,4 +302,35 @@ test("/waicc-tracker opens the page; off stops every update, on resumes; dispatc
   process.env.WAICC_DISPATCH_PIN = "session:request";
   t.after(() => { delete process.env.WAICC_DISPATCH_PIN; });
   assert.equal(trackerEnabled(), false, "a dispatched agent's own Pi leaves the page to the coordinator");
+});
+
+test("agents are compared per step: runs, how often they replied, time and cost per run, and how kept replies ended", async (t) => {
+  const { base } = setup(t);
+  const root = join(base, "compare");
+  mkdirSync(root);
+  writeFileSync(join(root, "app.txt"), "app");
+  const s = createSession(root, "Add a side menu", undefined, "planning");
+  prepare(root, s.id, contract("Side menu"), "planning", "Plan", 0);
+  const usage = (cost: number) => `${JSON.stringify({ type: "result", total_cost_usd: cost, usage: { input_tokens: 1_000, output_tokens: 6_000 } })}\n`;
+  // Claude stops without a reply; Codex answers.
+  await runDispatch(prepareDispatch(root, s.id, { via: "claude" }), async () => ({ stdout: usage(0.5), stderr: "", code: 1, killed: false }));
+  const codex: AgentRunner = async () => {
+    submitRecipientReply(root, receiveHandoff(root, s.id).pin, {
+      outcome: "planned", summary: "Menu plan", findings: [], questions: [],
+      coverage: [{ requirementId: "R1", status: "addressed", evidence: "app.txt" }],
+      checks: [{ description: "Read app.txt", outcome: "passed", evidence: "Inspected" }],
+    });
+    return { stdout: `${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 2_000, cached_input_tokens: 0, output_tokens: 3_000 } })}\n`, stderr: "", code: 0, killed: false };
+  };
+  await runDispatch(prepareDispatch(root, s.id, { via: "codex" }), codex);
+  ingest(root, s.id);
+  const status = projectStatus(root);
+  assert.deepEqual(status.runs.map((r) => [r.via, r.replied, r.outcome]).sort(), [["claude", false, null], ["codex", true, "planned"]]);
+  const page = renderPage([JSON.parse(JSON.stringify(status))], "spend");
+  assert.match(page, /<h3>Agents compared, per step<\/h3>/);
+  assert.match(page, /<td>claude \(default model\)<\/td><td>planning<\/td><td>1<\/td><td>0%<\/td>[\s\S]*?<td>\$0\.50<\/td>/);
+  assert.match(page, /<td>codex \(default model\)<\/td><td>planning<\/td><td>1<\/td><td>100%<\/td>[\s\S]*?<td>5k tok<\/td>[\s\S]*?<td class="small">planned 1<\/td>/);
+  assert.equal(runPace({ inputTokens: 1, cachedTokens: 0, outputTokens: 38_000, costUsd: null }, 270_000), "38k out, 8k/min");
+  assert.equal(runPace({ inputTokens: 1, cachedTokens: 0, outputTokens: 0, costUsd: null }, 270_000), null);
+  assert.equal(runPace(null, 270_000), null);
 });

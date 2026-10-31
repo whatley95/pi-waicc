@@ -88,6 +88,8 @@ export interface SpendRun {
   seconds?: number; timedOutput?: number; unpriced?: number;
   /** Dispatched and advisor runs: how long the whole run took, reading and commands included. */
   durationMs?: number;
+  /** Dispatched runs: whether it submitted a reply, and for the one whose reply the round kept, that reply's outcome. */
+  replied?: boolean; outcome?: string | null;
 }
 
 const projectKey = (root: string): string => digest(process.platform === "win32" ? root.toLowerCase() : root).slice(0, 16);
@@ -182,8 +184,11 @@ function sessionView(root: string, s: Session) {
   const runs: SpendRun[] = [];
   const rounds = s.rounds.map((r, i) => {
     const dispatches = dispatchRuns(root, s, r);
+    // A round keeps one reply: the last run that submitted one wrote it.
+    const kept = dispatches.findLast((d) => d.replySubmitted);
     for (const d of dispatches)
-      if (d.usage) runs.push({ at: d.finishedAt, kind: "dispatch", mode: r.review?.kind === "code" ? "code review" : r.mode, via: d.via, model: d.model, sessionId: s.id, usage: d.usage, durationMs: d.durationMs });
+      if (d.usage) runs.push({ at: d.finishedAt, kind: "dispatch", mode: r.review?.kind === "code" ? "code review" : r.mode, via: d.via, model: d.model, sessionId: s.id, usage: d.usage, durationMs: d.durationMs,
+        replied: d.replySubmitted, outcome: d === kept ? r.reply?.outcome ?? null : null });
     return {
       n: i + 1, id: r.id, mode: r.mode, kind: r.review?.kind ?? null, status: r.status,
       outcome: r.reply?.outcome ?? null, decision: r.decision ?? null,
