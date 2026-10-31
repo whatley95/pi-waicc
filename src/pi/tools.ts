@@ -445,6 +445,10 @@ export function registerTools(app: App): void {
   // Commands that cannot run without the human's text (an amendment, an answer, a reason, an ID).
   const needsText = new Set(["waicc-advisor", "waicc-amend", "waicc-close", "waicc-decide", "waicc-delete", "waicc-limit",
     "waicc-planning", "waicc-receive", "waicc-reopen", "waicc-restore", "waicc-use", "waicc-worktree"]);
+  // Of those, the ones a session ID alone completes; the rest need their text after any ID.
+  const idIsEnough = new Set(["waicc-delete", "waicc-receive", "waicc-restore", "waicc-use"]);
+  const missingText = (name: string, args: string) =>
+    needsText.has(name) && (idIsEnough.has(name) ? !args : !args.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b\s*/i, ""));
   registerTool({
     name: "waicc_suggest_command",
     label: "Suggest a WAICC command to the human",
@@ -473,7 +477,7 @@ export function registerTools(app: App): void {
         const name = /^\/(\S+)/.exec(line)?.[1];
         ensure(name && commands.has(name), `${JSON.stringify(line.slice(0, 60))} is not a WAICC command. Only these can be offered: ${[...commands.keys()].sort().map((n) => `/${n}`).join(", ")}`);
         const args = line.slice(name.length + 1).trim();
-        const fill = needsText.has(name) && !args;
+        const fill = missingText(name, args);
         return { line, name, args, fill, label: `${line}${fill ? " …" : ""}  ·  ${why.replace(/\s+/g, " ").trim().slice(0, 160)}${fill ? " (you add the text)" : ""}` };
       });
       ensure(ctx.hasUI, `No picker here. Write the command${offered.length === 1 ? "" : "s"} in your reply for the human to type: ${offered.map((o) => o.line).join(", ")}`);

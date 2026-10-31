@@ -410,6 +410,9 @@ test("/waicc-reopen <id> reopens a session from a chat that has none selected, a
   const h = harness(root);
   await h.commands.get("waicc-reopen").handler("Needed after all", h.ctx);
   assert.match(h.notices.at(-1)!, /^No WAICC session selected/);
+  await h.commands.get("waicc-reopen").handler(s.id, h.ctx);
+  assert.ok(h.notices.at(-1)!.startsWith(`Say why it is reopened: /waicc-reopen ${s.id} <reason>`), h.notices.at(-1));
+  assert.equal(loadSession(root, s.id).status, "CLOSED", "nothing changed");
   await h.commands.get("waicc-reopen").handler(`${s.id} Needed after all`, h.ctx);
   assert.notEqual(loadSession(root, s.id).status, "CLOSED");
   await h.commands.get("waicc-status").handler("", h.ctx);
