@@ -6,7 +6,8 @@ import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 import type { AgentRunner } from "../src/dispatch.ts";
-import { createSession, prepare } from "../src/workflow.ts";
+import { createSession, ingest, prepare } from "../src/workflow.ts";
+import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import type { Contract } from "../src/types.ts";
 
 test("the main agent offers WAICC commands in a picker that opens after its turn; the human's pick runs once, as typed", async (t) => {
@@ -212,6 +213,30 @@ test("while a dispatch runs for the session, the picker leaves out dispatch star
   await offer(["/waicc-dispatch --loop"]);
   await endTurn();
   assert.equal(asked.length, pickers);
+
+  // A decision while its handoff is being worked on: nothing to pick yet, and the human is told why.
+  await offer(["/waicc-develop"]);
+  await endTurn();
+  assert.equal(asked.length, pickers);
+  assert.match(notices.at(-1)!, /^A planning handoff is being worked on \(WAICC · claude[^)]*\), so \/waicc-develop cannot run until its reply is assessed\.$/);
   finish();
+  await settle();
+
+  // Still waiting, with no agent on it: the decision gives way to sending the handoff.
+  await offer(["/waicc-develop", "/waicc-status"]);
+  await endTurn();
+  assert.deepEqual(asked.at(-1)!.map((o) => o.split("  ·")[0]), ["/waicc-dispatch", "/waicc-status", "None of these"]);
+  pick = () => undefined;
+  resolveOpen!();
+
+  // Its reply arrived but is not assessed: the decision gives way to /waicc-continue.
+  submitRecipientReply(root, receiveHandoff(root, s.id).pin, { outcome: "planned", summary: "Plan", findings: [], questions: [],
+    coverage: [{ requirementId: "R1", status: "addressed", evidence: "source" }], checks: [{ description: "Read", outcome: "passed", evidence: "Inspected" }] });
+  ingest(root, s.id);
+  await offer(["/waicc-decide D1 keep it", "/waicc-help-develop --main Build it"]);
+  await endTurn();
+  assert.deepEqual(asked.at(-1)!.map((o) => o.split("  ·")[0]), ["/waicc-continue", "/waicc-help-develop --main Build it", "None of these"], "coding it yourself needs no handoff, so it stays");
+  pick = () => undefined;
+  resolveOpen!();
   await settle();
 });
