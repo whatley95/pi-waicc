@@ -662,6 +662,13 @@ A command that needs your own text, offered without it (for example a bare `/wai
 instead of running it empty. While an agent is already dispatched for the session, for example
 a loop's next cycle, the picker leaves out commands that would start another.
 
+A decision (`/waicc-develop`, `/waicc-decide`) or a new handoff cannot be made while a handoff
+is pending, because what was handed off must not change under it. Offered then, it gives way to
+the step that clears the way: `/waicc-continue` when a reply waits to be assessed, or
+`/waicc-dispatch` when the handoff has not been sent. While an agent is working on it, nothing
+is offered, and a note says why. A pick that goes out of date while the picker is open says so
+instead of failing.
+
 While any WAICC command runs, picked or typed, a line above the input box says so, for
 example `⏳ WAICC: running /waicc-continue…`. On a large project, reading its files can take
 a few seconds; the line stays until the command is done.

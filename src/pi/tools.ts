@@ -455,7 +455,7 @@ export function registerTools(app: App): void {
       "Whenever you would ask the human to run a /waicc-* command, including when you are stuck or a WAICC result says the human must run one, call waicc_suggest_command with the exact command and a short reason instead of writing it in the chat. Then end your turn: what the command starts reaches you as a new message.",
       "You do not learn what the human picks; its output is shown to them, not to you. Check state with waicc_status rather than assuming what it did.",
       "Offer complete command lines: a command that takes text gets it (/waicc-amend <the amendment>, /waicc-decide <id> <answer>, /waicc-close <reason>). Only offer it bare when the text must be the human's own; picking it then only fills their input box.",
-      "Offer only commands that can run now: no /waicc-dispatch start while one runs for the session, nothing a WAICC result just refused.",
+      "Offer only commands that can run now: no /waicc-dispatch start while one runs for the session; no /waicc-develop, /waicc-decide or new handoff while a handoff is pending (offer the step that finishes it: /waicc-continue for a reply to assess, /waicc-dispatch to send it); nothing a WAICC result just refused. WAICC swaps a blocked offer for the step that clears it.",
     ],
     parameters: Type.Object({
       commands: Type.Array(Type.Object({
@@ -495,18 +495,56 @@ export function registerTools(app: App): void {
       return id ? dispatches.get(id) : undefined;
     };
     const startsDispatch = (o: { name: string; args: string }) => o.name === "waicc-dispatch" && !/^--(stop|progress)\b/.test(o.args);
+    // A decision or new handoff refuses while a handoff is pending (its frozen inputs cannot change).
+    const decides = (o: { name: string; args: string }) => ["waicc-develop", "waicc-decide"].includes(o.name)
+      || (o.name === "waicc-help-develop" || o.name === "waicc-implement") && !/(^|\s)--main(\s|$)/.test(o.args);
+    const pending = () => {
+      const id = bindings.get(key(ctx))?.sessionId;
+      try {
+        return id ? loadSession(projectRoot(ctx.cwd), id).rounds.find((r) => r.status === "WAITING" || r.status === "RECEIVED") : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    // What stops an offer now, and the step that clears it; null when it can run.
+    const blocked = (o: { name: string; args: string }) => {
+      if (startsDispatch(o)) {
+        const busy = running();
+        if (busy) return { why: `Already running: ${busy.label}. Nothing else was started; /waicc-dispatch --progress shows its steps.`, instead: null };
+      }
+      if (decides(o)) {
+        const r = pending();
+        if (r) return r.status === "RECEIVED"
+          ? { why: `A ${r.mode} reply is waiting to be assessed, so ${o.name.replace("waicc-", "/waicc-")} cannot run yet. /waicc-continue first, then pick it again.`, instead: { line: "/waicc-continue", name: "waicc-continue", args: "", fill: false, label: `/waicc-continue  ·  assess the waiting ${r.mode} reply first; then the decision can be made` } }
+          : running()
+            // Its agent is working: the reply comes back by itself; nothing to pick until then.
+            ? { why: `A ${r.mode} handoff is being worked on (${running()!.label}), so ${o.name.replace("waicc-", "/waicc-")} cannot run until its reply is assessed.`, instead: null }
+            : { why: `A ${r.mode} handoff is still waiting for its reply, so ${o.name.replace("waicc-", "/waicc-")} cannot run yet. Send it (/waicc-dispatch) or drop it (/waicc-cancel) first.`, instead: { line: "/waicc-dispatch", name: "waicc-dispatch", args: "", fill: false, label: `/waicc-dispatch  ·  send the waiting ${r.mode} handoff first; the decision comes after its reply` } };
+      }
+      return null;
+    };
     void (async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
-      const choices = running() ? offer.offered.filter((o) => !startsDispatch(o)) : offer.offered;
+      // A blocked offer gives way to the step that clears it, once; a dispatch start while one runs just goes.
+      const choices: typeof offer.offered = [], reasons: string[] = [];
+      for (const o of offer.offered) {
+        const stop = blocked(o);
+        if (stop) reasons.push(stop.why);
+        const next = stop ? stop.instead : o;
+        if (next && !choices.some((c) => c.line === next.line)) choices.push(next);
+      }
       if (!choices.length || picker.signal.aborted) {
         if (offers.get(key(ctx)) === offer) offers.delete(key(ctx));
+        // Nothing left to pick: say why instead of showing nothing.
+        if (!picker.signal.aborted && reasons.length) ctx.ui.notify(reasons[0], "info");
         return;
       }
       const picked = await ctx.ui.select(offer.title, [...choices.map((o) => o.label), "None of these"], { signal: picker.signal });
       if (offers.get(key(ctx)) === offer) offers.delete(key(ctx));
       const chosen = picker.signal.aborted ? undefined : choices.find((o) => o.label === picked);
-      const busy = chosen && startsDispatch(chosen) ? running() : undefined;
-      if (busy) return ctx.ui.notify(`Already running: ${busy.label}. Nothing else was started; /waicc-dispatch --progress shows its steps.`, "info");
+      // Things may have moved while the picker was open.
+      const late = chosen ? blocked(chosen) : null;
+      if (late) return ctx.ui.notify(late.why, "info");
       // Run without its text it could only fail: the human finishes it instead.
       if (chosen?.fill) {
         ctx.ui.setEditorText(`${chosen.line} `);
