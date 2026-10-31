@@ -38,6 +38,33 @@ export const chatJson = (value: unknown): string =>
       : field;
   }, 2)}\n`;
 
+/** Above this, the model reads a WAICC chat message as a summary; the human still sees all of it. */
+export const modelLimit = 6_000;
+/**
+ * What the model reads of a long WAICC chat message: a status view was ~17k tokens, sent again
+ * on every later turn. Short fields stay as they are; each long one becomes a note that
+ * waicc_status has it.
+ */
+export function modelView(content: string): string {
+  if (content.length <= modelLimit) return content;
+  const omitted = (size: number) => `(${size.toLocaleString("en")} characters shown to the human; waicc_status has them)`;
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    return `${content.slice(0, modelLimit)}\n… ${omitted(content.length - modelLimit)}`;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return `${content.slice(0, modelLimit)}\n… ${omitted(content.length - modelLimit)}`;
+  const brief: Record<string, unknown> = {};
+  for (const [name, field] of Object.entries(value)) {
+    const size = JSON.stringify(field)?.length ?? 0;
+    brief[name] = size <= 800 ? field : omitted(size);
+  }
+  brief.summary = `The human sees this ${content.length.toLocaleString("en")}-character WAICC output in full; this is its summary for you.`;
+  const text = json(brief);
+  return text.length <= modelLimit ? text : `${text.slice(0, modelLimit)}\n…`;
+}
+
 export interface Services {
   copyText?: ClipboardWriter; runCheck?: CheckRunner; runAgent?: AgentRunner; openPage?: (path: string) => boolean;
   notifyDesktop?: (title: string, body: string) => boolean;
