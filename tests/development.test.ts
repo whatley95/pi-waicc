@@ -449,4 +449,5 @@ test("/waicc-status shows a table first: where the session stands and the next s
   assert.equal(statusTable({ filter: "closed", sessions: [] }), "No closed WAICC sessions in this project.");
   assert.equal(statusTable({ role: "recipient" }), null, "anything else shows only its full view");
   assert.match(statusTable({ sessionId: "x", requirements: "a | b" })!, /\| Requirements \| a \\\| b \|/, "a pipe in the text does not break the table");
+  assert.ok(statusTable({ sessionId: "x", requirements: "a \\| b" })!.includes("| Requirements | a \\\\\\| b |"), "nor a backslash before one");
 });
