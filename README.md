@@ -2029,6 +2029,14 @@ See [skill provenance](THIRD_PARTY_NOTICES.md).
 
 ## Integrity and limits
 
+**Error log.** Errors and warnings WAICC shows you are also kept in the project's own WAICC
+folder, `.pi/pi-waicc/errors.jsonl`, one JSON line each with the time, where it came from (a
+command such as `/waicc-amend`, `loop`, `picker`, `auto-continue` or a CLI command) and the
+message. Pi does not save these notices in the chat, so this is what to look at, or attach to
+an issue, when something went wrong. It stays on your machine (the folder is ignored by Git),
+is never created in a folder that does not use WAICC or a project you have not trusted, and
+drops its oldest half past 256 KB.
+
 Pi sends what a command shows in the chat to the model as well, on every later turn. A WAICC
 output longer than 6,000 characters (a full `/waicc-status` view was often 60,000 or more)
 reaches the model as a summary: short fields as they are, and each long one replaced by a note

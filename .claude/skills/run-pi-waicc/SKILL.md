@@ -138,6 +138,14 @@ See `driver.mjs` → `roundtrip()` for working contract/reply/assessment bodies,
 For the extension's tool layer (`waicc_prepare` etc.) without the Pi runtime, the
 pattern is `tests/extension.test.ts`, which uses Pi's own `loadExtensions()`.
 
+## Finding bugs from real use
+
+Two local sources show what went wrong in the user's own projects. Read them for counts and
+messages only, and never copy their contents (hosts, project names, people) into this public repo:
+- `<project>/.pi/pi-waicc/errors.jsonl`: every error and warning WAICC showed, with its source.
+- `~/.pi/agent/sessions/*/*.jsonl`: Pi chats; WAICC tool failures are `toolResult` messages
+  with `isError`, and very large `custom_message` entries point at oversized output.
+
 ## Before opening a PR
 
 1. `npm run typecheck`, then the test files you touched, then `npm test` once.

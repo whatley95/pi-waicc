@@ -1,3 +1,4 @@
+import { recordError } from "../error-log.ts";
 import { recipientAssignment } from "../recipient.ts";
 import type { GitLabCall, GitLabHost, GitLabProject, OriginProbe } from "../gitlab.ts";
 import type { ShipPlan } from "../ship.ts";
@@ -64,6 +65,34 @@ export function modelView(content: string): string {
   brief.waiccNote = `The human sees this ${content.length.toLocaleString("en")}-character WAICC output in full; this is its summary for you.`;
   const text = json(brief);
   return text.length <= modelLimit ? text : `${text.slice(0, modelLimit)}\n…`;
+}
+
+const logging = Symbol("waicc-error-log");
+/**
+ * The same context, except that the errors and warnings it shows are also written to the
+ * project's error log. Copied by property descriptor, as Pi copies its own contexts, so its
+ * getters stay live. Background work keeps the context its command started with, so a
+ * dispatch or loop that fails later is logged too.
+ */
+export function loggingContext<T extends ExtensionContext>(ctx: T, source: string): T {
+  if ((ctx as unknown as Record<symbol, unknown>)[logging]) return ctx;
+  const copy = Object.defineProperties({}, Object.getOwnPropertyDescriptors(ctx)) as T;
+  Object.defineProperty(copy, "ui", {
+    get() {
+      const ui = ctx.ui;
+      return Object.assign(Object.create(ui), {
+        notify(message: string, level?: "info" | "warning" | "error") {
+          if (level === "error" || level === "warning")
+            try {
+              if (ctx.isProjectTrusted()) recordError(projectRoot(ctx.cwd), source, message);
+            } catch { /* the log never stands in the way of the message */ }
+          return ui.notify(message, level);
+        },
+      });
+    },
+  });
+  Object.defineProperty(copy, logging, { value: true });
+  return copy;
 }
 
 export interface Services {
@@ -361,7 +390,8 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>,
   ): void {
     // Resolves to the error the human was shown, or null: waicc_suggest_command reports it.
-    const run = async (args: string, ctx: ExtensionCommandContext): Promise<string | null> => {
+    const run = async (args: string, shown: ExtensionCommandContext): Promise<string | null> => {
+        const ctx = loggingContext(shown, `/${name}`);
         // A line above the input box while the command runs, so a slow one does not look hung.
         // RPC clients can show widgets too; print mode has no UI.
         const busy = ctx.hasUI;

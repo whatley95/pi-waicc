@@ -6,6 +6,7 @@ import { configureSvnIgnore } from "./ignore.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { auditMemory, curate, propose, recall } from "./memory.ts";
 import { initProject, projectRoot } from "./source.ts";
+import { recordError } from "./error-log.ts";
 import { checkpointView, refreshCheckpoint } from "./checkpoint.ts";
 import {
   assess,
@@ -309,8 +310,10 @@ try {
   }
   process.stdout.write(json(output));
 } catch (error) {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
+  const message = error instanceof Error ? error.message : String(error);
+  try {
+    recordError(projectRoot(cwd), `waicc ${command ?? ""}`.trim(), message);
+  } catch { /* no project here: nothing to log into */ }
+  process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 }
