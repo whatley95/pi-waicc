@@ -55,7 +55,8 @@ function keys(
 export function text(value: unknown, name: string, max = 32_000): string {
   ensure(
     typeof value === "string" && value.trim().length > 0 && value.length <= max,
-    `${name} must be nonempty text (maximum ${max} characters)`,
+    // The length lets the caller shorten it in one try.
+    `${name} must be nonempty text (maximum ${max} characters)${typeof value === "string" && value.length > max ? `; it has ${value.length}` : ""}`,
   );
   return value;
 }
@@ -111,7 +112,7 @@ export function relativePath(value: unknown): string {
   );
   ensure(
     !/^(\.git|\.svn)(\/|$)|^\.pi\/pi-waicc(\/|$)/i.test(path),
-    `Reserved path: ${path}`,
+    `Reserved path: ${path} (.git, .svn and .pi/pi-waicc are never task paths; list the files the task changes)`,
   );
   return path;
 }
@@ -370,23 +371,27 @@ export function validateContract(
 /** A complete specification can gate execution on documented human/external decisions. */
 export function readyPlan(contract: Contract): void {
   ensure(contract.questions.length === 0, "Contract has unresolved questions");
+  // Name the tasks and requirements, so the plan is fixed in one revision instead of by guessing.
+  const ids = (items: { id: string }[]) => items.map((item) => item.id).join(", ");
+  const noAcceptance = contract.tasks.filter((t) => t.acceptance.length === 0);
   ensure(
-    contract.tasks.length > 0 &&
-      contract.tasks.every((t) => t.acceptance.length > 0),
-    "Every implementation task needs acceptance criteria",
+    contract.tasks.length > 0 && noAcceptance.length === 0,
+    `Every implementation task needs acceptance criteria${noAcceptance.length ? `: ${ids(noAcceptance)}` : contract.tasks.length ? "" : "; the plan has no tasks"}`,
   );
+  const noPaths = contract.tasks.filter((t) => t.allowedPaths.length === 0);
   ensure(
-    contract.tasks.every((t) => t.allowedPaths.length > 0),
-    "Every implementation task needs explicit allowed paths",
+    noPaths.length === 0,
+    `Every implementation task needs explicit allowed paths: ${ids(noPaths)}`,
   );
   const covered = new Set(
     contract.tasks.flatMap((t) =>
       t.acceptance.flatMap((a) => a.requirementIds),
     ),
   );
+  const uncovered = contract.requirements.filter((r) => !covered.has(r.id));
   ensure(
-    contract.requirements.every((r) => covered.has(r.id)),
-    "Some requirements have no acceptance criteria",
+    uncovered.length === 0,
+    `Some requirements have no acceptance criteria: ${ids(uncovered)} (reference each in some task's acceptance requirementIds)`,
   );
   ensure(
     !(contract.decisions ?? []).some(

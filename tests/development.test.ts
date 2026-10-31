@@ -13,7 +13,7 @@ import { reviewKindLabel } from "../src/state.ts";
 import { amend, assess, beginDevelopment, cancel, closeSession, createSession, decisionsView, delegateWork, exportHandoff,
   forceCloseSession, ingest, issue, prepare, readContract, reopenSession, resolveDecision, setRoundLimit, status } from "../src/workflow.ts";
 import type { Contract, Reply, Round, Session, WorkCompletion } from "../src/types.ts";
-import { validateContract } from "../src/validation.ts";
+import { readyPlan, relativePath, text, validateContract } from "../src/validation.ts";
 import { chatJson } from "../src/pi/app.ts";
 
 const contract: Contract = {
@@ -387,4 +387,30 @@ test("cancel, limit and force-close show the status view, never the session file
   // Anything else that reaches the chat lists a snapshot's paths as a count; other `files` fields stay.
   const text = chatJson({ source: { fingerprint: "f", files: { "a.txt": "h1", "b.txt": "h2" } }, files: { user: "u.json", found: [] } });
   assert.deepEqual(JSON.parse(text), { source: { fingerprint: "f", files: "2 files (fingerprinted in the session file)" }, files: { user: "u.json", found: [] } });
+});
+
+test("plan errors name the tasks and requirements to fix, and text limits say the actual length", () => {
+  const plan = structuredClone(contract);
+  plan.requirements.push({ id: "R2", text: "Export", sourceQuote: "Add account search" });
+  plan.tasks[1].allowedPaths = [];
+  assert.throws(() => readyPlan(plan), /^Error: Every implementation task needs explicit allowed paths: B$/);
+  plan.tasks[1].allowedPaths = ["other.txt"];
+  assert.throws(() => readyPlan(plan), /Some requirements have no acceptance criteria: R2 \(reference each/);
+  plan.tasks[0].acceptance = [];
+  assert.throws(() => readyPlan(plan), /needs acceptance criteria: A$/);
+  assert.throws(() => text("x".repeat(812), "Lesson", 600), /^Error: Lesson must be nonempty text \(maximum 600 characters\); it has 812$/);
+  assert.throws(() => text("", "Lesson", 600), /^Error: Lesson must be nonempty text \(maximum 600 characters\)$/);
+  assert.throws(() => relativePath(".git/config"), /Reserved path: \.git\/config \(\.git, \.svn and \.pi\/pi-waicc are never task paths/);
+});
+
+test("/waicc-reopen <id> reopens a session from a chat that has none selected, and selects it there", async (t) => {
+  const { root, s } = fixture(t), closer = harness(root);
+  await closer.commands.get("waicc-force-close").handler(s.id, closer.ctx);
+  const h = harness(root);
+  await h.commands.get("waicc-reopen").handler("Needed after all", h.ctx);
+  assert.match(h.notices.at(-1)!, /^No WAICC session selected/);
+  await h.commands.get("waicc-reopen").handler(`${s.id} Needed after all`, h.ctx);
+  assert.notEqual(loadSession(root, s.id).status, "CLOSED");
+  await h.commands.get("waicc-status").handler("", h.ctx);
+  assert.equal(h.shown.at(-1).sessionId, s.id, "reopened here, so selected here");
 });

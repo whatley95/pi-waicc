@@ -201,7 +201,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       role: "coordinator",
     });
   }
-  function unbindDeleted(ctx: ExtensionContext, id: string): void {
+  function unbindSession(ctx: ExtensionContext, id: string): void {
     if (bindings.get(key(ctx))?.sessionId !== id) return;
     bindings.delete(key(ctx));
     copied.delete(key(ctx));
@@ -460,7 +460,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, commands, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
+  return { pi, services, bindings, copied, commands, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;
