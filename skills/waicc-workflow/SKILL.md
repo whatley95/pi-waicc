@@ -11,6 +11,18 @@ current contract and request before acting. Keep requirement IDs stable and map
 each active requirement to task acceptance criteria and planned verification.
 Questions and assumptions stay visible until resolved by evidence or a user decision.
 
+The tools reject these, so get them right the first time:
+- Every task lists `allowedPaths`: the repository-relative files or folders it changes. Never
+  `.git`, `.svn` or `.pi/pi-waicc`, not even for a merge or rebase task.
+- Every requirement ID appears in some task's `acceptance[].requirementIds`.
+- A lesson (`waicc_learn_pattern`, memory) is at most 600 characters: one rule and its reason.
+- Assess or cancel the pending request before issuing another; review needs every planned task
+  reported once and every earlier actionable finding answered once.
+- A closed selected contract is never replaced automatically: offer `/waicc-planning <request>`
+  with `waicc_suggest_command`.
+- If the work grows during the turn (merge conflicts, a failing build, more files than
+  expected), stop before changing more and start planning.
+
 For planning, review, advisor work or contract ownership, read
 [source-first investigation and owner responsibilities](references/source-first.md).
 Investigate repository-answerable facts before escalating; the human is not the

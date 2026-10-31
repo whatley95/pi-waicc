@@ -23,7 +23,7 @@ import { canonicalProject, gitlabClient, gitlabProject, mergeRequestInfo } from 
 
 /** Contract commands: planning, development, decisions, review, continue, handoff and session management. */
 export function registerCommands(app: App): void {
-  const { pi, services, bindings, automaticRequests, key, compactChat, trackerStatus, selected, bind, unbindDeleted, coordinator, recipientTools, recipientView, show, copyManual, command, autoResolve, prompt, continueSession } = app;
+  const { pi, services, bindings, automaticRequests, key, compactChat, trackerStatus, selected, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, command, autoResolve, prompt, continueSession } = app;
   command(
     "waicc-compact",
     "Checkpoint the selected assignment and ask Pi to compact chat; optional coordinator notes: [notes]",
@@ -447,7 +447,7 @@ export function registerCommands(app: App): void {
       const input = sessionCommandInput(args);
       ensure(input.id && !input.remainder, "Usage: /waicc-delete <session-id>");
       const deleted = deleteSession(ctx.cwd, input.id);
-      unbindDeleted(ctx, input.id);
+      unbindSession(ctx, input.id);
       show(ctx, deleted);
     },
   );
