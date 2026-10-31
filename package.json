@@ -63,6 +63,7 @@
     "yaml": "^2.9.1"
   },
   "overrides": {
-    "undici": "^8.12.2"
+    "undici": "^8.12.2",
+    "minimatch": "^11.0.3"
   }
 }
