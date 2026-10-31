@@ -60,7 +60,8 @@ export function modelView(content: string): string {
     const size = JSON.stringify(field)?.length ?? 0;
     brief[name] = size <= 800 ? field : omitted(size);
   }
-  brief.summary = `The human sees this ${content.length.toLocaleString("en")}-character WAICC output in full; this is its summary for you.`;
+  // Its own key, so a view field named "summary" keeps its value.
+  brief.waiccNote = `The human sees this ${content.length.toLocaleString("en")}-character WAICC output in full; this is its summary for you.`;
   const text = json(brief);
   return text.length <= modelLimit ? text : `${text.slice(0, modelLimit)}\n…`;
 }
