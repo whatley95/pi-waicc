@@ -25,7 +25,7 @@ test("/waicc-memory confirm and revoke work without IDs: pick from a list, or al
   waicc({
     registerCommand: (n: string, c: any) => commands.set(n, c), registerTool() {}, on() {},
     appendEntry() {}, getAllTools: () => [], getActiveTools: () => [], setActiveTools() {},
-    sendMessage: (m: any) => shown.push(JSON.parse(m.content)), sendUserMessage() {},
+    sendMessage: (m: any) => { if (m.customType !== "waicc-status-table") shown.push(JSON.parse(m.content)); }, sendUserMessage() {},
   } as unknown as ExtensionAPI);
   const base = {
     cwd: root, mode: "tui", isIdle: () => true, isProjectTrusted: () => true,
