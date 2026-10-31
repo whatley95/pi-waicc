@@ -101,6 +101,7 @@ test("--loop reviews, lets the main agent fix, re-reviews automatically and stop
   await h.dispatch("--via codex --loop");
   await waitFor(() => h.prompts.length === 1, "the first assessment");
   assert.match(h.prompts[0], /AUTOMATIC REVIEW LOOP, cycle 1 of 3/);
+  assert.match(h.prompts[0], /Do not offer \/waicc-dispatch with waicc_suggest_command during this run: WAICC starts the next handoff itself\./);
   assert.match(h.prompts[0], /Never close the contract/);
 
   mainAgentFixes(root, id, [{ findingId: "F1" }]);

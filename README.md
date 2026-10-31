@@ -657,6 +657,11 @@ arrives, the open picker is withdrawn, since the agent may offer something else.
 `/waicc-*` commands can be offered, and the commands stay listed in the chat. You can still
 type any command yourself, for example to change a flag first.
 
+A command that needs your own text, offered without it (for example a bare `/waicc-amend` or
+`/waicc-decide`), is marked *you add the text*: picking it puts it in your input box to finish
+instead of running it empty. While an agent is already dispatched for the session, for example
+a loop's next cycle, the picker leaves out commands that would start another.
+
 While any WAICC command runs, picked or typed, a line above the input box says so, for
 example `⏳ WAICC: running /waicc-continue…`. On a large project, reading its files can take
 a few seconds; the line stays until the command is done.
@@ -794,7 +799,9 @@ you still make every decision. A typical mixed-model session:
 `/waicc-dispatch --via claude|codex|pi|agy [--model <model>] [--timeout <minutes>] [--implement] [--check "<command>"]... [--check-timeout <minutes>]`
 runs the selected session's single waiting handoff in the background. This chat stays
 usable; you are notified when the agent finishes, then run `/waicc-continue`.
-`/waicc-dispatch --stop` ends a running agent. The CLI equivalent runs in the
+`/waicc-dispatch --stop` ends a running agent. One agent runs per session at a time: while one
+runs (for example a loop's next cycle), the main agent's picker leaves out commands that would
+start another, and picking one that is already out of date says so instead of failing. The CLI equivalent runs in the
 foreground: `waicc dispatch <session-id> --via codex`.
 
 **Watch it work.** While the agent runs, a live panel above the editor shows what it is
