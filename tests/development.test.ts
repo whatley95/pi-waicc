@@ -469,7 +469,7 @@ test("every command that shows a status view shows the table, and keeps the full
   const [table, full] = sent.slice(-2);
   assert.equal(table.customType, "waicc-status-table");
   assert.equal(table.display, true);
-  assert.match(table.content, new RegExp(`^\| WAICC session \| \`${s.id}\` \|`));
+  assert.ok(table.content.startsWith(`| WAICC session | \`${s.id}\` |\n`), table.content);
   assert.match(table.content, /\| Auto-continue \| on: /, "the user file's setting, on by default");
   assert.equal(full.customType, "waicc");
   assert.equal(full.display, false, "the JSON is not drawn in the chat");
