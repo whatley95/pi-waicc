@@ -165,7 +165,7 @@ export function registerTools(app: App): void {
       const binding = bindings.get(key(ctx));
       const s = binding ? loadSession(projectRoot(ctx.cwd), binding.sessionId)
         : createAutoPlanningSession(ctx.cwd, request.text, ctx.sessionManager.getSessionId(), request.id);
-      ensure(s.status !== "CLOSED", "The selected contract is closed. Explicitly reopen/select it or start separate work with /waicc-planning; automatic planning will not replace it.");
+      ensure(s.status !== "CLOSED", "The selected contract is closed. Explicitly reopen/select it or start separate work with /waicc-planning; automatic planning will not replace it. Offer the human /waicc-planning with this request through waicc_suggest_command.");
       if (!binding) bind(ctx, s.id);
       return result({ action: binding ? "existing_session" : "planning_started", reason: params.reason,
         sessionId: s.id, status: s.status, contractVersion: s.contractVersion, objective: s.objective ?? "legacy",

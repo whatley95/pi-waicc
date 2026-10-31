@@ -1489,7 +1489,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-close [session-id] <reason>`             | Close fresh code-review READY_TO_CLOSE, or planning-only SPEC_APPROVED |
 | `/waicc-close [session-id] --force [reason]`     | Stop the contract immediately, cancel pending handoffs and preserve history; no review PASS             |
 | `/waicc-force-close [session-id] [reason]`       | Shortcut for force-close; ID alone works, or omit it for the selected session                           |
-| `/waicc-reopen <reason>`                         | Reopen a closed contract; clears PASS and requires a fresh review                                     |
+| `/waicc-reopen [session-id] <reason>`            | Reopen a closed contract and select it here; clears PASS and requires a fresh review                  |
 | `/waicc-amend <requirement change>`              | Append original-scope amendments and invalidate pending requests                                      |
 | `/waicc-cancel [session-id] [reason]`            | Cancel a pending handoff by ID or in the selected session; reason optional, history preserved           |
 | `/waicc-export`                                  | Package the pending handoff, requirements, contract and selected skill references                     |
@@ -1710,12 +1710,15 @@ PASS/CLOSED does not answer those choices or authorize gated tasks. Legacy plann
 resolved; use `planned` to accept a plan without an external implementation handoff. Gate lists are informational,
 not a scheduler or evidence that task dependencies have been completed.
 
-Closed sessions remain selectable and readable, but their mutations are blocked.
-To reconsider one:
+Closed sessions remain selectable and readable, but their mutations are blocked. When new work
+is asked in a chat whose selected session is closed, the agent offers `/waicc-planning` with that
+request in the picker instead of replacing the selection itself. To reconsider one:
 
 ```text
-/waicc-reopen Reconsider pagination requirements
+/waicc-reopen <session-id> Reconsider pagination requirements
 ```
+
+The ID can be left out while the session is still selected in the chat.
 
 Reopening records the reason and resets it to `NEEDS_REVIEW` with
 `contractReview: NOT_REVIEWED`. Revise or amend as needed, then obtain a fresh review

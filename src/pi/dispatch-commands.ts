@@ -1,3 +1,4 @@
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadSession, readText } from "../files.ts";
 import { join } from "node:path";
 import { configureSvnIgnore } from "../ignore.ts";
@@ -105,6 +106,7 @@ export function registerDispatchCommands(app: App): void {
       show(ctx, status(ctx.cwd, args));
     },
   );
+  const closed = (ctx: ExtensionCommandContext, id: string) => show(ctx, status(ctx.cwd, id));
   command(
     "waicc-close",
     "Close a reviewed contract, or [session-id] --force [reason] to stop it without review approval (human action)",
@@ -123,12 +125,12 @@ export function registerDispatchCommands(app: App): void {
             ? input.remainder.slice("--force".length).trim()
             : input.remainder) || undefined,
         );
-        show(ctx, status(ctx.cwd, id));
+        closed(ctx, id);
       } else {
         coordinator(ctx);
         const id = selected(ctx, input.id);
         closeSession(ctx.cwd, id, input.remainder);
-        show(ctx, status(ctx.cwd, id));
+        closed(ctx, id);
       }
     },
   );
@@ -139,15 +141,18 @@ export function registerDispatchCommands(app: App): void {
       const input = sessionCommandInput(args);
       const id = selected(ctx, input.id);
       forceCloseSession(ctx.cwd, id, input.remainder || undefined);
-      show(ctx, status(ctx.cwd, id));
+      closed(ctx, id);
     },
   );
   command(
     "waicc-reopen",
-    "Explicitly reopen a closed contract with a reason; requires fresh review (human action)",
+    "Explicitly reopen a closed contract: [session-id] <reason>; requires fresh review (human action)",
     async (args, ctx) => {
-      reopenSession(ctx.cwd, selected(ctx), args);
-      show(ctx, status(ctx.cwd, selected(ctx)));
+      const input = sessionCommandInput(args);
+      const id = selected(ctx, input.id);
+      reopenSession(ctx.cwd, id, input.remainder);
+      bind(ctx, id);
+      show(ctx, status(ctx.cwd, id));
     },
   );
   command(
