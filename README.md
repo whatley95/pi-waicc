@@ -1501,7 +1501,7 @@ model assessment is not proof of tested delivery.
 | `/waicc-dispatch --profiles`                     | Show both agent config files, every profile and what each role resolves to |
 | `/waicc-dispatch --init-profiles`                | Create your user agent config from the default template; never replaces an existing file |
 | `/waicc-dispatch --stop`                         | Stop the agent dispatched from this chat; the handoff stays waiting                                   |
-| `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view: a table first (status, waiting handoff, decisions, rounds, next steps), then the full view |
+| `/waicc-status [open\|all\|closed\|deleted\|session-id]` | Show selected progress or an explicit session-list view as a table (status, waiting handoff, auto-continue, decisions, rounds, next steps). Every command that ends by showing the status shows this table; the full view goes to the main agent, not the chat |
 | `/waicc-list [open\|all\|closed\|deleted]`      | List open sessions by default; explicitly include closed sessions or inspect recovery storage           |
 | `/waicc-delete <session-id>`                    | Move one CLOSED session to project-local recovery storage; no source or shared-memory deletion           |
 | `/waicc-restore <session-id>`                   | Restore a deleted session as CLOSED, preserving history without selecting or reopening it               |

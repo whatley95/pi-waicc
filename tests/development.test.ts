@@ -451,6 +451,31 @@ test("/waicc-status shows a table first: where the session stands and the next s
   assert.ok(list.includes(`| \`${s.id}\` | waiting for reply |`), list);
   assert.equal(statusTable({ filter: "closed", sessions: [] }), "No closed WAICC sessions in this project.");
   assert.equal(statusTable({ role: "recipient" }), null, "anything else shows only its full view");
-  assert.match(statusTable({ sessionId: "x", requirements: "a | b" })!, /\| Requirements \| a \\\| b \|/, "a pipe in the text does not break the table");
-  assert.ok(statusTable({ sessionId: "x", requirements: "a \\| b" })!.includes("| Requirements | a \\\\\\| b |"), "nor a backslash before one");
+  assert.match(statusTable({ sessionId: "x", roundBudget: {}, requirements: "a | b" })!, /\| Requirements \| a \\\| b \|/, "a pipe in the text does not break the table");
+  assert.ok(statusTable({ sessionId: "x", roundBudget: {}, requirements: "a \\| b" })!.includes("| Requirements | a \\\\\\| b |"), "nor a backslash before one");
+});
+
+test("every command that shows a status view shows the table, and keeps the full JSON for the model only", async (t) => {
+  const { root, s } = fixture(t);
+  const sent: { customType: string; content: string; display: boolean }[] = [];
+  const commands = new Map<string, any>();
+  waicc({ registerCommand: (n: string, c: any) => commands.set(n, c), registerTool() {}, on() {}, appendEntry() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage: (m: any) => sent.push(m), sendUserMessage() {},
+  } as unknown as ExtensionAPI, { copyText: async () => {} });
+  const ctx = { cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => "table-chat", getBranch: () => [] }, ui: { notify() {}, setWidget() {}, setStatus() {} } } as unknown as ExtensionCommandContext;
+  // /waicc-use ends with the session's status, as the handoff commands and /waicc-continue do.
+  await commands.get("waicc-use").handler(s.id, ctx);
+  const [table, full] = sent.slice(-2);
+  assert.equal(table.customType, "waicc-status-table");
+  assert.equal(table.display, true);
+  assert.match(table.content, new RegExp(`^\| WAICC session \| \`${s.id}\` \|`));
+  assert.match(table.content, /\| Auto-continue \| on: /, "the user file's setting, on by default");
+  assert.equal(full.customType, "waicc");
+  assert.equal(full.display, false, "the JSON is not drawn in the chat");
+  assert.equal(JSON.parse(full.content).sessionId, s.id, "but the model still has it");
+  // Anything that is not a status view is shown as before.
+  await commands.get("waicc-decisions").handler("", ctx);
+  assert.equal(sent.at(-1)!.display, true);
+  assert.notEqual(sent.at(-2)!.customType, "waicc-status-table");
 });
