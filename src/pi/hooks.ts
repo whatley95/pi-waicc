@@ -14,7 +14,7 @@ import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
 import { loadAgentConfig } from "../profiles.ts";
-import { modelLimit, modelView, type App } from "./app.ts";
+import { loggingContext, modelLimit, modelView, type App } from "./app.ts";
 import { stopPipelineWatches } from "./pipelines.ts";
 
 /** Git's words for a merge, rebase, cherry-pick or stash that stopped on conflicts. */
@@ -116,7 +116,7 @@ export function registerHooks(app: App): void {
     marksAtStart.delete(key(ctx));
     endMain(ctx);
     automaticRequests.clear(ctx);
-    advanceLoop(ctx);
+    advanceLoop(loggingContext(ctx, "loop"));
     track(ctx);
     warnOutdated(ctx);
     autoCompact(ctx, before);
@@ -133,7 +133,7 @@ export function registerHooks(app: App): void {
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);
-    if (ctx.hasUI) watchReplies(ctx);
+    if (ctx.hasUI) watchReplies(loggingContext(ctx, "auto-continue"));
     track(ctx);
     const entry = ctx.sessionManager
       .getBranch()

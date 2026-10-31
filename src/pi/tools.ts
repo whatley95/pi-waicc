@@ -17,7 +17,7 @@ import { ensure } from "../validation.ts";
 import type { Assessment } from "../workflow.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
 import { modeSchema, sessionSchema, guidance } from "./shared.ts";
-import type { App } from "./app.ts";
+import { loggingContext, type App } from "./app.ts";
 
 /** The main agent's and recipients' WAICC tools. */
 export function registerTools(app: App): void {
@@ -515,7 +515,7 @@ export function registerTools(app: App): void {
       // The human's pick runs it once, as typed; the input box is left alone, so a second Enter does nothing.
       // No WAICC command uses the command-only parts of the context (new session, fork, wait for idle).
       if (chosen) await commands.get(chosen.name)!(chosen.args, ctx as unknown as ExtensionCommandContext);
-    })().catch((error) => ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"));
+    })().catch((error) => loggingContext(ctx, "picker").ui.notify(error instanceof Error ? error.message : String(error), "error"));
   });
   // A new turn may offer something else; an offer from an ended chat is gone with it.
   const withdraw = (ctx: Parameters<typeof key>[0]) => {
