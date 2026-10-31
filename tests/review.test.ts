@@ -143,7 +143,9 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   writeFileSync(join(root, "API.txt"), "fixed API");
   const report = completion();
   report.findings = [{ requestId: first, findingId: "F1", disposition: "resolved", evidence: "API fix and regression evidence" }];
-  assert.throws(() => review(root, s, report), /ALL review fixes/);
+  assert.throws(() => review(root, s, report), new RegExp(`ALL review fixes[\\s\\S]* Missing: ${first}:F2\\.$`), "names the finding still to answer");
+  assert.throws(() => review(root, s, { ...report, findings: [...report.findings, report.findings[0], { ...report.findings[0], findingId: "F9" }] }),
+    new RegExp(`Not a prior actionable finding: ${first}:F9\\. Given more than once: ${first}:F1\\.$`));
   assert.equal(loadSession(root, s.id).rounds.length, 2);
   writeFileSync(join(root, "CLIENT.txt"), "fixed client");
   report.findings.push({ requestId: first, findingId: "F2", disposition: "resolved", evidence: "Client fix and regression evidence" });
@@ -168,6 +170,11 @@ test("low/medium code findings cannot be waved through as fixed without a fresh 
   let current = reply(root, review(root, s), { findings: [{ id: "F1", severity: "low", description: "Possible bug", evidence: "API.txt AC0" }] });
   assert.throws(() => decide(root, current), /Actionable code findings/);
   assert.throws(() => assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Fixed it", dispositions: [{ findingId: "F1", disposition: "resolved", evidence: "Claim without fresh independent review" }] }), /Actionable code findings/);
+  // A wrong disposition says which finding and why.
+  const dispose = (dispositions: unknown[]) => assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "needs_changes", rationale: "Checked", dispositions } as never);
+  assert.throws(() => dispose([{ findingId: "F7", disposition: "resolved", evidence: "x" }]), /disposition for F7: this reply has no finding F7 \(its findings: F1\)/);
+  assert.throws(() => dispose([{ findingId: "F1", disposition: "fixed", evidence: "x" }]), /disposition for F1: disposition must be resolved, disputed or accepted, not "fixed"/);
+  assert.throws(() => dispose([{ findingId: "F1", disposition: "disputed", evidence: "x" }, { findingId: "F1", disposition: "disputed", evidence: "x" }]), /disposition for F1: it is given more than once/);
   // Knowingly leaving a code finding unfixed is not a way through either.
   assert.throws(() => assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Minor", dispositions: [{ findingId: "F1", disposition: "accepted", evidence: "Low risk" }] }), /F1 is a code-review finding, which cannot be accepted unfixed/);
   current = assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Independent source evidence disproves finding", dispositions: [{ findingId: "F1", disposition: "disputed", evidence: "Exact call path and existing regression show AC0 is met" }] });

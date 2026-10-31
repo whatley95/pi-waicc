@@ -84,18 +84,22 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     ) as { fingerprint: string };
     ensure(
       currentSource.fingerprint === intakeSource.fingerprint,
-      "Source changed after reply intake; issue a fresh request",
+      "Source changed after reply intake; issue a fresh request. Files were edited between taking the reply in and assessing it: assess a reply before editing, then fix.",
     );
     const seen = new Set<string>();
     for (const item of list(a.dispositions, "Finding dispositions")) {
       const d = record(item, "Disposition");
       identifier(d.findingId);
       text(d.evidence, "Disposition evidence");
+      const id = String(d.findingId);
       ensure(
         ["resolved", "disputed", "accepted"].includes(d.disposition as string) &&
           r.reply.findings.some((f) => f.id === d.findingId) &&
-          !seen.has(d.findingId as string),
-        "Invalid or duplicate finding disposition",
+          !seen.has(id),
+        `Invalid or duplicate finding disposition for ${id}: ${!["resolved", "disputed", "accepted"].includes(d.disposition as string)
+          ? `disposition must be resolved, disputed or accepted, not ${JSON.stringify(d.disposition)}`
+          : seen.has(id) ? "it is given more than once"
+            : `this reply has no finding ${id} (its findings: ${r.reply.findings.map((f) => f.id).join(", ") || "none"})`}`,
       );
       if (d.disposition === "accepted") {
         const finding = r.reply.findings.find((f) => f.id === d.findingId)!;

@@ -4,7 +4,8 @@
  */
 const cell = (value: unknown, max = 120): string => {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  return (text.length > max ? `${text.slice(0, max - 1)}…` : text).replace(/\|/g, "\\|");
+  // Backslashes first: otherwise a "\|" in the text would end the cell.
+  return (text.length > max ? `${text.slice(0, max - 1)}…` : text).replace(/[\\|]/g, "\\$&");
 };
 const word = (status: unknown): string => String(status ?? "").replaceAll("_", " ").toLowerCase();
 const table = (head: string[], rows: unknown[][]): string[] =>

@@ -114,11 +114,14 @@ export function reviewContext(
   const supplied = findings.map(
     (finding) => `${finding.requestId}:${finding.findingId}`,
   );
+  // Say which: the agent then fixes the report in one try instead of guessing.
+  const missing = required.filter((key) => !supplied.includes(key));
+  const unknown = supplied.filter((key) => !required.includes(key));
+  const repeated = [...new Set(supplied.filter((key, i) => supplied.indexOf(key) !== i))];
+  const keys = (list: string[]) => list.slice(0, 20).join(", ") + (list.length > 20 ? `, and ${list.length - 20} more` : "");
   ensure(
-    supplied.length === required.length &&
-      new Set(supplied).size === supplied.length &&
-      supplied.every((key) => required.includes(key)),
-    "Finish ALL review fixes before re-review; record every prior actionable finding exactly once (requestId + findingId), with fix or dispute evidence",
+    !missing.length && !unknown.length && !repeated.length,
+    `Finish ALL review fixes before re-review; record every prior actionable finding exactly once (requestId + findingId), with fix or dispute evidence.${missing.length ? ` Missing: ${keys(missing)}.` : ""}${unknown.length ? ` Not a prior actionable finding: ${keys(unknown)}.` : ""}${repeated.length ? ` Given more than once: ${keys(repeated)}.` : ""}`,
   );
   const completion: WorkCompletion = {
     summary: report.summary as string, tasks, checks, findings,
