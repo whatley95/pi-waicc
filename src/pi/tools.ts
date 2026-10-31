@@ -21,7 +21,7 @@ import type { App } from "./app.ts";
 
 /** The main agent's and recipients' WAICC tools. */
 export function registerTools(app: App): void {
-  const { pi, services, bindings, commands, automaticRequests, registerTool, advising, stepLine, key, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
+  const { pi, services, bindings, commands, automaticRequests, registerTool, advising, dispatches, stepLine, key, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
   const consulting = new Set<string>();
   // A new handoff that leaves 2 rounds or fewer is told to the human at once, not only to the agent.
   const budgetNotice = (ctx: ExtensionContext, view: unknown) => {
@@ -480,10 +480,25 @@ export function registerTools(app: App): void {
     const offer = offers.get(key(ctx));
     if (!offer || offer.picker) return;
     const picker = offer.picker = new AbortController();
+    // A dispatch start while one runs for this session can only fail ("already running"). A loop starts
+    // its next run in a later agent_end handler, so look once those have run, and again at the pick.
+    const running = () => {
+      const id = bindings.get(key(ctx))?.sessionId;
+      return id ? dispatches.get(id) : undefined;
+    };
+    const startsDispatch = (o: { name: string; args: string }) => o.name === "waicc-dispatch" && !/^--(stop|progress)\b/.test(o.args);
     void (async () => {
-      const picked = await ctx.ui.select(offer.title, [...offer.offered.map((o) => o.label), "None of these"], { signal: picker.signal });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const choices = running() ? offer.offered.filter((o) => !startsDispatch(o)) : offer.offered;
+      if (!choices.length || picker.signal.aborted) {
+        if (offers.get(key(ctx)) === offer) offers.delete(key(ctx));
+        return;
+      }
+      const picked = await ctx.ui.select(offer.title, [...choices.map((o) => o.label), "None of these"], { signal: picker.signal });
       if (offers.get(key(ctx)) === offer) offers.delete(key(ctx));
-      const chosen = picker.signal.aborted ? undefined : offer.offered.find((o) => o.label === picked);
+      const chosen = picker.signal.aborted ? undefined : choices.find((o) => o.label === picked);
+      const busy = chosen && startsDispatch(chosen) ? running() : undefined;
+      if (busy) return ctx.ui.notify(`Already running: ${busy.label}. Nothing else was started; /waicc-dispatch --progress shows its steps.`, "info");
       // The human's pick runs it once, as typed; the input box is left alone, so a second Enter does nothing.
       // No WAICC command uses the command-only parts of the context (new session, fork, wait for idle).
       if (chosen) await commands.get(chosen.name)!(chosen.args, ctx as unknown as ExtensionCommandContext);

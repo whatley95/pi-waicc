@@ -121,7 +121,11 @@ export function createRuns(app: Core) {
     ctx.ui.notify(message, level);
     pi.sendMessage({ customType: "waicc-review-loop", content: message, display: true }, { triggerTurn: false });
   };
+  // During a run WAICC starts the next handoff itself; a picker offer of it could only fail as already running.
   const loopNote = (loop: Loop, replied?: string) => replied === "review" && loop.reviewMax === 1 && loop.mode === "review"
+    ? loopInstructions(loop, replied)
+    : `${loopInstructions(loop, replied)} Do not offer /waicc-dispatch with waicc_suggest_command during this run: WAICC starts the next handoff itself.`;
+  const loopInstructions = (loop: Loop, replied?: string) => replied === "review" && loop.reviewMax === 1 && loop.mode === "review"
     ? "ONE REVIEW, as the human asked with /waicc-dispatch --review-once. Assess the review as usual, then STOP: do not fix anything and do not request another handoff. Tell the human what it found and the next step they can take. Never close the contract, commit, push or deploy."
     : loop.code && replied === "implementation"
     ? `AUTOMATIC RUN, coding round ${loop.codings} of ${loop.max}, started by the human with /waicc-dispatch --code-with: ${coder(loop)} wrote the code headless. Assess its implementation reply: inspect the whole diff, every task's completion evidence and the actual checks. Do NOT edit application code yourself. If all authorized work is complete, request ONE whole-change code review with waicc_request (mode review, reviewKind code, complete completion evidence): WAICC dispatches it${loop.review ? "" : " only if you asked for reviews; otherwise the human does"}. If work is missing or wrong within scope, request ONE fresh implementation handoff covering ALL of it with waicc_request: WAICC sends it to the coding agent. If something needs a human decision or is blocked, explain it and stop. Never close the contract, commit, push or deploy.`
