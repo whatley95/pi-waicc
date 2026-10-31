@@ -547,8 +547,8 @@ with a listed profile uses its fallback directly (`dispatchId: null`). An in-pla
 implementation run (no isolation) is retried only if the source fingerprint is unchanged
 since its launch. The CLI and advisor consults do not retry.
 
-`--continue` (or a user-file `"autoContinue": true`; `--no-continue` overrides; a project
-file that sets it is rejected) runs the ordinary continue step after a dispatch whose reply
+`--continue` (or `autoContinue`, true unless the user file sets `"autoContinue": false`;
+`--no-continue` overrides; a project file that sets it is rejected) runs the ordinary continue step after a dispatch whose reply
 exists: intake validation, then the main agent's assessment prompt, delivered as a
 follow-up after any current turn. The dispatch is released before that prompt is sent and
 the prompt is not awaited, so the main agent's turn runs on its own. With `autoContinue`

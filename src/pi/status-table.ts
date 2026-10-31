@@ -13,7 +13,8 @@ const table = (head: string[], rows: unknown[][]): string[] =>
 
 type View = Record<string, any>;
 
-export function statusTable(view: unknown): string | null {
+/** autoContinue: your user file's setting, when known; whether a reply goes to the main agent by itself. */
+export function statusTable(view: unknown, settings: { autoContinue?: boolean } = {}): string | null {
   if (!view || typeof view !== "object") return null;
   const v = view as View;
   if (Array.isArray(v.sessions)) {
@@ -34,6 +35,9 @@ export function statusTable(view: unknown): string | null {
     ["Contract", v.contractVersion ? `v${v.contractVersion}, review ${word(v.contractReview)}` : "not prepared yet"],
     ["Development", v.implementationAuthorized ? "authorized" : "not authorized"],
     ["Waiting", pending ? `${word(pending.mode)}${pending.review?.kind === "code" ? " (code review)" : ""} handoff, ${pending.replyExists ? "reply arrived" : "no reply yet"}` : "nothing"],
+    ...(settings.autoContinue === undefined ? [] : [["Auto-continue", settings.autoContinue
+      ? "on: a reply goes to the main agent as soon as it arrives"
+      : 'off: run /waicc-continue after a reply ("autoContinue": false in your user file)']]),
     ["Open decisions", v.openGates ?? 0],
     ...(budget ? [["Rounds", `${budget.used} of ${budget.limit}`]] : []),
     ...(v.budgetWarning ? [["Round budget", v.budgetWarning]] : []),

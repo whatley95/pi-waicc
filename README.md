@@ -911,17 +911,18 @@ same project each keep their own running agents on the card. Projects not seen f
 off. `/waicc-tracker off` stops every chat
 from updating it; `/waicc-tracker on` turns it back on.
 
-**Continue automatically.** Add `--continue` (short: `-c`) and, when the agent submits a valid reply,
-WAICC runs the `/waicc-continue` step for you: the reply is validated and the main agent
-starts assessing it. If the main agent is busy, the assessment waits for its current turn.
+**Continue automatically, by default.** When a dispatched agent submits a valid reply, WAICC
+runs the `/waicc-continue` step for you: the reply is validated and the main agent starts
+assessing it. If the main agent is busy, the assessment waits for its current turn.
 It only saves you the command: accepting a plan still leaves coding to your
-`/waicc-develop`, and nothing is ever closed for you. To make it your default, set
-`"autoContinue": true` in your user agent config (see [Agent profiles](#agent-profiles-choose-an-agent-per-role-once));
-`--no-continue` turns it off for one run. A project's config cannot turn it on. With
-`autoContinue` on, a handoff you gave out by hand is covered too: once the other agent's
+`/waicc-develop`, and nothing is ever closed for you. `--no-continue` turns it off for one
+run; `"autoContinue": false` in your user agent config (see [Agent profiles](#agent-profiles-choose-an-agent-per-role-once))
+turns it off for good, and `--continue` (short: `-c`) then turns it on for one run. A
+project's config cannot set it. `/waicc-status` shows whether it is on. While it is on, a
+handoff you gave out by hand is covered too: once the other agent's
 `reply.json` has stopped changing for 3 seconds and the main agent is idle, WAICC tells you and
-runs the same step, so you never type `/waicc-continue`. Without it, the commands the main agent
-offers you after a handoff already include `--continue`, and for a code review it may fix, the
+runs the same step, so you never type `/waicc-continue`. With it off, the commands the main agent
+offers you after a handoff include `--continue`, and for a code review it may fix, the
 review loop (`--loop`) comes first. The CLI's
 `--continue` validates the reply into `AWAITING_ASSESSMENT`, since there is no main agent.
 
@@ -1279,9 +1280,9 @@ Safety rules:
 
 - **`"policies"`** and **`"autoDecide": "low-risk"`** (user file only) answer routine
   decisions for you; see [Fewer decisions to answer](#fewer-decisions-to-answer-standing-policies-and-low-risk-auto-accept).
-- **`"autoContinue": true`** (user file only) runs the continue step after every dispatch
-  that returns a valid reply, and takes in replies to handoffs you gave out by hand; a
-  project file that sets it is rejected.
+- **`"autoContinue"`** (user file only; on by default) runs the continue step after every
+  dispatch that returns a valid reply, and takes in replies to handoffs you gave out by hand;
+  `false` turns it off. A project file that sets it is rejected.
 - **`"autoCompactTokens": 150000`** (user file only; the default) compacts the main agent's
   chat after it assesses a round or sends out new work, once its context is over that many tokens; `0` turns it off.
 - **`"resumeReviews": true`** (user file only; off by default) lets a follow-up code review
