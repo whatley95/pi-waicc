@@ -84,8 +84,8 @@ test("with autoContinue on, a reply to a handoff given out by hand is taken in a
   assert.equal(prompts.length, 1, "an assessed or received reply is never taken in twice");
 });
 
-test("without autoContinue nothing is taken in automatically", async (t) => {
-  const { prompts, write, wait } = await setup(t, {});
+test("with autoContinue false in your user file nothing is taken in automatically", async (t) => {
+  const { prompts, write, wait } = await setup(t, { autoContinue: false });
   write();
   await wait(36_000);
   assert.equal(prompts.length, 0);

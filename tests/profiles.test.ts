@@ -63,7 +63,7 @@ const profiles = {
 };
 
 test("the waiting handoff's role picks its profile, and typed settings override it", (t) => {
-  const { root, id } = project(t, { user: { profiles, roles: { planning: "claude", review: "codex" } } });
+  const { root, id } = project(t, { user: { autoContinue: false, profiles, roles: { planning: "claude", review: "codex" } } });
   assert.deepEqual(resolveDispatch(root, id, ""), { options: { via: "claude", model: "opus" }, mode: "planning", profile: "claude", confirmChecks: false });
   assert.deepEqual(resolveDispatch(root, id, "codex").options, { via: "codex", model: "gpt-5.5", timeoutMinutes: 45 });
   assert.deepEqual(resolveDispatch(root, id, "codex --model gpt-6 --timeout 5").options, { via: "codex", model: "gpt-6", timeoutMinutes: 5 });
@@ -80,8 +80,8 @@ test("the project file wins over the user file, and nothing chosen names both fi
     user: { profiles, roles: { planning: "claude" } },
     project: { profiles: { claude: { via: "claude", model: "sonnet" } }, roles: { planning: "deepseek" } },
   });
-  assert.deepEqual(resolveDispatch(root, id, "").options, { via: "pi", model: "deepseek/deepseek-v4-pro" }, "project role, user profile");
-  assert.deepEqual(resolveDispatch(root, id, "claude").options, { via: "claude", model: "sonnet" }, "project profile replaces the user's");
+  assert.deepEqual(resolveDispatch(root, id, "").options, { via: "pi", model: "deepseek/deepseek-v4-pro", continue: true }, "project role, user profile");
+  assert.deepEqual(resolveDispatch(root, id, "claude").options, { via: "claude", model: "sonnet", continue: true }, "project profile replaces the user's");
   const view = profilesView(root);
   assert.equal(view.files.user.found && view.files.project.found, true);
   assert.equal((view.roles.review as string), "not set: pass --via or a profile name");
@@ -189,7 +189,7 @@ test("profiles set each agent's effort, typed --effort overrides it, and every a
       roles: { planning: "opus", review: "sol" },
     },
   });
-  assert.deepEqual(resolveDispatch(root, id, "").options, { via: "claude", model: "claude-opus-5-5", effort: "medium" });
+  assert.deepEqual(resolveDispatch(root, id, "").options, { via: "claude", model: "claude-opus-5-5", effort: "medium", continue: true });
   assert.equal(resolveDispatch(root, id, "--effort low").options.effort, "low");
   // Each agent receives its own setting.
   const { prepareDispatch, runDispatch } = await import("../src/dispatch.ts");
@@ -245,7 +245,7 @@ test("the default template carries the full profile set: role defaults plus vari
     Object.fromEntries(Object.entries(config.roles).map(([role, choice]) => [role, choice!.profile])),
     { planning: "opus", review: "sol", implementation: "codex", testing: "deepseek", advisor: "sonnet" },
   );
-  assert.deepEqual(resolveDispatch(root, id, "opus-max").options, { via: "claude", model: "claude-opus-5-5", effort: "max" });
+  assert.deepEqual(resolveDispatch(root, id, "opus-max").options, { via: "claude", model: "claude-opus-5-5", effort: "max", continue: true });
 });
 
 test("resumeReviews is off by default and comes only from your user file", (t) => {
@@ -260,13 +260,13 @@ test("resumeReviews is off by default and comes only from your user file", (t) =
   assert.throws(() => loadAgentConfig(project(t, { user: { resumeReviews: "yes" } }).root), /"resumeReviews" must be true or false/);
 });
 
-test("autoContinue comes only from your user file; --continue and --no-continue win, and a loop always continues", (t) => {
-  const mine = project(t, { user: { autoContinue: true, profiles, roles: { planning: "claude" } } });
+test("autoContinue is on unless your user file turns it off; only your user file sets it; --continue and --no-continue win, and a loop always continues", (t) => {
+  const mine = project(t, { user: { profiles, roles: { planning: "claude" } } });
   assert.equal(resolveDispatch(mine.root, mine.id, "").options.continue, true);
   assert.equal(resolveDispatch(mine.root, mine.id, "--via pi").options.continue, true, "also with a typed agent");
   assert.equal(resolveDispatch(mine.root, mine.id, "--no-continue").options.continue, false);
   assert.equal(profilesView(mine.root).autoContinue, true);
-  const off = project(t, { user: { profiles, roles: { planning: "claude" } } });
+  const off = project(t, { user: { autoContinue: false, profiles, roles: { planning: "claude" } } });
   assert.equal(resolveDispatch(off.root, off.id, "").options.continue, undefined);
   assert.equal(resolveDispatch(off.root, off.id, "--continue").options.continue, true);
   assert.deepEqual(resolveDispatch(off.root, off.id, "--loop 2").options, { via: "claude", model: "opus", loop: 2, continue: true });

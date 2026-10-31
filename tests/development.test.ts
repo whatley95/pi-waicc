@@ -442,6 +442,9 @@ test("/waicc-status shows a table first: where the session stands and the next s
   assert.match(glance, /\| Requirements \| Add account search \|/);
   assert.match(glance, /\| Status \| waiting for reply/);
   assert.match(glance, /\| Waiting \| planning handoff, no reply yet \|/);
+  assert.doesNotMatch(glance, /Auto-continue/, "left out when the setting is not known");
+  assert.match(statusTable(status(root, s.id), { autoContinue: true })!, /\| Auto-continue \| on: a reply goes to the main agent as soon as it arrives \|/);
+  assert.match(statusTable(status(root, s.id), { autoContinue: false })!, /\| Auto-continue \| off: run \/waicc-continue after a reply/);
   assert.match(glance, /\*\*Next\*\*\n\n\| Step \| Command \| Detail \|\n\|---\|---\|---\|\n\| .+ \| `\/waicc-dispatch/);
   const list = statusTable(status(root, undefined, "all"))!;
   assert.ok(list.startsWith("**1 all session**\n\n| Session | Status | Review | Updated |\n"), list);

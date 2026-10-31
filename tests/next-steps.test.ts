@@ -32,7 +32,7 @@ function project(t: TestContext, user?: object) {
 }
 
 test("a waiting handoff's next steps are a short table: headless with the role's agent, by hand, then continue", (t) => {
-  const root = project(t, { profiles: { opus: { via: "claude", model: "claude-opus-5-5" }, codex: { via: "codex" } }, roles: { planning: "opus", implementation: "codex" } });
+  const root = project(t, { autoContinue: false, profiles: { opus: { via: "claude", model: "claude-opus-5-5" }, codex: { via: "codex" } }, roles: { planning: "opus", implementation: "codex" } });
   const s = createSession(root, "Add a menu");
   prepare(root, s.id, contract, "planning", "Plan", 0);
   const view = status(root, s.id) as any;
