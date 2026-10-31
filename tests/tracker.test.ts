@@ -11,6 +11,7 @@ import { projectStatus, publish, trackerEnabled, trackerPage, type ProjectStatus
 import { assess, createSession, ingest, prepare } from "../src/workflow.ts";
 import { prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
 import { runPace } from "../src/usage.ts";
+import { recordError } from "../src/error-log.ts";
 import type { Contract } from "../src/types.ts";
 
 const contract = (title: string): Contract => ({
@@ -333,4 +334,19 @@ test("agents are compared per step: runs, how often they replied, time and cost 
   assert.equal(runPace({ inputTokens: 1, cachedTokens: 0, outputTokens: 38_000, costUsd: null }, 270_000), "38k out, 8k/min");
   assert.equal(runPace({ inputTokens: 1, cachedTokens: 0, outputTokens: 0, costUsd: null }, 270_000), null);
   assert.equal(runPace(null, 270_000), null);
+});
+
+test("the page shows a project's recent errors and warnings from its error log, newest first", (t) => {
+  const { project } = setup(t);
+  const { root } = project("shop");
+  assert.deepEqual(projectStatus(root).errors, [], "none yet: no section");
+  assert.doesNotMatch(renderPage([JSON.parse(JSON.stringify(projectStatus(root)))]), /Recent errors and warnings/);
+  recordError(root, "/waicc-amend", "Requirement amendment must be nonempty text");
+  recordError(root, "picker", "A planning reply is waiting <to be assessed>");
+  const status = projectStatus(root);
+  assert.deepEqual(status.errors.map((e) => e.source), ["picker", "/waicc-amend"]);
+  const page = renderPage([JSON.parse(JSON.stringify(status))]);
+  assert.match(page, /Recent errors and warnings <span class="small muted">· 2 · newest/);
+  assert.match(page, /<code>picker<\/code> A planning reply is waiting &lt;to be assessed&gt;/, "escaped");
+  assert.match(page, /From \.pi\/pi-waicc\/errors\.jsonl in this project\./);
 });

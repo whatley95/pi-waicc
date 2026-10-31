@@ -405,7 +405,10 @@
       return `<div class="glass section">${fold(`${p.key}:${s.id}`, sessionHead(p, s), `<div class="tiny muted" style="margin:6px 0">Session <code>${esc(s.id)}</code> · coding by ${esc(s.implementationOwner)}</div>${stale}${shipped}${changeLine(s)}${budgetBar(p, s)}${requirements}${tasks}`, s.status !== "CLOSED")}</div>`;
     }).join("");
     const interrupted = interruptedNote(p) ? `<div class="glass section">${interruptedNote(p)}</div>` : "";
-    return `${live}${interrupted}${mainAgents(p)}${queueBox(p)}${notices}${sessions || `<p class="small muted">No WAICC sessions in this project yet.</p>`}`;
+    // Errors shown in Pi are not kept in the chat; the project's error log is, so they show here.
+    const errors = p.errors?.length ? `<div class="glass section">${fold(`${p.key}:errors`, `Recent errors and warnings <span class="small muted">· ${p.errors.length} · newest ${ago(p.errors[0].at)}</span>`,
+      p.errors.map((e) => `<div class="small" style="padding:3px 0">⚠ <code>${esc(e.source)}</code> ${esc(e.message)} <span class="muted">${ago(e.at)}</span></div>`).join("") + `<p class="tiny muted">From .pi/pi-waicc/errors.jsonl in this project.</p>`, false)}</div>` : "";
+    return `${live}${interrupted}${mainAgents(p)}${queueBox(p)}${notices}${errors}${sessions || `<p class="small muted">No WAICC sessions in this project yet.</p>`}`;
   }
   // Each Pi chat in this project: the main agent's model now, and what it used today and in all.
   function mainAgents(p) {

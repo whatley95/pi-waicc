@@ -866,8 +866,9 @@ that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
 - **Click a card** for its tabs:
   - **Overview:** what the agent is doing step by step and its latest message; the main
     agent in each Pi chat in the project (model now, other models used, spend today and in
-    all); recent run results; and each session's requirements, tasks (marked when the coder
-    reports them done) and budget bar.
+    all); recent run results; the project's recent errors and warnings (from its error log,
+    folded, with how many and when the newest was); and each session's requirements, tasks
+    (marked when the coder reports them done) and budget bar.
   - **Timeline:** every round (plan, review, fixes, re-reviews) with agent, result,
     findings, checks, time and cost.
   - **Decisions:** open ones first, with recommendations and the command to accept them.
@@ -2042,7 +2043,9 @@ command such as `/waicc-amend`, `loop`, `picker`, `auto-continue` or a CLI comma
 message. Pi does not save these notices in the chat, so this is what to look at, or attach to
 an issue, when something went wrong. It stays on your machine (the folder is ignored by Git),
 is never created in a folder that does not use WAICC or a project you have not trusted, and
-drops its oldest half past 256 KB.
+drops its oldest half past 256 KB. The tracker page (`/waicc-tracker`)
+shows each project's 20 newest, newest first, under *Recent errors and warnings* on its
+overview.
 
 Pi sends what a command shows in the chat to the model as well, on every later turn. A WAICC
 output longer than 6,000 characters (a full `/waicc-status` view was often 60,000 or more)
