@@ -7,7 +7,7 @@ import { alertSettings, fallbackDispatch, loadAgentConfig, sessionBudget, resolv
 import { roundDirectory } from "../render.ts";
 import { limitText } from "../limits.ts";
 import { quietMinutes, sessionSpend } from "../tracker.ts";
-import { usageText } from "../usage.ts";
+import { runPace, usageText } from "../usage.ts";
 import { elapsed, type ProgressEvent } from "../progress.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { beginDevelopment, readContract, ingest, reopenSession, status } from "../workflow.ts";
@@ -210,8 +210,8 @@ export function createRuns(app: Core) {
         ctx.ui.notify(outcome.replySubmitted
           ? `${plan.via} submitted a reply${usageText(outcome.usage) ? ` (${usageText(outcome.usage)})` : ""}.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
           : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
-        const cost = usageText(outcome.usage);
-        notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}${cost ? `, ${cost}` : ""}.`);
+        const cost = usageText(outcome.usage), pace = runPace(outcome.usage, outcome.durationMs);
+        notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}${cost ? `, ${cost}` : ""}${pace ? ` (${pace})` : ""}.`);
         pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
         if (!outcome.replySubmitted && outcome.limit && profile && !fallbackFrom && !controller.signal.aborted) {
           const next = fallbackDispatch(ctx.cwd, options, profile);

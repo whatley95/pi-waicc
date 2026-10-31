@@ -97,6 +97,14 @@ export function totalUsage(runs: (Usage | null | undefined)[]): Usage & { runs: 
 // Each unit starts where the one below would round up to 1000: 999,950,000 is "1.00B", not "1000.0M".
 const tokens = (n: number): string => (n >= 999_950_000 ? `${(n / 1_000_000_000).toFixed(2)}B` : n >= 999_500 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 1_000)}k` : String(n));
 /** "$0.75 · 433k tokens", or tokens alone when the agent reports no price. */
+/**
+ * A run's output and its pace over the whole run, reading and commands included: "38k out, 8k/min".
+ * Not a streaming speed: Claude reports its tokens only when the run ends.
+ */
+export function runPace(usage: Usage | null | undefined, durationMs: number): string | null {
+  if (!usage?.outputTokens || durationMs < 1_000) return null;
+  return `${tokens(usage.outputTokens)} out, ${tokens(Math.round(usage.outputTokens / (durationMs / 60_000)))}/min`;
+}
 export function usageText(usage: Usage | null | undefined): string | null {
   if (!usage) return null;
   const all = usage.inputTokens + usage.outputTokens;
