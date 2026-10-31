@@ -2022,6 +2022,12 @@ See [skill provenance](THIRD_PARTY_NOTICES.md).
 
 ## Integrity and limits
 
+Pi sends what a command shows in the chat to the model as well, on every later turn. A WAICC
+output longer than 6,000 characters (a full `/waicc-status` view was often 60,000 or more)
+reaches the model as a summary: short fields as they are, and each long one replaced by a note
+that `waicc_status` has it. You still see the whole output, and the saved chat is unchanged. A
+source snapshot's file list is always shown as a count.
+
 Some models send a nested tool argument (a contract, completion report or reply) as JSON
 text instead of an object. WAICC decodes such text for every argument whose schema is not
 plain text, in Pi tools and the MCP server, so these models no longer loop on

@@ -14,7 +14,7 @@ import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
 import { loadAgentConfig } from "../profiles.ts";
-import type { App } from "./app.ts";
+import { modelLimit, modelView, type App } from "./app.ts";
 import { stopPipelineWatches } from "./pipelines.ts";
 
 /** Git's words for a merge, rebase, cherry-pick or stash that stopped on conflicts. */
@@ -223,14 +223,22 @@ export function registerHooks(app: App): void {
     if ((bindings.has(key(ctx)) || automaticRequests.current(ctx)) && ctx.isProjectTrusted()) compactedRuns.add(key(ctx));
   });
   pi.on("context", async (event, ctx) => {
+    // Long command output shown in the chat reaches the model as a summary; the transcript keeps all of it.
+    let shortened = false;
+    const messages = event.messages.map((message) => {
+      if (message.role !== "custom" || message.customType !== "waicc" || typeof message.content !== "string" || message.content.length <= modelLimit) return message;
+      shortened = true;
+      return { ...message, content: modelView(message.content) };
+    });
+    const unchanged = shortened ? { messages } : undefined;
     const binding = bindings.get(key(ctx));
-    if (!ctx.isProjectTrusted() || !compactedRuns.has(key(ctx))) return;
+    if (!ctx.isProjectTrusted() || !compactedRuns.has(key(ctx))) return unchanged;
     const request = automaticRequests.current(ctx);
     const automatic = request && binding?.role !== "recipient" ? autoPlanningInstructions(request.id, Boolean(binding)) : "";
-    if (!binding) return automatic ? { messages: [...event.messages.filter((message) =>
+    if (!binding) return automatic ? { messages: [...messages.filter((message) =>
       !(message.role === "custom" && message.customType === "waicc-auto-planning")), {
       role: "custom" as const, customType: "waicc-auto-planning", content: automatic, display: false, timestamp: Date.now(),
-    }] } : undefined;
+    }] } : unchanged;
     let recovery: string;
     try {
       const root = projectRoot(ctx.cwd), s = loadSession(root, binding.sessionId);
@@ -243,7 +251,7 @@ export function registerHooks(app: App): void {
     }
     // Request-local only: no history rewrite, duplicate archive injection or new
     // model turn. Covers threshold/overflow retries within an ongoing run.
-    return { messages: [...event.messages.filter((message) =>
+    return { messages: [...messages.filter((message) =>
       !(message.role === "custom" && message.customType === "waicc-compact-recovery")), {
       role: "custom" as const, customType: "waicc-compact-recovery", content: recovery.startsWith("STOP") ? recovery : [automatic, recovery].filter(Boolean).join("\n\n"),
       display: false, timestamp: Date.now(),

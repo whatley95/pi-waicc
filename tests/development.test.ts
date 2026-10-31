@@ -14,7 +14,7 @@ import { amend, assess, beginDevelopment, cancel, closeSession, createSession, d
   forceCloseSession, ingest, issue, prepare, readContract, reopenSession, resolveDecision, setRoundLimit, status } from "../src/workflow.ts";
 import type { Contract, Reply, Round, Session, WorkCompletion } from "../src/types.ts";
 import { readyPlan, relativePath, text, validateContract } from "../src/validation.ts";
-import { chatJson } from "../src/pi/app.ts";
+import { chatJson, modelLimit, modelView } from "../src/pi/app.ts";
 
 const contract: Contract = {
   title: "Account search", requirements: [{ id: "R1", text: "Account search", sourceQuote: "Add account search" }],
@@ -413,4 +413,23 @@ test("/waicc-reopen <id> reopens a session from a chat that has none selected, a
   assert.notEqual(loadSession(root, s.id).status, "CLOSED");
   await h.commands.get("waicc-status").handler("", h.ctx);
   assert.equal(h.shown.at(-1).sessionId, s.id, "reopened here, so selected here");
+});
+
+test("long WAICC output reaches the model as a summary; the chat keeps all of it", async (t) => {
+  const { root, s } = fixture(t), h = harness(root);
+  const long = chatJson({ sessionId: s.id, status: "WAITING_FOR_REPLY", nextAction: "Dispatch the review", contract: { tasks: "x".repeat(20_000) } });
+  const short = chatJson({ sessionId: s.id, status: "DRAFT" });
+  const brief = JSON.parse(modelView(long));
+  assert.deepEqual([brief.sessionId, brief.status, brief.nextAction], [s.id, "WAITING_FOR_REPLY", "Dispatch the review"], "the facts that steer the next step stay");
+  assert.match(brief.contract, /^\(20,\d{3} characters shown to the human; waicc_status has them\)$/);
+  assert.ok(modelView(long).length <= modelLimit);
+  assert.equal(modelView(short), short);
+  assert.match(modelView("y".repeat(9_000)), /^y{6000}\n… \(3,000 characters shown to the human/);
+  const shown = { role: "custom", customType: "waicc", content: long, display: true, timestamp: 1 };
+  const other = { role: "custom", customType: "waicc-context", content: long, display: false, timestamp: 2 };
+  const result = await h.hooks.get("context")({ type: "context", messages: [shown, other] }, h.ctx);
+  assert.equal(result.messages[0].content, modelView(long));
+  assert.equal(result.messages[1].content, long, "only command output shown in the chat is summarized");
+  assert.equal(shown.content, long, "the transcript itself is unchanged");
+  assert.equal(await h.hooks.get("context")({ type: "context", messages: [{ ...shown, content: short }] }, h.ctx), undefined);
 });
