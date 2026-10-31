@@ -15,6 +15,7 @@ import { amend, assess, beginDevelopment, cancel, closeSession, createSession, d
 import type { Contract, Reply, Round, Session, WorkCompletion } from "../src/types.ts";
 import { readyPlan, relativePath, text, validateContract } from "../src/validation.ts";
 import { chatJson, modelLimit, modelView } from "../src/pi/app.ts";
+import { statusTable } from "../src/pi/status-table.ts";
 
 const contract: Contract = {
   title: "Account search", requirements: [{ id: "R1", text: "Account search", sourceQuote: "Add account search" }],
@@ -197,7 +198,7 @@ function harness(root: string) {
   const commands = new Map<string, any>(), hooks = new Map<string, any>(), tools = new Map<string, any>();
   const shown: any[] = [], prompts: string[] = [], notices: string[] = [];
   waicc({ registerCommand: (n: string, c: any) => commands.set(n, c), registerTool: (v: any) => tools.set(v.name, v), on: (n: string, h: any) => hooks.set(n, h),
-    appendEntry() {}, sendMessage: (m: any) => shown.push(JSON.parse(m.content)), sendUserMessage: (m: string) => prompts.push(m),
+    appendEntry() {}, sendMessage: (m: any) => { if (m.customType !== "waicc-status-table") shown.push(JSON.parse(m.content)); }, sendUserMessage: (m: string) => prompts.push(m),
     getActiveTools: () => ["read", "edit", "write", "bash", "waicc_status", "waicc_reply"],
     getAllTools: () => ["read", "edit", "write", "bash", "waicc_status", "waicc_reply"].map((name) => ({ name })), setActiveTools() {},
   } as unknown as ExtensionAPI, { copyText: async () => {} });
@@ -432,4 +433,20 @@ test("long WAICC output reaches the model as a summary; the chat keeps all of it
   assert.equal(result.messages[1].content, long, "only command output shown in the chat is summarized");
   assert.equal(shown.content, long, "the transcript itself is unchanged");
   assert.equal(await h.hooks.get("context")({ type: "context", messages: [{ ...shown, content: short }] }, h.ctx), undefined);
+});
+
+test("/waicc-status shows a table first: where the session stands and the next steps, from the view itself", (t) => {
+  const { root, s } = fixture(t);
+  const glance = statusTable(status(root, s.id))!;
+  assert.ok(glance.startsWith(`| WAICC session | \`${s.id}\` |\n|---|---|\n`), glance);
+  assert.match(glance, /\| Requirements \| Add account search \|/);
+  assert.match(glance, /\| Status \| waiting for reply/);
+  assert.match(glance, /\| Waiting \| planning handoff, no reply yet \|/);
+  assert.match(glance, /\*\*Next\*\*\n\n\| Step \| Command \| Detail \|\n\|---\|---\|---\|\n\| .+ \| `\/waicc-dispatch/);
+  const list = statusTable(status(root, undefined, "all"))!;
+  assert.ok(list.startsWith("**1 all session**\n\n| Session | Status | Review | Updated |\n"), list);
+  assert.ok(list.includes(`| \`${s.id}\` | waiting for reply |`), list);
+  assert.equal(statusTable({ filter: "closed", sessions: [] }), "No closed WAICC sessions in this project.");
+  assert.equal(statusTable({ role: "recipient" }), null, "anything else shows only its full view");
+  assert.match(statusTable({ sessionId: "x", requirements: "a | b" })!, /\| Requirements \| a \\\| b \|/, "a pipe in the text does not break the table");
 });
