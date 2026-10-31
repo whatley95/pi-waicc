@@ -441,7 +441,10 @@ export function registerTools(app: App): void {
     },
   });
   // Per chat: the commands the agent last offered, and the picker once it is open.
-  const offers = new Map<string, { title: string; offered: { line: string; name: string; args: string; label: string }[]; picker?: AbortController }>();
+  const offers = new Map<string, { title: string; offered: { line: string; name: string; args: string; label: string; fill: boolean }[]; picker?: AbortController }>();
+  // Commands that cannot run without the human's text (an amendment, an answer, a reason, an ID).
+  const needsText = new Set(["waicc-advisor", "waicc-amend", "waicc-close", "waicc-decide", "waicc-delete", "waicc-limit",
+    "waicc-planning", "waicc-receive", "waicc-reopen", "waicc-restore", "waicc-use", "waicc-worktree"]);
   registerTool({
     name: "waicc_suggest_command",
     label: "Suggest a WAICC command to the human",
@@ -451,6 +454,8 @@ export function registerTools(app: App): void {
     promptGuidelines: [
       "Whenever you would ask the human to run a /waicc-* command, including when you are stuck or a WAICC result says the human must run one, call waicc_suggest_command with the exact command and a short reason instead of writing it in the chat. Then end your turn: what the command starts reaches you as a new message.",
       "You do not learn what the human picks; its output is shown to them, not to you. Check state with waicc_status rather than assuming what it did.",
+      "Offer complete command lines: a command that takes text gets it (/waicc-amend <the amendment>, /waicc-decide <id> <answer>, /waicc-close <reason>). Only offer it bare when the text must be the human's own; picking it then only fills their input box.",
+      "Offer only commands that can run now: no /waicc-dispatch start while one runs for the session, nothing a WAICC result just refused.",
     ],
     parameters: Type.Object({
       commands: Type.Array(Type.Object({
@@ -467,12 +472,15 @@ export function registerTools(app: App): void {
         ensure(!/[\r\n]/.test(line) && line.length <= 500, `Give ${JSON.stringify(line.slice(0, 60))} as one command line of at most 500 characters`);
         const name = /^\/(\S+)/.exec(line)?.[1];
         ensure(name && commands.has(name), `${JSON.stringify(line.slice(0, 60))} is not a WAICC command. Only these can be offered: ${[...commands.keys()].sort().map((n) => `/${n}`).join(", ")}`);
-        return { line, name, args: line.slice(name.length + 1).trim(), label: `${line}  ·  ${why.replace(/\s+/g, " ").trim().slice(0, 160)}` };
+        const args = line.slice(name.length + 1).trim();
+        const fill = needsText.has(name) && !args;
+        return { line, name, args, fill, label: `${line}${fill ? " …" : ""}  ·  ${why.replace(/\s+/g, " ").trim().slice(0, 160)}${fill ? " (you add the text)" : ""}` };
       });
       ensure(ctx.hasUI, `No picker here. Write the command${offered.length === 1 ? "" : "s"} in your reply for the human to type: ${offered.map((o) => o.line).join(", ")}`);
       offers.get(key(ctx))?.picker?.abort();
       offers.set(key(ctx), { title: params.question?.trim().slice(0, 200) || "The agent suggests running a WAICC command", offered });
-      return { content: [{ type: "text" as const, text: `Offered to the human in a picker that opens when your turn ends: ${offered.map((o) => o.line).join(", ")}. End your turn now; anything the command starts for you arrives as a new message.` }], details: undefined };
+      const unfinished = offered.filter((o) => o.fill).map((o) => o.line);
+      return { content: [{ type: "text" as const, text: `Offered to the human in a picker that opens when your turn ends: ${offered.map((o) => o.line).join(", ")}.${unfinished.length ? ` ${unfinished.join(", ")} need${unfinished.length === 1 ? "s" : ""} text you did not give, so picking ${unfinished.length === 1 ? "it" : "one"} only puts it in the human's input box to finish; offer the complete command line when you know the text.` : ""} End your turn now; anything the command starts for you arrives as a new message.` }], details: undefined };
     },
   });
   // The picker waits for the human only once the agent's turn is over, so a forgotten picker holds nothing up.
@@ -499,6 +507,11 @@ export function registerTools(app: App): void {
       const chosen = picker.signal.aborted ? undefined : choices.find((o) => o.label === picked);
       const busy = chosen && startsDispatch(chosen) ? running() : undefined;
       if (busy) return ctx.ui.notify(`Already running: ${busy.label}. Nothing else was started; /waicc-dispatch --progress shows its steps.`, "info");
+      // Run without its text it could only fail: the human finishes it instead.
+      if (chosen?.fill) {
+        ctx.ui.setEditorText(`${chosen.line} `);
+        return ctx.ui.notify(`${chosen.line} needs your text: finish it in the input box, then press Enter.`, "info");
+      }
       // The human's pick runs it once, as typed; the input box is left alone, so a second Enter does nothing.
       // No WAICC command uses the command-only parts of the context (new session, fork, wait for idle).
       if (chosen) await commands.get(chosen.name)!(chosen.args, ctx as unknown as ExtensionCommandContext);

@@ -43,8 +43,14 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   const suggest = (commands: { command: string; why: string }[], context: ExtensionToolContext, question?: string) =>
     tools.get("waicc_suggest_command").execute("call", { commands, question }, undefined, undefined, context);
   const text = (outcome: any) => outcome.content[0].text as string;
-  // A picked command first lets Pi draw its running line (25 ms), then runs.
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+  // A picked command first lets Pi draw its running line (25 ms), then runs. With a check, wait until it holds
+  // (a loaded machine can take longer), otherwise 150 ms.
+  const settle = async (check?: () => boolean) => {
+    for (let i = 0; i < 500; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (check ? check() : i >= 14) return;
+    }
+  };
   const offered = [
     { command: "/waicc-dispatch --implement", why: "send the fix to your coding agent" },
     { command: " /waicc-list all ", why: "see every session" },
@@ -58,12 +64,12 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   assert.equal(asked.length, 0, "no picker during the turn");
   // The turn ends; the picker opens, once later turn-end work has run, and may stay open as long as the human likes.
   await emit("agent_end", chat);
-  await settle();
+  await settle(() => asked.length === 1);
   assert.equal(asked.at(-1), "Stuck: which session is this? /waicc-dispatch --implement  ·  send the fix to your coding agent | /waicc-list all  ·  see every session | None of these");
   await emit("agent_end", chat);
   assert.equal(asked.length, 1, "one picker per offer");
   open!.resolve(open!.options[1]);
-  await settle();
+  await settle(() => shown.length > 0);
   assert.equal(shown.length, 1, "the picked command showed its output once");
   assert.deepEqual(typed, [], "the input box is untouched");
   await emit("agent_end", chat);
@@ -101,6 +107,18 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   assert.equal(shown.length, before);
   await emit("agent_end", chat);
   assert.equal(open, pending, "a withdrawn offer is not shown again");
+
+  // A command that needs the human's text is not run bare: picking it fills the input box to finish.
+  answer = (options) => options[0];
+  const bare = await suggest([{ command: "/waicc-amend", why: "record the change of scope" }], chat);
+  assert.match(text(bare), /\/waicc-amend needs text you did not give, so picking it only puts it in the human's input box to finish/);
+  const ran = shown.length;
+  await emit("agent_end", chat);
+  await settle(() => typed.length > 0);
+  assert.match(asked.at(-1)!, /\/waicc-amend …  ·  record the change of scope \(you add the text\)/);
+  assert.deepEqual(typed, ["/waicc-amend "]);
+  assert.match(notices.at(-1)!, /^\/waicc-amend needs your text: finish it in the input box, then press Enter\.$/);
+  assert.equal(shown.length, ran, "nothing ran");
 
   // Only real WAICC commands, one line each; no picker without UI.
   await assert.rejects(suggest([{ command: "/reload", why: "x" }], chat), /"\/reload" is not a WAICC command\. Only these can be offered: .*\/waicc-worktree/);
