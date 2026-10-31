@@ -30,7 +30,7 @@ function harness(root: string, entries: any[] = [], chatId = "auto-chat") {
       entries.push({ type: "custom", customType, data });
     },
     getAllTools: () => active.map((name) => ({ name })), getActiveTools: () => active, setActiveTools: (names: string[]) => { active = names; },
-    sendMessage: (m: any) => shown.push(JSON.parse(m.content)), sendUserMessage: (m: string) => prompts.push(m),
+    sendMessage: (m: any) => { if (m.customType !== "waicc-status-table") shown.push(JSON.parse(m.content)); }, sendUserMessage: (m: string) => prompts.push(m),
   } as unknown as ExtensionAPI, { copyText: async (text) => { copies.push(text); } });
   const ctx = { cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
     sessionManager: { getSessionId: () => chatId, getBranch: () => entries },

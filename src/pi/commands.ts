@@ -1,3 +1,4 @@
+import { statusTable } from "./status-table.ts";
 import { assertRecipientCurrent, assignmentText, receiveHandoff } from "../recipient.ts";
 import { initialize, json, loadSession } from "../files.ts";
 import { decisionSettings } from "../profiles.ts";
@@ -421,12 +422,13 @@ export function registerCommands(app: App): void {
         return;
       }
       const listing = ["open", "all", "closed", "deleted"].includes(args);
-      show(
-        ctx,
-        listing
-          ? status(ctx.cwd, undefined, args as SessionListFilter)
-          : status(ctx.cwd, args || binding?.sessionId),
-      );
+      const view = listing
+        ? status(ctx.cwd, undefined, args as SessionListFilter)
+        : status(ctx.cwd, args || binding?.sessionId);
+      // The table first, to read at a glance; the full view follows for detail.
+      const glance = statusTable(view);
+      if (glance) pi.sendMessage({ customType: "waicc-status-table", content: glance, display: true }, { triggerTurn: false });
+      show(ctx, view);
     },
   );
   command(
