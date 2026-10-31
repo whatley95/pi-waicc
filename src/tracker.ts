@@ -1,3 +1,4 @@
+import { readErrors } from "./error-log.ts";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -458,6 +459,8 @@ export function projectStatus(root: string, live: LiveRun[] = [], notices: Notic
     extension,
     live,
     notices: notices.slice(-5),
+    // The newest errors and warnings WAICC showed in this project (its error log), newest first.
+    errors: readErrors(root).slice(-20).reverse().map((e) => ({ at: e.at, source: e.source, message: clip(e.message, 600) })),
     sessions: shown.map(({ runs: _runs, ...view }) => view),
     consults: asked.slice(0, 10),
     chats: talked.slice(0, 10).map(({ chatId, name, model, updatedAt }) => ({ chatId, name, model, updatedAt })),
