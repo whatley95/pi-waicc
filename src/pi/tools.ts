@@ -13,7 +13,7 @@ import { checkpointView, frozenCheckpointView } from "../checkpoint.ts";
 import { propose, proposeDecision, recall } from "../memory.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { assess, decisionsView, resolveDecision, readContract, createAutoPlanningSession, issue, prepare, requirementsText, status, saveContext } from "../workflow.ts";
-import { ensure } from "../validation.ts";
+import { ensure, tidyIds } from "../validation.ts";
 import type { Assessment } from "../workflow.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
 import { modeSchema, sessionSchema, guidance } from "./shared.ts";
@@ -196,16 +196,20 @@ export function registerTools(app: App): void {
       signal?.throwIfAborted();
       ensure(params.mode === "review" || (params.reviewKind === undefined && params.completion === undefined), "Review kind/completion only apply to review mode");
       ensure(!params.fullReview || (params.mode === "review" && (params.reviewKind ?? "code") === "code"), "fullReview applies only to a code review");
+      const tidy = tidyIds(params.contract);
       prepare(
         ctx.cwd,
         params.sessionId,
-        params.contract,
+        tidy.value,
         params.mode,
         params.focus,
         params.expectedVersion,
         params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
       );
-      return result(budgetNotice(ctx, status(ctx.cwd, params.sessionId)), ctx, true);
+      const view = budgetNotice(ctx, status(ctx.cwd, params.sessionId)) as object;
+      return result(tidy.renamed.length
+        ? { idsTidied: `IDs may use only letters, digits, - and _, so these were renamed everywhere in the contract; use the new IDs from now on: ${tidy.renamed.map(([from, to]) => `${JSON.stringify(from)} → ${to}`).join(", ")}`, ...view }
+        : view, ctx, true);
     },
   });
   registerTool({
@@ -257,7 +261,7 @@ export function registerTools(app: App): void {
     description:
       "Coordinator only: when review findings in two or more sessions of this project are the same kind of problem, propose one lesson for future plans. Cite the findings (sessionId, requestId, findingId) from waicc_assess's recurringFindings. WAICC checks each is an assessed, undisputed review finding and that no other lesson uses it. When an existing lesson already covers the pattern, pass its lessonId and only the new findings: that adds support instead of a second lesson. A lesson stays a candidate until the human confirms it with /waicc-memory confirm, or until findings from 3 sessions back it if the human turned on their corroboration rule; once confirmed it reaches every planning handoff.",
     parameters: Type.Object({
-      lesson: Type.Optional(Type.String({ description: "Advice for future plans: what to plan or check up front (not needed with lessonId)" })),
+      lesson: Type.Optional(Type.String({ description: "Advice for future plans: what to plan or check up front, at most 600 characters (not needed with lessonId)" })),
       findings: Type.Array(Type.Object({ sessionId: Type.String(), requestId: Type.String(), findingId: Type.String() }), { minItems: 1, maxItems: 10 }),
       lessonId: Type.Optional(Type.String({ description: "An existing lesson that already covers this pattern: the findings are added to it as more support" })),
     }),
@@ -449,6 +453,8 @@ export function registerTools(app: App): void {
   const needsText = new Set(["waicc-advisor", "waicc-amend", "waicc-close", "waicc-decide", "waicc-delete", "waicc-limit",
     "waicc-planning", "waicc-receive", "waicc-reopen", "waicc-restore", "waicc-use", "waicc-worktree"]);
   // Of those, the ones a session ID alone completes; the rest need their text after any ID.
+  // Commands whose line carries the human's or agent's prose may be longer.
+  const carriesText = new Set(["waicc-advisor", "waicc-amend", "waicc-close", "waicc-decide", "waicc-planning", "waicc-reopen"]);
   const idIsEnough = new Set(["waicc-delete", "waicc-receive", "waicc-restore", "waicc-use"]);
   const missingText = (name: string, args: string) =>
     needsText.has(name) && (idIsEnough.has(name) ? !args : !args.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b\s*/i, ""));
@@ -477,13 +483,17 @@ export function registerTools(app: App): void {
       coordinator(ctx);
       signal?.throwIfAborted();
       const offered = params.commands.map(({ command, why }) => {
-        const line = command.trim();
-        ensure(!/[\r\n]/.test(line) && line.length <= 500, `Give ${JSON.stringify(line.slice(0, 60))} as one command line of at most 500 characters`);
+        // A command line is one line: line breaks in the agent's text become spaces, unless a command follows.
+        ensure(!/[\r\n]\s*\/waicc-/.test(command), `${JSON.stringify(command.trim().slice(0, 60))} holds more than one command line; offer each as its own entry`);
+        const line = command.replace(/\s+/g, " ").trim();
         const name = /^\/(\S+)/.exec(line)?.[1];
+        const max = name && carriesText.has(name) ? 4000 : 500;
+        ensure(line.length <= max, `${JSON.stringify(line.slice(0, 60))} is ${line.length} characters; a ${name ? `/${name}` : "command"} line may have at most ${max}`);
         ensure(name && commands.has(name), `${JSON.stringify(line.slice(0, 60))} is not a WAICC command. Only these can be offered: ${[...commands.keys()].sort().map((n) => `/${n}`).join(", ")}`);
         const args = line.slice(name.length + 1).trim();
         const fill = missingText(name, args);
-        return { line, name, args, fill, label: `${line}${fill ? " …" : ""}  ·  ${why.replace(/\s+/g, " ").trim().slice(0, 160)}${fill ? " (you add the text)" : ""}` };
+        const shown = line.length > 200 ? `${line.slice(0, 200)}…` : line;
+        return { line, name, args, fill, label: `${shown}${fill ? " …" : ""}  ·  ${why.replace(/\s+/g, " ").trim().slice(0, 160)}${fill ? " (you add the text)" : ""}` };
       });
       ensure(ctx.hasUI, `No picker here. Write the command${offered.length === 1 ? "" : "s"} in your reply for the human to type: ${offered.map((o) => o.line).join(", ")}`);
       offers.get(key(ctx))?.picker?.abort();

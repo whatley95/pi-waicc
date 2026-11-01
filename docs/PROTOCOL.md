@@ -139,6 +139,12 @@ is included. Existing legacy handoff export/recovery behavior remains available.
 Pass this body to `waicc_prepare` or the CLI `prepare` command. Metadata such as
 session ID, source evidence and version is added by the engine.
 
+IDs use letters, digits, `-` and `_`, and start with a letter or digit. Through `waicc_prepare`,
+an ID with other characters is renamed before validation wherever the contract names it
+(`AC 1.1` becomes `AC-1-1`: each run of other characters becomes `-`, and leading or
+trailing ones are dropped), and the result's `idsTidied` lists the renames. An ID whose tidied
+form is already used is left as it is, for validation to report. The CLI does not rename.
+
 ```json
 {
   "title": "Customer search",
@@ -632,8 +638,10 @@ Pi chat, counted by `waicc-advisor-consult` entries on the chat branch, appended
 run so failed or stopped consults count. One consult runs at a time per chat.
 
 `waicc_suggest_command {commands: [{command, why}] (1–4), question?, each?}` (coordinator only)
-offers WAICC commands to the human. Each command must be one line of at most 500 characters
-whose first word is `/` plus the name of a command this extension registered; otherwise
+offers WAICC commands to the human. Line breaks in a command become spaces, but a line break
+followed by `/waicc-` is refused as more than one command. Each command may have at most 500
+characters, or 4000 for commands that carry prose (advisor, amend, close, decide, planning,
+reopen); the picker shows its first 200. Its first word is `/` plus the name of a command this extension registered; otherwise
 the call fails and lists them. Without UI it fails and tells the agent to write the commands
 in its reply. With UI it returns at once, listing the offered commands, and keeps the offer
 for that chat (a later call in the same turn replaces it). On `agent_end` the offer is shown

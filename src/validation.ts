@@ -78,6 +78,36 @@ export function identifier(value: unknown, name = "ID"): string {
   );
   return id;
 }
+/**
+ * IDs with characters WAICC does not allow ("AC 1.1") made valid ("AC-1-1") wherever the contract
+ * names them, so one typo does not send a whole plan back. An ID that would clash is left for
+ * validation to report. Returns a copy and what was renamed.
+ */
+export function tidyIds(value: unknown): { value: unknown; renamed: [string, string][] } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { value, renamed: [] };
+  const rows = (v: unknown) => Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x)) : [];
+  const owners = (c: Record<string, unknown>) => {
+    const tasks = rows(c.tasks);
+    return [...rows(c.requirements), ...tasks, ...tasks.flatMap((t) => rows(t.acceptance)), ...rows(c.decisions)];
+  };
+  const ids = owners(value as Record<string, unknown>).map((o) => o.id).filter((id): id is string => typeof id === "string");
+  const valid = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+  const map = new Map<string, string>();
+  for (const id of ids) {
+    if (valid.test(id) || map.has(id)) continue;
+    const clean = id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[^A-Za-z0-9]+|-+$/g, "").slice(0, 80);
+    if (valid.test(clean) && !ids.includes(clean) && ![...map.values()].includes(clean)) map.set(id, clean);
+  }
+  if (!map.size) return { value, renamed: [] };
+  const c = structuredClone(value) as Record<string, unknown>;
+  const fix = (o: Record<string, unknown>, key: string) => {
+    const v = o[key];
+    if (typeof v === "string") o[key] = map.get(v) ?? v;
+    else if (Array.isArray(v)) o[key] = v.map((id) => typeof id === "string" ? map.get(id) ?? id : id);
+  };
+  for (const o of owners(c)) for (const key of ["id", "requirementIds", "dependsOn", "affectedTaskIds"]) fix(o, key);
+  return { value: c, renamed: [...map] };
+}
 export function advisorInput(input: string): {
   question: string;
   requirementIds?: string[];

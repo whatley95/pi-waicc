@@ -134,7 +134,18 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   // Only real WAICC commands, one line each; no picker without UI.
   await assert.rejects(suggest([{ command: "/reload", why: "x" }], chat), /"\/reload" is not a WAICC command\. Only these can be offered: .*\/waicc-worktree/);
   await assert.rejects(suggest([{ command: "waicc-status", why: "x" }], chat), /is not a WAICC command/);
-  await assert.rejects(suggest([{ command: "/waicc-status\n/waicc-close done", why: "x" }], chat), /one command line/);
+  await assert.rejects(suggest([{ command: "/waicc-status\n/waicc-close done", why: "x" }], chat), /more than one command line; offer each as its own entry/);
+  // Text over several lines is one line with spaces, and text commands may be long; the picker shows the start.
+  const prose = `split item 4 into\n(4a) the build and\n  (4b) the deploy. ${"x".repeat(1500)}`;
+  const long = await suggest([{ command: `/waicc-amend ${prose}`, why: "record it" }], chat);
+  assert.match(text(long), /^Offered to the human in a picker that opens when your turn ends: \/waicc-amend split item 4 into \(4a\) the build and \(4b\) the deploy\. x{1500}\./);
+  await assert.rejects(suggest([{ command: `/waicc-amend ${"x".repeat(4000)}`, why: "x" }], chat), /is 4013 characters; a \/waicc-amend line may have at most 4000/);
+  await assert.rejects(suggest([{ command: `/waicc-status ${"x".repeat(500)}`, why: "x" }], chat), /a \/waicc-status line may have at most 500/);
+  answer = (options) => { asked.push(`labels ${options[0].length}`); return options.at(-1); };
+  await suggest([{ command: `/waicc-amend ${prose}`, why: "record it" }], chat);
+  await emit("agent_end", chat);
+  await settle(() => asked.at(-1)!.startsWith("labels"));
+  assert.ok(Number(asked.at(-1)!.slice(7)) < 260, "a long line is cut short in the picker");
   await assert.rejects(suggest(offered, ctx(false)), /No picker here\. Write the commands in your reply for the human to type: \/waicc-dispatch --implement, \/waicc-list all/);
 });
 

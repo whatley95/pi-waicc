@@ -53,6 +53,7 @@ import {
   advisorInput,
   readyContract,
   readyPlan,
+  tidyIds,
   validateContract,
   validateReply,
 } from "../src/validation.ts";
@@ -244,6 +245,36 @@ test("planned still rejects unverified coverage, failed checks, human blockers a
     );
     assert.equal(loadSession(root, s.id).sequence, received.sequence);
   }
+});
+
+test("IDs with characters WAICC does not allow are made valid wherever the contract names them", () => {
+  const c = gatedPlan();
+  c.requirements[0].id = "REQ 1.1";
+  c.tasks[0].requirementIds = ["REQ 1.1", "REQ-002"];
+  c.tasks[0].acceptance[0] = { ...c.tasks[0].acceptance[0], id: "AC 1.1", requirementIds: ["REQ 1.1", "REQ-002"] };
+  c.tasks[1].id = "client/ui";
+  c.tasks[1].requirementIds = ["REQ 1.1"];
+  c.tasks[1].acceptance[0].requirementIds = ["REQ 1.1"];
+  c.decisions![0].id = "#DEC.1";
+  c.decisions![0].affectedTaskIds = ["client/ui"];
+  assert.throws(() => validateContract(c, requirements), /ID contains invalid characters/);
+  const tidy = tidyIds(c);
+  assert.deepEqual(tidy.renamed, [["REQ 1.1", "REQ-1-1"], ["client/ui", "client-ui"], ["AC 1.1", "AC-1-1"], ["#DEC.1", "DEC-1"]]);
+  const fixed = validateContract(tidy.value, requirements);
+  assert.deepEqual(fixed.tasks.map((t) => [t.id, t.requirementIds, t.acceptance[0].id, t.acceptance[0].requirementIds]), [
+    ["API", ["REQ-1-1", "REQ-002"], "AC-1-1", ["REQ-1-1", "REQ-002"]],
+    ["client-ui", ["REQ-1-1"], "AC-002", ["REQ-1-1"]],
+  ]);
+  assert.deepEqual(fixed.decisions![0].affectedTaskIds, ["client-ui"]);
+  assert.equal(c.requirements[0].id, "REQ 1.1", "the original is not changed");
+  // A valid contract comes back as it was; a clash is left for validation to report.
+  const plain = example();
+  assert.equal(tidyIds(plain).value, plain);
+  assert.deepEqual(tidyIds(plain).renamed, []);
+  const clash = example();
+  clash.tasks[1].acceptance[0].id = "AC 001";
+  clash.tasks[0].acceptance[0].id = "AC-001";
+  assert.deepEqual(tidyIds(clash).renamed, []);
 });
 
 test("decisions require investigation evidence, task scope and explicit recorded answers", () => {

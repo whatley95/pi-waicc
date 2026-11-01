@@ -69,6 +69,7 @@ test("a lesson needs findings from two sessions, uses each finding once, and sta
   const lesson = "Plan a test for empty input on every new search or filter";
 
   assert.throws(() => learnPattern(root, lesson, [a]), /at least two findings/);
+  assert.throws(() => learnPattern(root, "x".repeat(804), [a, b]), /^Error: The lesson is 804 characters; cut 204 to keep it at most 600/);
   assert.throws(() => learnPattern(root, lesson, [a, { ...a, findingId: "F9" }]), /at least two sessions/);
   assert.throws(() => learnPattern(root, lesson, [{ ...a, findingId: "F2" }, b]), /not an assessed, undisputed review finding/);
   assert.throws(() => learnPattern(root, lesson, [a, { ...b, findingId: "F7" }]), /not an assessed, undisputed review finding/);
