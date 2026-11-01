@@ -116,6 +116,10 @@ export function registerDispatchCommands(app: App): void {
         forceFirst ? args.slice("--force".length).trim() : args,
       );
       const forceAfter = /^--force(?:\s|$)/.test(input.remainder);
+      // Closing twice changes nothing: say so instead of failing.
+      const target = selected(ctx, input.id);
+      if (loadSession(projectRoot(ctx.cwd), target).status === "CLOSED")
+        return ctx.ui.notify(`Session ${target} is already closed; nothing changed. To work on it again: /waicc-reopen ${target} <reason>`, "info");
       if (forceFirst || forceAfter) {
         const id = selected(ctx, input.id);
         forceCloseSession(

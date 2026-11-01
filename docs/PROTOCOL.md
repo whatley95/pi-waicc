@@ -1131,7 +1131,7 @@ at least one check record is required, and failed checks prevent handoff. Unavai
 checks may remain not_run with honest limits; this does not satisfy required verification.
 `findings` contains every actionable finding (all severities except info) from ALL
 previous assessed code-review rounds, exactly once by `{requestId,findingId,disposition,
-evidence}`. Disposition is resolved or disputed. First review uses []. These are
+evidence}`. Disposition is resolved or disputed. A first review uses [] or leaves `findings` out; left out with earlier findings, each is named as missing. These are
 coordinator claims for independent verification, not task-completion certification.
 
 The round's `review` stores kind code, original baseline source snapshot, complete

@@ -125,7 +125,9 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   const baseline = snapshot(root);
   writeFileSync(join(root, "API.txt"), "all implementation v1");
   writeFileSync(join(root, "CLIENT.txt"), "all implementation v1");
-  let s = review(root, initial);
+  // A first review has no earlier findings, so the report may leave them out.
+  const { findings: _none, ...firstReport } = completion();
+  let s = review(root, initial, firstReport as ReturnType<typeof completion>);
   const first = s.rounds.at(-1)!.id;
   s = reply(root, s, { outcome: "needs_changes", findings: [
     { id: "F1", severity: "medium", description: "API regression", evidence: "API.txt violates AC0" },
@@ -144,6 +146,8 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   const report = completion();
   report.findings = [{ requestId: first, findingId: "F1", disposition: "resolved", evidence: "API fix and regression evidence" }];
   assert.throws(() => review(root, s, report), new RegExp(`ALL review fixes[\\s\\S]* Missing: ${first}:F2\\.$`), "names the finding still to answer");
+  const { findings: _left, ...leftOut } = report;
+  assert.throws(() => review(root, s, leftOut as typeof report), new RegExp(`Missing: ${first}:F1, ${first}:F2\\.$`), "left out, every prior finding is named");
   assert.throws(() => review(root, s, { ...report, findings: [...report.findings, report.findings[0], { ...report.findings[0], findingId: "F9" }] }),
     new RegExp(`Not a prior actionable finding: ${first}:F9\\. Given more than once: ${first}:F1\\.$`));
   assert.equal(loadSession(root, s.id).rounds.length, 2);
