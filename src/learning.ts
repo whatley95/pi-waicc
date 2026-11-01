@@ -49,6 +49,9 @@ export function learnPattern(cwd: string, lesson: unknown, findings: unknown, le
     return { sessionId: identifier(ref.sessionId, "Session ID"), requestId: identifier(ref.requestId, "Request ID"), findingId: identifier(ref.findingId, "Finding ID") };
   });
   ensure(new Set(refs.map((r) => `${r.sessionId}/${r.requestId}/${r.findingId}`)).size === refs.length, "Each finding may be cited once");
+  // Every planning handoff carries the confirmed lessons, so each stays short.
+  if (!lessonId && typeof lesson === "string" && lesson.trim().length > 600)
+    ensure(false, `The lesson is ${lesson.trim().length} characters; cut ${lesson.trim().length - 600} to keep it at most 600, since every planning handoff carries it`);
   const claim = lessonId ? "" : text(lesson, "Lesson", 600).trim();
   if (!lessonId) {
     ensure(claim.length >= 12, "Write the lesson as advice for future plans");
