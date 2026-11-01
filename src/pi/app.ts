@@ -128,6 +128,8 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   const copied = new Map<string, string>();
   /** Every /waicc-* command by name, as typed: waicc_suggest_command runs the one the human picks. */
   const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<string | null>>();
+  /** Called after every /waicc-* command, typed or picked: the picker brings back the questions still open. */
+  const commandDone: ((name: string, ctx: ExtensionCommandContext) => void)[] = [];
   const compactedRuns = new Set<string>();
   const automaticRequests = new AutoPlanningRequests();
   // Every WAICC tool accepts nested arguments sent as JSON text (see decodeJsonArguments).
@@ -445,6 +447,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
         } finally {
           if (busy) mark(undefined);
           track(ctx);
+          for (const listener of commandDone) listener(name, ctx);
         }
     };
     commands.set(name, run);
@@ -526,7 +529,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, commands, compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
+  return { pi, services, bindings, copied, commands, commandDone,compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;

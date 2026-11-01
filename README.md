@@ -662,6 +662,13 @@ A command that needs your own text, offered without it (for example a bare `/wai
 instead of running it empty. While an agent is already dispatched for the session, for example
 a loop's next cycle, the picker leaves out commands that would start another.
 
+When the agent asks several things at once, each with its own command (for example three
+decisions to answer), the picker comes back with the others after you answer one. A command
+that needs your text comes back once you have finished it in the input box and pressed Enter.
+It does not come back after *None of these*, when your answer starts the agent working (its
+next turn decides what to offer), when you send the agent a message instead, or for a decision
+that has been answered in the meantime. When the offers are alternatives, one pick settles it.
+
 A decision (`/waicc-develop`, `/waicc-decide`) or a new handoff cannot be made while a handoff
 is pending, because what was handed off must not change under it. Offered then, it gives way to
 the step that clears the way: `/waicc-continue` when a reply waits to be assessed, or
