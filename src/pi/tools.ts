@@ -21,7 +21,7 @@ import { loggingContext, type App } from "./app.ts";
 
 /** The main agent's and recipients' WAICC tools. */
 export function registerTools(app: App): void {
-  const { pi, services, bindings, commands, automaticRequests, registerTool, advising, dispatches, stepLine, key, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
+  const { pi, services, bindings, commands, commandDone, automaticRequests, registerTool, advising, dispatches, stepLine, key, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
   const consulting = new Set<string>();
   // A new handoff that leaves 2 rounds or fewer is told to the human at once, not only to the agent.
   const budgetNotice = (ctx: ExtensionContext, view: unknown) => {
@@ -441,7 +441,10 @@ export function registerTools(app: App): void {
     },
   });
   // Per chat: the commands the agent last offered, and the picker once it is open.
-  const offers = new Map<string, { title: string; offered: { line: string; name: string; args: string; label: string; fill: boolean }[]; picker?: AbortController }>();
+  type Offer = { title: string; offered: { line: string; name: string; args: string; label: string; fill: boolean }[]; each: boolean; picker?: AbortController };
+  const offers = new Map<string, Offer>();
+  // Per chat: the questions still open after the human answered one, shown again once that command has run.
+  const rest = new Map<string, Offer & { after: string }>();
   // Commands that cannot run without the human's text (an amendment, an answer, a reason, an ID).
   const needsText = new Set(["waicc-advisor", "waicc-amend", "waicc-close", "waicc-decide", "waicc-delete", "waicc-limit",
     "waicc-planning", "waicc-receive", "waicc-reopen", "waicc-restore", "waicc-use", "waicc-worktree"]);
@@ -459,6 +462,7 @@ export function registerTools(app: App): void {
       "Whenever you would ask the human to run a /waicc-* command, including when you are stuck or a WAICC result says the human must run one, call waicc_suggest_command with the exact command and a short reason instead of writing it in the chat. Then end your turn: what the command starts reaches you as a new message.",
       "You do not learn what the human picks; its output is shown to them, not to you. Check state with waicc_status rather than assuming what it did.",
       "Offer complete command lines: a command that takes text gets it (/waicc-amend <the amendment>, /waicc-decide <id> <answer>, /waicc-close <reason>). Only offer it bare when the text must be the human's own; picking it then only fills their input box.",
+      "When each command answers a separate question (several decisions, several things only the human can supply), set each true: the picker comes back with the rest after every answer. Leave it off for alternatives, where one pick settles it.",
       "Offer only commands that can run now: no /waicc-dispatch start while one runs for the session; no /waicc-develop, /waicc-decide or new handoff while a handoff is pending (offer the step that finishes it: /waicc-continue for a reply to assess, /waicc-dispatch to send it); nothing a WAICC result just refused. WAICC swaps a blocked offer for the step that clears it.",
     ],
     parameters: Type.Object({
@@ -467,6 +471,7 @@ export function registerTools(app: App): void {
         why: Type.String({ description: "One short line: what it does for the human now" }),
       }), { minItems: 1, maxItems: 4 }),
       question: Type.Optional(Type.String({ description: "The picker's title, for example what you are stuck on" })),
+      each: Type.Optional(Type.Boolean({ description: "true when every command answers its own question, so the picker returns with the rest after each answer; default true for several /waicc-decide, otherwise false" })),
     }),
     async execute(_id, params, signal, _update, ctx) {
       coordinator(ctx);
@@ -482,13 +487,35 @@ export function registerTools(app: App): void {
       });
       ensure(ctx.hasUI, `No picker here. Write the command${offered.length === 1 ? "" : "s"} in your reply for the human to type: ${offered.map((o) => o.line).join(", ")}`);
       offers.get(key(ctx))?.picker?.abort();
-      offers.set(key(ctx), { title: params.question?.trim().slice(0, 200) || "The agent suggests running a WAICC command", offered });
+      rest.delete(key(ctx));
+      const each = offered.length > 1 && (params.each ?? offered.every((o) => o.name === "waicc-decide"));
+      offers.set(key(ctx), { title: params.question?.trim().slice(0, 200) || "The agent suggests running a WAICC command", offered, each });
       const unfinished = offered.filter((o) => o.fill).map((o) => o.line);
-      return { content: [{ type: "text" as const, text: `Offered to the human in a picker that opens when your turn ends: ${offered.map((o) => o.line).join(", ")}.${unfinished.length ? ` ${unfinished.join(", ")} need${unfinished.length === 1 ? "s" : ""} text you did not give, so picking ${unfinished.length === 1 ? "it" : "one"} only puts it in the human's input box to finish; offer the complete command line when you know the text.` : ""} End your turn now; anything the command starts for you arrives as a new message.` }], details: undefined };
+      return { content: [{ type: "text" as const, text: `Offered to the human in a picker that opens when your turn ends: ${offered.map((o) => o.line).join(", ")}.${unfinished.length ? ` ${unfinished.join(", ")} need${unfinished.length === 1 ? "s" : ""} text you did not give, so picking ${unfinished.length === 1 ? "it" : "one"} only puts it in the human's input box to finish; offer the complete command line when you know the text.` : ""}${each ? " They are separate questions: after each answer the picker comes back with the rest." : ""} End your turn now; anything the command starts for you arrives as a new message.` }], details: undefined };
     },
   });
   // The picker waits for the human only once the agent's turn is over, so a forgotten picker holds nothing up.
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", async (_event, ctx) => openPicker(ctx));
+  // After the human answered one of several questions, the rest come back once that command has run,
+  // unless it started the agent (whose turn then decides what to offer) or the question was answered meanwhile.
+  commandDone.push((name, ctx) => {
+    const left = rest.get(key(ctx));
+    if (!left || left.after !== name) return;
+    rest.delete(key(ctx));
+    setTimeout(() => {
+      if (!ctx.isIdle() || offers.has(key(ctx))) return;
+      const id = bindings.get(key(ctx))?.sessionId;
+      let open: string[] | undefined;
+      try {
+        open = id ? decisionsView(ctx.cwd, id).decisions.filter((d) => d.status !== "resolved").map((d) => d.id.toLowerCase()) : undefined;
+      } catch { /* no decisions to check against */ }
+      const offered = left.offered.filter((o) => o.name !== "waicc-decide" || !open || open.includes(o.args.split(/\s/)[0].toLowerCase()));
+      if (!offered.length) return;
+      offers.set(key(ctx), { title: left.title, offered, each: true });
+      openPicker(ctx);
+    }, 0);
+  });
+  function openPicker(ctx: ExtensionContext) {
     const offer = offers.get(key(ctx));
     if (!offer || offer.picker) return;
     const picker = offer.picker = new AbortController();
@@ -549,6 +576,9 @@ export function registerTools(app: App): void {
       // Things may have moved while the picker was open.
       const late = chosen ? blocked(chosen) : null;
       if (late) return ctx.ui.notify(late.why, "info");
+      // Several questions: the others come back after this answer.
+      const others = chosen && offer.each ? choices.filter((o) => o !== chosen) : [];
+      if (others.length) rest.set(key(ctx), { title: offer.title, offered: others, each: true, after: chosen!.name });
       // Run without its text it could only fail: the human finishes it instead.
       if (chosen?.fill) {
         ctx.ui.setEditorText(`${chosen.line} `);
@@ -558,11 +588,12 @@ export function registerTools(app: App): void {
       // No WAICC command uses the command-only parts of the context (new session, fork, wait for idle).
       if (chosen) await commands.get(chosen.name)!(chosen.args, ctx as unknown as ExtensionCommandContext);
     })().catch((error) => loggingContext(ctx, "picker").ui.notify(error instanceof Error ? error.message : String(error), "error"));
-  });
+  }
   // A new turn may offer something else; an offer from an ended chat is gone with it.
   const withdraw = (ctx: Parameters<typeof key>[0]) => {
     offers.get(key(ctx))?.picker?.abort();
     offers.delete(key(ctx));
+    rest.delete(key(ctx));
   };
   pi.on("agent_start", async (_event, ctx) => withdraw(ctx));
   pi.on("session_shutdown", async (_event, ctx) => withdraw(ctx));

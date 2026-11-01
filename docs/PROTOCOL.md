@@ -631,7 +631,7 @@ requirements preview. The user file's `autoAdvisor` (`true` = 3, `false` = off, 
 Pi chat, counted by `waicc-advisor-consult` entries on the chat branch, appended before the
 run so failed or stopped consults count. One consult runs at a time per chat.
 
-`waicc_suggest_command {commands: [{command, why}] (1–4), question?}` (coordinator only)
+`waicc_suggest_command {commands: [{command, why}] (1–4), question?, each?}` (coordinator only)
 offers WAICC commands to the human. Each command must be one line of at most 500 characters
 whose first word is `/` plus the name of a command this extension registered; otherwise
 the call fails and lists them. Without UI it fails and tells the agent to write the commands
@@ -645,6 +645,14 @@ the same wrapper as a typed command (trust and coordinator checks, errors shown 
 human), with the event's context; no WAICC command uses the command-only context methods.
 The input box is not touched. The agent is not told what was picked; the command's output
 goes to the human only. Escape or `None of these` runs nothing.
+
+`each` (optional boolean; defaults to true when two or more `/waicc-decide` lines are offered,
+otherwise false) marks the commands as separate questions rather than alternatives. With it, a
+pick keeps the other choices for the chat. Once a command of the picked name finishes (run from
+the pick, or typed by the human after a pick that only filled the input box), and after a 0 ms
+timer, the rest are shown again in the same picker with the same checks, provided the chat is
+idle, no newer offer exists, and they are not `/waicc-decide` lines for decisions already
+resolved. `agent_start`, `session_shutdown` and a new offer drop the kept choices.
 
 With a UI (the interactive screen or an RPC client) every WAICC command, typed or picked, sets the `waicc-busy` widget
 to `⏳ WAICC: running /<name>…` and waits 25 ms, so Pi draws it before the command's
