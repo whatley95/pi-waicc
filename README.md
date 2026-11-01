@@ -1634,7 +1634,9 @@ When the whole-change code review passes (`READY_TO_CLOSE`), `/waicc-ship` sends
    - **After a `--ship` run, a failure is fixed that way by itself**, at most twice, and within
      your `budget`. If the cause is outside the plan, flaky, or an environment problem, the main
      agent explains it and stops instead.
-   - It stops watching after 2 hours, or after 15 minutes when no pipeline appears.
+   - It stops watching after 2 hours, or after 15 minutes when no pipeline appears. When the
+     shipped commit has no CI file (`.gitlab-ci.yml`, or `.github/workflows/` on GitHub), it
+     waits only two checks (about 2 minutes) and then says the project seems to have no CI.
 
 Git does the pushing with your own Git login, and never prompts for a password, so a missing
 login fails instead of hanging. `waicc ship <session> --dry-run` (CLI) shows the plan;

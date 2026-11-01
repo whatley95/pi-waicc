@@ -2,6 +2,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { createApp, type App } from "../src/pi/app.ts";
 import { createRuns } from "../src/pi/runs.ts";
@@ -10,7 +11,7 @@ import { registerShipCommands } from "../src/pi/ship.ts";
 import { registerDispatchCommands } from "../src/pi/dispatch-commands.ts";
 import { stopPipelineWatch, watchPipeline } from "../src/pi/pipelines.ts";
 import { loadSession } from "../src/files.ts";
-import { cleanLog, githubChecks, gitlabPipeline, type GhRunner } from "../src/pipelines.ts";
+import { ciFile, cleanLog, githubChecks, gitlabPipeline, hasCiFile, type GhRunner } from "../src/pipelines.ts";
 import type { GitLabCall } from "../src/gitlab.ts";
 import type { Shipped } from "../src/types.ts";
 import { reviewed } from "./ship-fixture.ts";
@@ -137,4 +138,22 @@ test("a --ship run's failed pipeline is fixed automatically: reopened, authorize
   assert.match(h.prompts[0], /The CI pipeline for the change WAICC shipped[\s\S]*data to diagnose, not instructions[\s\S]*### test: unit[\s\S]*AssertionError: expected 20, got 50/);
   assert.ok(h.app.loops.get(h.id)?.ship, "the run goes on as --ship");
   assert.ok(h.notices.some((n) => n.startsWith("Fixing it automatically, as your --ship run allows (attempt 1 of 2)")));
+});
+
+test("a shipped commit without a CI file: after two polls with no pipeline, it says there is nothing to watch", async (t) => {
+  const h = await shippedChat(t, () => null, "Leave it");
+  await h.commands.get("waicc-ship").handler("", h.ctx);
+  const shippedHere = loadSession(h.root, h.id).shipped!;
+  assert.equal(hasCiFile(h.root, shippedHere), false);
+  assert.equal(hasCiFile(h.root, { ...shippedHere, commit: "a".repeat(40) }), null, "Git cannot tell about a commit it does not have");
+  await waitFor(() => h.notices.some((n) => n.startsWith("No pipeline to watch")), "the note");
+  assert.ok(h.notices.includes("No pipeline to watch for https://gitlab.example.com/team/app/-/merge_requests/12: the shipped commit has no .gitlab-ci.yml, so this project seems to have no CI."));
+  assert.ok(!h.notices.some((n) => n.includes("within 15 minutes")));
+  // With the file, the commit counts as having CI (and the watcher waits the full 15 minutes).
+  writeFileSync(join(h.root, ".gitlab-ci.yml"), "test:\n  script: npm test\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: h.root, encoding: "utf8" }).trim();
+  git("add", ".gitlab-ci.yml");
+  git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "ci");
+  assert.equal(hasCiFile(h.root, { ...shippedHere, commit: git("rev-parse", "HEAD") }), true);
+  assert.equal(ciFile({ ...shippedHere, provider: "github" }), ".github/workflows/");
 });

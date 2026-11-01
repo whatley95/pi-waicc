@@ -1,7 +1,7 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession } from "../files.ts";
 import { canonicalProject, gitlabClient, gitlabProject } from "../gitlab.ts";
-import { githubChecks, gitlabPipeline, recordPipeline, type PipelineMark, type PipelineResult } from "../pipelines.ts";
+import { ciFile, githubChecks, gitlabPipeline, hasCiFile, recordPipeline, type PipelineMark, type PipelineResult } from "../pipelines.ts";
 import { projectRoot } from "../source.ts";
 import { chooseRemote } from "../revision.ts";
 import type { Shipped } from "../types.ts";
@@ -74,6 +74,9 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
     return say("info", `Not watching the pipeline for ${where}: ${read}.`);
   }
   stopPipelineWatch(id);
+  // Without a CI file no pipeline is likely to come (GitLab can be set to read one from elsewhere), so wait two polls, not 15 minutes.
+  const pollMs = services.pipelinePollMs ?? 60_000;
+  const noCi = hasCiFile(root, shipped) === false;
   const started = Date.now();
   let busy = false, errors = 0, seen = false;
   const done = async (result: PipelineResult) => {
@@ -115,6 +118,11 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
       errors = 0;
       if (result.state !== "pending" && result.state !== "none") return void (await done(result));
       seen ||= result.url !== null && result.state === "pending";
+      if (!seen && noCi && Date.now() - started >= 2 * pollMs) {
+        stopPipelineWatch(id);
+        report("ended", `No pipeline: the shipped commit has no ${ciFile(shipped)}.`);
+        return say("info", `No pipeline to watch for ${where}: the shipped commit has no ${ciFile(shipped)}, so this project seems to have no CI.`);
+      }
       if (Date.now() - started > (seen ? giveUpMs : noPipelineMs)) {
         stopPipelineWatch(id);
         report("ended", seen ? "Still running after 2 hours." : "No pipeline appeared.");
@@ -129,7 +137,7 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
     } finally {
       busy = false;
     }
-  }, services.pipelinePollMs ?? 60_000);
+  }, pollMs);
   timer.unref?.();
   watchers.set(id, { timer, chat: key(ctx) });
   report("watching", `Watching the pipeline for ${where}.`, shipped.request.url);
