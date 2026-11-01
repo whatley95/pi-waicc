@@ -295,6 +295,10 @@ test("advisor slash command issues a handoff without model inference and continu
   assert.equal(closed.status, "CLOSED");
   assert.equal(closed.contractReview, "PASS");
   assert.equal(closed.deliveryVerified, false);
+  const shownBefore = shown.length;
+  await commands.get("waicc-close")!.handler("Again", ctx);
+  assert.match(notices.at(-1)!, /^Session [0-9a-f-]{36} is already closed; nothing changed\. To work on it again: \/waicc-reopen [0-9a-f-]{36} <reason>$/);
+  assert.equal(shown.length, shownBefore);
   await commands.get("waicc-continue")!.handler("", ctx);
   assert.equal(prompts.length, 1);
   await commands.get("waicc-review")!.handler("Not before reopening", ctx);

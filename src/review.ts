@@ -89,7 +89,8 @@ export function reviewContext(
     checks.length > 0,
     "Record actual checks and any not_run limits before code review",
   );
-  const findings = list(report.findings, "Completed finding dispositions", 6000).map((entry) => {
+  // Left out, there are none; prior findings that need one are then named as missing below.
+  const findings = (report.findings === undefined ? [] : list(report.findings, "Completed finding dispositions", 6000)).map((entry) => {
     const finding = record(entry, "Completed finding");
     supported(finding, ["requestId", "findingId", "disposition", "evidence"]);
     ensure(

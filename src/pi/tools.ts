@@ -188,7 +188,7 @@ export function registerTools(app: App): void {
       contract: Type.Unknown(),
       reviewKind: Type.Optional(Type.Union([Type.Literal("code"), Type.Literal("contract")])),
       fullReview: Type.Optional(Type.Boolean({ description: "Code review only: review the whole change again instead of a follow-up review. Set it ONLY when the human asks for a full review." })),
-      completion: Type.Optional(Type.Unknown({ description: "Whole-work report: {summary,tasks:[{taskId,evidence}],checks:[{description,outcome:passed|not_run,evidence}],findings:[{requestId,findingId,disposition:resolved|disputed,evidence}]}. ALL tasks and prior actionable code findings exactly once; first review findings: []." })),
+      completion: Type.Optional(Type.Unknown({ description: "Whole-work report: {summary,tasks:[{taskId,evidence}],checks:[{description,outcome:passed|not_run,evidence}],findings:[{requestId,findingId,disposition:resolved|disputed,evidence}]}. ALL tasks and prior actionable code findings exactly once; with none (first review), findings may be [] or left out." })),
     }),
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx);
