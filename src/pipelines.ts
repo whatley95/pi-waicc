@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWrite, json, now, readJson, runtimePath, withLock } from "./files.ts";
@@ -13,6 +13,14 @@ import type { Shipped } from "./types.ts";
 export type PipelineState = "pending" | "success" | "failed" | "canceled" | "manual" | "none";
 export interface FailedJob { name: string; url: string | null; log: string }
 export interface PipelineResult { state: PipelineState; url: string | null; failed: FailedJob[] }
+
+/** The file that starts CI on the shipped commit's host. */
+export const ciFile = (shipped: Shipped) => shipped.provider === "github" ? ".github/workflows/" : ".gitlab-ci.yml";
+/** Whether the shipped commit has that file; null when Git cannot tell (for example the commit is not here). */
+export function hasCiFile(root: string, shipped: Shipped): boolean | null {
+  const listed = spawnSync("git", ["ls-tree", "--name-only", shipped.commit, "--", ciFile(shipped)], { cwd: root, encoding: "utf8", timeout: 10_000, windowsHide: true });
+  return listed.status === 0 ? listed.stdout.trim().length > 0 : null;
+}
 
 const logTail = 6_000;
 /** The end of a job log, without terminal colors or GitLab's section markers. */
