@@ -501,8 +501,36 @@ export function publish(status: ProjectStatus): string {
     others = before.live.filter((run) => (run.pid ?? before.pid) !== process.pid && running(run.pid ?? before.pid)).map((run) => ({ ...run, pid: run.pid ?? before.pid }));
   } catch { /* the first write */ }
   atomicWrite(own, json({ ...status, live: [...status.live.map((run) => ({ ...run, pid: process.pid })), ...others] }));
+  const projects = trackedProjects();
+  // A script, not JSON: a page opened from disk may load scripts beside it but not fetch files.
+  atomicWrite(join(dir, "data.js"), `window.waiccTracker(${JSON.stringify({ generatedAt: new Date().toISOString(), projects })});\n`);
+  const page = trackerPage();
+  if (!pageWritten || !existsSync(page)) {
+    pageWritten = readFileSync(templatePath(), "utf8");
+    if (!existsSync(page) || readFileSync(page, "utf8") !== pageWritten) writeFileSync(page, pageWritten);
+  }
+  return page;
+}
+
+/**
+ * Everything that needs you, in every project on the tracker, most recently updated first:
+ * each project's needs as its last Pi published them.
+ */
+export function inbox(): { name: string; root: string; updatedAt: string; needsYou: ProjectStatus["needsYou"] }[] {
+  return trackedProjects().filter((p) => p.needsYou?.length).map((p) => ({ name: p.name, root: p.root, updatedAt: p.updatedAt, needsYou: p.needsYou }));
+}
+
+/** The projects the page shows: updated in the last 14 days and still on disk, at most 30. */
+function trackedProjects() {
+  const dir = trackerDirectory();
   const cutoff = Date.now() - 14 * 24 * 3_600_000;
-  const projects = readdirSync(join(dir, "projects")).filter((name) => /^[a-f0-9]{16}\.json$/.test(name)).flatMap((name) => {
+  let names: string[];
+  try {
+    names = readdirSync(join(dir, "projects"));
+  } catch {
+    return [];
+  }
+  return names.filter((name) => /^[a-f0-9]{16}\.json$/.test(name)).flatMap((name) => {
     const path = join(dir, "projects", name);
     try {
       if (statSync(path).mtimeMs < cutoff) return [];
@@ -516,14 +544,6 @@ export function publish(status: ProjectStatus): string {
       return [];
     }
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30);
-  // A script, not JSON: a page opened from disk may load scripts beside it but not fetch files.
-  atomicWrite(join(dir, "data.js"), `window.waiccTracker(${JSON.stringify({ generatedAt: new Date().toISOString(), projects })});\n`);
-  const page = trackerPage();
-  if (!pageWritten || !existsSync(page)) {
-    pageWritten = readFileSync(templatePath(), "utf8");
-    if (!existsSync(page) || readFileSync(page, "utf8") !== pageWritten) writeFileSync(page, pageWritten);
-  }
-  return page;
 }
 
 /** Opens the page in the default browser, without waiting; false if that could not start. */

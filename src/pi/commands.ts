@@ -1,7 +1,7 @@
 import { assertRecipientCurrent, assignmentText, receiveHandoff } from "../recipient.ts";
-import { initialize, json, loadSession } from "../files.ts";
+import { initialize, json, loadSession, samePath } from "../files.ts";
 import { decisionSettings } from "../profiles.ts";
-import { openPage, publish, setTrackerEnabled, trackerEnabled, trackerPage } from "../tracker.ts";
+import { inbox, openPage, publish, setTrackerEnabled, trackerEnabled, trackerPage } from "../tracker.ts";
 import { autoDecidable } from "../decisions.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "../checkpoint.ts";
 import { deleteSession, restoreSession } from "../lifecycle.ts";
@@ -384,6 +384,50 @@ export function registerCommands(app: App): void {
     "waicc-continue",
     "Validate the waiting reply and assess it or resume contract preparation",
     async (_args, ctx) => continueSession(ctx),
+  );
+  command(
+    "waicc-inbox",
+    "What needs you in every project: decisions, replies, reviews, failed pipelines; pick one here to act on it",
+    async (args, ctx) => {
+      ensure(!args, "Usage: /waicc-inbox");
+      ensure(trackerEnabled(), "The inbox reads the tracker, which is off. /waicc-tracker on turns it back on.");
+      const root = projectRoot(ctx.cwd);
+      publish(trackerStatus(ctx, root)); // This project as it is now; others as their Pi last saw them.
+      const projects = inbox();
+      if (!projects.length) return ctx.ui.notify("Nothing needs you in any project.", "info");
+      const here = projects.find((p) => samePath(p.root, root));
+      const ago = (at: string) => {
+        const minutes = Math.round((Date.now() - Date.parse(at)) / 60_000);
+        return minutes < 1 ? "just now" : minutes < 90 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`;
+      };
+      const lines = projects.flatMap((p) => [
+        `**${p.name}**${p === here ? " (this project)" : ` · ${p.root} · as of ${ago(p.updatedAt)}`}`,
+        ...p.needsYou.map((n) => `- ${n.text}${n.detail ? ` (${n.detail})` : ""}${n.command ? ` → \`${n.command}\`` : ""}`),
+        "",
+      ]);
+      const others = projects.filter((p) => p !== here);
+      if (others.length) lines.push(`To act on another project, open Pi in its folder; its items are shown there too.`);
+      pi.sendMessage({ customType: "waicc-inbox", content: lines.join("\n").trim(), display: true }, { triggerTurn: false });
+      // This project's items can be acted on here: pick one, and it runs as if typed.
+      const actionable = (here?.needsYou ?? []).filter((n) => n.command?.startsWith("/waicc-"));
+      if (!ctx.hasUI || !actionable.length) return;
+      const labels = actionable.map((n) => `${n.command}  ·  ${n.text}`);
+      const picked = await ctx.ui.select("What needs you here", [...labels, "Nothing now"]);
+      const item = actionable[labels.indexOf(picked ?? "")];
+      if (!item) return;
+      // The item belongs to its session: select it first, as /waicc-use would.
+      if (item.sessionId && bindings.get(key(ctx))?.sessionId !== item.sessionId) await app.commands.get("waicc-use")!(item.sessionId, ctx);
+      const line = item.command!;
+      // A placeholder such as <reason> is yours to fill in.
+      if (line.includes("<")) {
+        ctx.ui.setEditorText(line.slice(0, line.indexOf("<")));
+        return ctx.ui.notify(`${line} needs your text: finish it in the input box, then press Enter.`, "info");
+      }
+      const name = /^\/(\S+)/.exec(line)![1];
+      const run = app.commands.get(name);
+      ensure(run, `${line} is not a command this WAICC has.`);
+      await run(line.slice(name.length + 1).trim(), ctx);
+    },
   );
   command(
     "waicc-tracker",

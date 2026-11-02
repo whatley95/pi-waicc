@@ -28,7 +28,7 @@ pi install git:github.com/whatley95/pi-waicc      # once, in a terminal
 ```
 
 Or `/waicc-dispatch --auto --ship` after `/waicc-planning` to plan, build, review and open the merge request on its own.
-`/waicc-tracker` shows every project on one page.
+`/waicc-tracker` shows every project on one page, and `/waicc-inbox` lists what needs you in all of them.
 
 **This README is the full reference.** Contents: [Install](#install) ·
 [Start a conversation](#start-a-conversation) ·
@@ -838,6 +838,14 @@ clear when the agent finishes. The CLI prints the same steps to stderr as they h
 Every step and the agent's last message are also saved in the run's `dispatch/<id>/result.json`.
 Progress comes from each agent's own event stream (Claude `stream-json`, Codex `--json`,
 Pi `--mode json`, Antigravity `stream-json`).
+
+**What needs you, everywhere.** `/waicc-inbox` lists, in the chat, what waits for you in every
+project on the tracker: decisions to answer, replies to assess, passed reviews to ship, failed
+pipelines, quiet agents. Each item has the command to run. This project's items open in a picker:
+picking one selects its session and runs the command (one with a placeholder such as `<reason>`
+goes to your input box to finish). Another project's items are shown as of its Pi's last update;
+open Pi in that folder to act on them. When Pi starts, a one-line note says how many things wait
+in your other projects. The inbox reads the tracker's files, so it needs the tracker on.
 
 **Watch every project on one page.** Run `/waicc-tracker` and your browser opens one page
 that shows every project where Pi runs WAICC, kept up to date by each Pi chat:
