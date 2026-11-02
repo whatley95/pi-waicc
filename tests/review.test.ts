@@ -105,6 +105,11 @@ test("code review rejects incomplete/ambiguous reports, task batches and failed 
     assert.deepEqual(loadSession(root, s.id), before);
   }
   assert.throws(() => review(root, s, completion(), "API"), /ALL planned work/);
+  // Which tasks, by ID, so the report is fixed in one try.
+  const [first, second] = completion().tasks;
+  assert.throws(() => review(root, s, { ...completion(), tasks: [first] }), new RegExp(`evidence\\. Missing: ${second.taskId}\\.$`));
+  assert.throws(() => review(root, s, { ...completion(), tasks: [first, first, { taskId: "UNKNOWN", evidence: "x" }] }),
+    new RegExp(`Missing: ${second.taskId}\\. Not a task in the current plan: UNKNOWN\\. Given more than once: ${first.taskId}\\.$`));
   assert.deepEqual(loadSession(root, s.id), before);
   assert.throws(() => issue(root, s.id, "planning", "Wrong mode", undefined, undefined, { kind: "code", completion: completion() }), /only apply to review/);
 });

@@ -81,7 +81,8 @@ export function identifier(value: unknown, name = "ID"): string {
 /**
  * IDs with characters WAICC does not allow ("AC 1.1") made valid ("AC-1-1") wherever the contract
  * names them, so one typo does not send a whole plan back. An ID that would clash is left for
- * validation to report. Returns a copy and what was renamed.
+ * validation to report. A task's allowed folder written with a trailing slash loses it. Returns a
+ * copy and the IDs renamed.
  */
 export function tidyIds(value: unknown): { value: unknown; renamed: [string, string][] } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { value, renamed: [] };
@@ -98,8 +99,13 @@ export function tidyIds(value: unknown): { value: unknown; renamed: [string, str
     const clean = id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[^A-Za-z0-9]+|-+$/g, "").slice(0, 80);
     if (valid.test(clean) && !ids.includes(clean) && ![...map.values()].includes(clean)) map.set(id, clean);
   }
-  if (!map.size) return { value, renamed: [] };
+  // A folder written with its slash ("src/") is that folder; nothing else in the contract names a path.
+  const slashed = (v: unknown) => typeof v === "string" && /[^/\\][/\\]+$/.test(v);
+  const paths = rows((value as Record<string, unknown>).tasks).some((t) => Array.isArray(t.allowedPaths) && t.allowedPaths.some(slashed));
+  if (!map.size && !paths) return { value, renamed: [] };
   const c = structuredClone(value) as Record<string, unknown>;
+  for (const t of rows(c.tasks))
+    if (Array.isArray(t.allowedPaths)) t.allowedPaths = t.allowedPaths.map((p) => slashed(p) ? (p as string).replace(/[/\\]+$/, "") : p);
   const fix = (o: Record<string, unknown>, key: string) => {
     const v = o[key];
     if (typeof v === "string") o[key] = map.get(v) ?? v;
