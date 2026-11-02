@@ -8,7 +8,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import waicc from "../src/index.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { projectStatus, publish, trackerEnabled, trackerPage, type ProjectStatus } from "../src/tracker.ts";
-import { assess, createSession, ingest, prepare } from "../src/workflow.ts";
+import { assess, createSession, ingest, prepare, readContract } from "../src/workflow.ts";
 import { prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
 import { runPace } from "../src/usage.ts";
 import { recordError } from "../src/error-log.ts";
@@ -349,4 +349,50 @@ test("the page shows a project's recent errors and warnings from its error log, 
   assert.match(page, /Recent errors and warnings <span class="small muted">· 2 · newest/);
   assert.match(page, /<code>picker<\/code> A planning reply is waiting &lt;to be assessed&gt;/, "escaped");
   assert.match(page, /From \.pi\/pi-waicc\/errors\.jsonl in this project\./);
+});
+
+test("the inbox: what needs you in every project; this project's items can be picked and run here", async (t) => {
+  const { project } = setup(t);
+  const shop = project("shop"), orders = project("orders", "Order list");
+  publish(projectStatus(orders.root));
+  const commands = new Map<string, any>(), handlers = new Map<string, ((event: unknown, ctx: unknown) => Promise<void>)[]>();
+  const messages: string[] = [], notices: string[] = [], picks: string[][] = [];
+  waicc({
+    registerCommand: (n: string, c: any) => commands.set(n, c), registerTool() {}, appendEntry() {},
+    on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]),
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendUserMessage() {},
+    sendMessage: (m: any) => { if (m.customType === "waicc-inbox") messages.push(m.content); },
+  } as unknown as ExtensionAPI);
+  let answer: (options: string[]) => string | undefined = () => undefined;
+  const ctx = {
+    cwd: shop.root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true, model: { provider: "anthropic", id: "claude-opus-5-5" },
+    sessionManager: { getSessionId: () => "inbox-chat", getBranch: () => [], getEntries: () => [], getSessionName: () => undefined },
+    ui: {
+      notify: (m: string) => notices.push(m), setStatus() {}, setWidget() {}, confirm: async () => true, setEditorText() {},
+      select: async (_title: string, options: string[]) => (picks.push(options), answer(options)),
+    },
+  } as unknown as ExtensionCommandContext;
+
+  // When Pi starts here, it mentions what waits in the other projects.
+  for (const handler of handlers.get("session_start") ?? []) await handler({ type: "session_start" }, ctx);
+  assert.ok(notices.includes("2 things need you in orders: /waicc-inbox lists them."));
+
+  await commands.get("waicc-inbox").handler("", ctx);
+  const [listed] = messages;
+  assert.match(listed, /^\*\*shop\*\* \(this project\)\n- D1: Left or right side\? \(Recommended: Left\) → `\/waicc-decide D1 recommended`\n- .* → `\/waicc-develop`\n\n\*\*orders\*\* · .*orders · as of just now\n- D1: Left or right side\? /);
+  assert.match(listed, /To act on another project, open Pi in its folder/);
+  // Only this project's items are offered; "Nothing now" does nothing.
+  assert.deepEqual(picks[0].map((o) => o.split("  ·  ")[0]), ["/waicc-decide D1 recommended", "/waicc-develop", "Nothing now"]);
+  const d1 = () => readContract(shop.root, shop.id).contract.decisions![0];
+  assert.equal(d1().status, "open");
+
+  // A pick selects its session, then runs as typed.
+  answer = (options) => options[0];
+  await commands.get("waicc-inbox").handler("", ctx);
+  assert.deepEqual([d1().status, d1().answer], ["resolved", "Left"]);
+
+  // With the tracker off there is nothing to read.
+  process.env.WAICC_TRACKER = "off";
+  await commands.get("waicc-inbox").handler("", ctx);
+  assert.match(notices.at(-1)!, /^The inbox reads the tracker, which is off\./);
 });

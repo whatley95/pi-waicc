@@ -14,6 +14,7 @@ import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
 import { loadAgentConfig } from "../profiles.ts";
+import { inbox, trackerEnabled } from "../tracker.ts";
 import { loggingContext, modelLimit, modelView, type App } from "./app.ts";
 import { stopPipelineWatches } from "./pipelines.ts";
 
@@ -135,6 +136,14 @@ export function registerHooks(app: App): void {
     automaticRequests.clear(ctx);
     if (ctx.hasUI) watchReplies(loggingContext(ctx, "auto-continue"));
     track(ctx);
+    // What waits for you elsewhere, once per chat start; this project's own needs show in its status.
+    if (ctx.hasUI && trackerEnabled()) {
+      try {
+        const others = inbox().filter((p) => !samePath(p.root, projectRoot(ctx.cwd)));
+        const count = others.reduce((sum, p) => sum + p.needsYou.length, 0);
+        if (count) ctx.ui.notify(`${count} thing${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} you in ${others.map((p) => p.name).join(", ")}: /waicc-inbox lists ${count === 1 ? "it" : "them"}.`, "info");
+      } catch { /* only a hint */ }
+    }
     const entry = ctx.sessionManager
       .getBranch()
       .findLast(
