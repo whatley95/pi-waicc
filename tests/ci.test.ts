@@ -13,6 +13,7 @@ import { stopPipelineWatch, watchPipeline } from "../src/pi/pipelines.ts";
 import { loadSession } from "../src/files.ts";
 import { ciFile, cleanLog, githubChecks, gitlabPipeline, hasCiFile, type GhRunner } from "../src/pipelines.ts";
 import type { GitLabCall } from "../src/gitlab.ts";
+import type { CheckRunner } from "../src/checks.ts";
 import type { Shipped } from "../src/types.ts";
 import { reviewed } from "./ship-fixture.ts";
 
@@ -70,18 +71,18 @@ test("GitHub: gh pr checks decides, and a failure brings gh run view --log-faile
 });
 
 /** A shipped session (through /waicc-ship) in a Pi chat whose pipeline is in `state`. */
-async function shippedChat(t: TestContext, state: () => string | null, answer: string) {
+async function shippedChat(t: TestContext, state: () => string | null, answer: string, more: { config?: object; runCheck?: CheckRunner; confirm?: boolean } = {}) {
   const { root, id } = reviewed(t);
   const agentDir = join(root, "..", "agent");
   mkdirSync(agentDir);
-  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-test" } } }));
+  writeFileSync(join(agentDir, "waicc-agents.json"), JSON.stringify({ gitlab: { "gitlab.example.com": { token: "glpat-test" } }, ...more.config }));
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  const commands = new Map<string, any>(), notices: string[] = [], prompts: string[] = [], selects: string[] = [];
+  const commands = new Map<string, any>(), notices: string[] = [], prompts: string[] = [], selects: string[] = [], confirms: string[] = [];
   const core = createApp({
     registerCommand: (name: string, command: any) => commands.set(name, command), registerTool() {}, on() {},
     appendEntry() {}, getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage: (m: string) => prompts.push(m),
-  } as unknown as ExtensionAPI, { gitlabOrigin: async (project) => project, gitlab: () => gitlab(state), pipelinePollMs: 10 });
+  } as unknown as ExtensionAPI, { gitlabOrigin: async (project) => project, gitlab: () => gitlab(state), pipelinePollMs: 10, ...(more.runCheck ? { runCheck: more.runCheck } : {}) });
   const app: App = Object.assign(core, createRuns(core));
   registerCommands(app);
   registerDispatchCommands(app);
@@ -89,14 +90,14 @@ async function shippedChat(t: TestContext, state: () => string | null, answer: s
   const ctx = {
     cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
     sessionManager: { getSessionId: () => "chat", getBranch: () => [], getEntries: () => [] },
-    ui: { notify: (m: string) => notices.push(m), setStatus() {}, setWidget() {}, confirm: async () => true, select: async (title: string) => (selects.push(title), answer) },
+    ui: { notify: (m: string) => notices.push(m), setStatus() {}, setWidget() {}, confirm: async (title: string) => (confirms.push(title), title.startsWith("This project has no CI") ? more.confirm ?? true : true), select: async (title: string) => (selects.push(title), answer) },
   } as unknown as ExtensionCommandContext;
   t.after(() => {
     stopPipelineWatch(id);
     process.env.PI_CODING_AGENT_DIR = previous;
   });
   await commands.get("waicc-use").handler(id, ctx);
-  return { root, id, app, ctx, commands, notices, prompts, selects };
+  return { root, id, app, ctx, commands, notices, prompts, selects, confirms };
 }
 const waitFor = async (check: () => boolean, what: string) => {
   for (let i = 0; i < 300 && !check(); i++) await new Promise((done) => setTimeout(done, 10));
@@ -147,7 +148,7 @@ test("a shipped commit without a CI file: after two polls with no pipeline, it s
   assert.equal(hasCiFile(h.root, shippedHere), false);
   assert.equal(hasCiFile(h.root, { ...shippedHere, commit: "a".repeat(40) }), null, "Git cannot tell about a commit it does not have");
   await waitFor(() => h.notices.some((n) => n.startsWith("No pipeline to watch")), "the note");
-  assert.ok(h.notices.includes("No pipeline to watch for https://gitlab.example.com/team/app/-/merge_requests/12: the shipped commit has no .gitlab-ci.yml, so this project seems to have no CI."));
+  assert.ok(h.notices.some((n) => n.startsWith("No pipeline to watch for https://gitlab.example.com/team/app/-/merge_requests/12: the shipped commit has no .gitlab-ci.yml, so this project seems to have no CI.")));
   assert.ok(!h.notices.some((n) => n.includes("within 15 minutes")));
   // With the file, the commit counts as having CI (and the watcher waits the full 15 minutes).
   writeFileSync(join(h.root, ".gitlab-ci.yml"), "test:\n  script: npm test\n");
@@ -156,4 +157,48 @@ test("a shipped commit without a CI file: after two polls with no pipeline, it s
   git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "ci");
   assert.equal(hasCiFile(h.root, { ...shippedHere, commit: git("rev-parse", "HEAD") }), true);
   assert.equal(ciFile({ ...shippedHere, provider: "github" }), ".github/workflows/");
+});
+
+test("without CI, your testing role's checks run on the shipped source and are read like a pipeline", async (t) => {
+  const ran: string[] = [];
+  let failing = "";
+  const runCheck: CheckRunner = async (program, args, options) => {
+    ran.push(`${program} ${args.join(" ")} @ ${options.cwd === undefined ? "?" : "root"}`);
+    return `${program} ${args.join(" ")}` === failing ? { code: 1, stdout: "lint: 2 problems", stderr: "", killed: false } : { code: 0, stdout: "ok", stderr: "", killed: false };
+  };
+  const config = { profiles: { p: { via: "pi" } }, roles: { testing: { profile: "p", checks: ["npm test", "npm run lint"] } } };
+  const h = await shippedChat(t, () => null, "Leave it", { config, runCheck });
+  await h.commands.get("waicc-ship").handler("", h.ctx);
+  const where = "https://gitlab.example.com/team/app/-/merge_requests/12";
+  assert.ok(h.notices.includes("This project has no CI, so your checks run on the shipped source instead (npm test, npm run lint): you will hear when they pass or fail."));
+  await waitFor(() => h.notices.some((n) => n.startsWith("✅")), "the pass");
+  assert.ok(h.notices.includes(`✅ The local checks passed for ${where}: npm test, npm run lint.`));
+  assert.deepEqual(ran, ["npm test @ root", "npm run lint @ root"]);
+  assert.ok(!h.confirms.some((c) => c.startsWith("This project has no CI")), "checks from your user file need no confirmation");
+  assert.ok(!h.notices.some((n) => n.startsWith("No pipeline")), "GitLab is not polled");
+
+  // A failure asks, as a pipeline's would; a --ship run's is fixed automatically, told what failed.
+  failing = "npm run lint";
+  await watchPipeline(h.app, h.ctx, h.id, false);
+  await waitFor(() => h.selects.length === 1, "the question");
+  assert.equal(h.selects[0], "The local checks failed (npm run lint). Fix it?");
+  assert.ok(h.notices.includes(`❌ The local checks failed for ${where}: npm run lint.`));
+  await watchPipeline(h.app, h.ctx, h.id, true);
+  await waitFor(() => h.prompts.length === 1, "the fix prompt");
+  assert.match(h.prompts[0], /The checks WAICC ran on the change it shipped \(the project has no CI\) \(https:\/\/gitlab\.example\.com\/team\/app\/-\/merge_requests\/12\) failed\.[\s\S]*### npm run lint[\s\S]*lint: 2 problems/);
+});
+
+test("without CI, checks from the project's WAICC file run only once you confirm them", async (t) => {
+  const ran: string[] = [];
+  const runCheck: CheckRunner = async (program) => (ran.push(program), { code: 0, stdout: "", stderr: "", killed: false });
+  const h = await shippedChat(t, () => null, "Leave it", { config: { profiles: { p: { via: "pi" } } }, runCheck, confirm: false });
+  await h.commands.get("waicc-ship").handler("", h.ctx);
+  stopPipelineWatch(h.id);
+  mkdirSync(join(h.root, ".pi"), { recursive: true });
+  writeFileSync(join(h.root, ".pi", "waicc-agents.json"), JSON.stringify({ roles: { implementation: { profile: "p", checks: ["node evil.js"] } } }));
+  await watchPipeline(h.app, h.ctx, h.id, false);
+  assert.ok(h.confirms.includes("This project has no CI. Run the checks from its WAICC file on the shipped source?"));
+  await waitFor(() => h.notices.some((n) => n.startsWith("No pipeline to watch")), "the no-CI note");
+  assert.deepEqual(ran, [], "declined: nothing ran");
+  assert.match(h.notices.find((n) => n.startsWith("No pipeline to watch"))!, /set "checks" for your testing role in your user file/);
 });

@@ -1637,6 +1637,16 @@ When the whole-change code review passes (`READY_TO_CLOSE`), `/waicc-ship` sends
    - It stops watching after 2 hours, or after 15 minutes when no pipeline appears. When the
      shipped commit has no CI file (`.gitlab-ci.yml`, or `.github/workflows/` on GitHub), it
      waits only two checks (about 2 minutes) and then says the project seems to have no CI.
+   - **No CI? Your checks run instead.** When the shipped commit has no CI file and your testing
+     role has `checks` (or else your implementation role), WAICC runs them on the shipped source
+     right after the merge request opens, before anyone merges. A pass, a failure, "Fix it?" and
+     the automatic fix after a `--ship` run all work as they do for a pipeline. Checks from your
+     user file run without asking. Checks from the project's `.pi/waicc-agents.json` run only
+     after you confirm them, since the repository chose them.
+
+     ```json
+     { "roles": { "testing": { "profile": "opus", "checks": ["flutter analyze", "flutter test"] } } }
+     ```
 
 Git does the pushing with your own Git login, and never prompts for a password, so a missing
 login fails instead of hanging. `waicc ship <session> --dry-run` (CLI) shows the plan;
