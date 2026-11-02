@@ -12,7 +12,8 @@ import type { Shipped } from "./types.ts";
  */
 export type PipelineState = "pending" | "success" | "failed" | "canceled" | "manual" | "none";
 export interface FailedJob { name: string; url: string | null; log: string }
-export interface PipelineResult { state: PipelineState; url: string | null; failed: FailedJob[] }
+/** `local`: the project has no CI, so these are the checks WAICC ran on the shipped source. */
+export interface PipelineResult { state: PipelineState; url: string | null; failed: FailedJob[]; local?: true }
 
 /** The file that starts CI on the shipped commit's host. */
 export const ciFile = (shipped: Shipped) => shipped.provider === "github" ? ".github/workflows/" : ".gitlab-ci.yml";

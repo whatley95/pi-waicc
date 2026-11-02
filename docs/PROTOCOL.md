@@ -1393,6 +1393,17 @@ URL, and the host must be listed with a token (otherwise nothing is watched).
   3 failing checks. Otherwise any `pending` is pending, any `cancel` is canceled, and the rest is
   a pass.
 
+**No CI file** (`hasCiFile`: `git ls-tree <commit> -- .gitlab-ci.yml`, or `.github/workflows/`
+on GitHub; null when Git cannot tell). When it is false and the testing role (else the
+implementation role) has `checks`, those commands (`checkCommands`, the role's
+`checkTimeoutMinutes`, default 10) run once, in order, in the project root through the sandbox
+setting, starting at once instead of after a poll. Checks whose role came from the project file
+run only after `ctx.ui.confirm`, and not at all without UI. A non-zero exit or a timeout is a
+failed job named by the command text, with `cleanLog` of its output. The result
+(`local: true`, `url: null`) goes through the same pass, failure, ask and automatic-fix steps,
+and the fix prompt says these were WAICC's checks, not CI. A check that cannot start stops the
+watcher at once. Without checks, the watcher polls twice and then reports there is no CI.
+
 **Logs** are cleaned of ANSI escapes and GitLab section markers, and cut to their last 6,000
 characters.
 

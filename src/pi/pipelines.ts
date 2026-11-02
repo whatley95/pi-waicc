@@ -1,7 +1,10 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, loadSession } from "../files.ts";
 import { canonicalProject, gitlabClient, gitlabProject } from "../gitlab.ts";
-import { ciFile, githubChecks, gitlabPipeline, hasCiFile, recordPipeline, type PipelineMark, type PipelineResult } from "../pipelines.ts";
+import { checkCommands, runAgent } from "../dispatch.ts";
+import { loadAgentConfig, sandboxSettings } from "../profiles.ts";
+import { sandboxPlan } from "../sandbox.ts";
+import { ciFile, cleanLog, githubChecks, gitlabPipeline, hasCiFile, recordPipeline, type FailedJob, type PipelineMark, type PipelineResult } from "../pipelines.ts";
 import { projectRoot } from "../source.ts";
 import { chooseRemote } from "../revision.ts";
 import type { Shipped } from "../types.ts";
@@ -47,6 +50,39 @@ async function reader(app: App, ctx: ExtensionCommandContext, shipped: Shipped):
 }
 
 /**
+ * A project without CI: the checks you set for your testing role (or else the implementation role)
+ * run on the shipped source instead of a pipeline, read like one. Checks from the project file run
+ * only once you confirm them. Null when there are none to run.
+ */
+async function localChecks(app: App, ctx: ExtensionCommandContext, root: string): Promise<{ read: () => Promise<PipelineResult>; names: string } | null> {
+  let config;
+  try {
+    config = loadAgentConfig(ctx.cwd);
+  } catch {
+    return null; // A broken config is reported where it is used; here it only means no checks.
+  }
+  const role = config.roles.testing?.checks?.length ? config.roles.testing : config.roles.implementation?.checks?.length ? config.roles.implementation : undefined;
+  if (!role) return null;
+  const commands = checkCommands(role.checks!, role.checkTimeoutMinutes);
+  const names = role.checks!.join(", ");
+  if (role.source === "project") {
+    if (!ctx.hasUI || !(await ctx.ui.confirm("This project has no CI. Run the checks from its WAICC file on the shipped source?", role.checks!.join("\n")))) return null;
+  }
+  const run = app.services.runCheck ?? runAgent, sandbox = sandboxSettings(ctx.cwd);
+  const read = async (): Promise<PipelineResult> => {
+    const failed: FailedJob[] = [];
+    for (const [i, command] of commands.entries()) {
+      const plan = sandboxPlan(command.program, command.args, root, sandbox);
+      const outcome = await run(plan.program, plan.args, { cwd: root, timeout: command.timeoutMs });
+      if (outcome.code !== 0 || outcome.killed)
+        failed.push({ name: role.checks![i], url: null, log: cleanLog(`${outcome.killed ? `Stopped after ${command.timeoutMs / 60_000} minutes.\n` : ""}${outcome.stdout}\n${outcome.stderr}`) });
+    }
+    return { state: failed.length ? "failed" : "success", url: null, failed, local: true };
+  };
+  return { read, names };
+}
+
+/**
  * After /waicc-ship: follows the shipped commit's pipeline until it ends, then says how it went.
  * A failure from a --ship run is fixed automatically (at most pipelineFixes times); after a
  * typed /waicc-ship you are asked first.
@@ -68,35 +104,38 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
     ctx.ui.notify(message, level);
     pi.sendMessage({ customType: "waicc-pipeline", content: message, display: true }, { triggerTurn: false });
   };
-  const read = await reader(app, ctx, shipped);
+  // Without a CI file no pipeline is likely to come (GitLab can be set to read one from elsewhere):
+  // your checks run here instead, or else WAICC waits two polls, not 15 minutes.
+  const noCi = hasCiFile(root, shipped) === false;
+  const local = noCi ? await localChecks(app, ctx, root) : null;
+  const read = local?.read ?? await reader(app, ctx, shipped);
   if (typeof read === "string") {
     report("not-watching", read);
     return say("info", `Not watching the pipeline for ${where}: ${read}.`);
   }
   stopPipelineWatch(id);
-  // Without a CI file no pipeline is likely to come (GitLab can be set to read one from elsewhere), so wait two polls, not 15 minutes.
   const pollMs = services.pipelinePollMs ?? 60_000;
-  const noCi = hasCiFile(root, shipped) === false;
+  const what = local ? "local checks" : "pipeline", What = local ? "The local checks" : "The pipeline";
   const started = Date.now();
   let busy = false, errors = 0, seen = false;
   const done = async (result: PipelineResult) => {
     stopPipelineWatch(id);
     const link = result.url ? ` (${result.url})` : "";
     if (result.state === "success") {
-      report("passed", `The pipeline passed${link}.`, result.url);
-      return say("info", `✅ The pipeline passed for ${where}${link}.`);
+      report("passed", `${What} passed${link}.`, result.url);
+      return say("info", `✅ ${What} passed for ${where}${link}${local ? `: ${local.names}` : ""}.`);
     }
     if (result.state !== "failed") report("ended", `The pipeline ended: ${result.state}${link}.`, result.url);
     if (result.state !== "failed")
       return say("warning", result.state === "manual" ? `The pipeline for ${where} waits for a manual job${link}.` : `The pipeline for ${where} was ${result.state === "none" ? "not started" : "canceled or skipped"}${link}.`);
     const names = result.failed.map((job) => job.name).join(", ") || "a job";
-    say("error", `❌ The pipeline failed for ${where}: ${names}${link}.`);
+    say("error", `❌ ${What} failed for ${where}: ${names}${link}.`);
     const tried = fixes.get(id) ?? 0;
     const fix = () => {
       fixes.set(id, tried + 1);
       report("fixing", names, result.url);
       return app.fixPipeline(ctx, id, result).catch((error) => {
-        report("failed", `The pipeline failed (${names}), and the fix could not start.`, result.url);
+        report("failed", `${What} failed (${names}), and the fix could not start.`, result.url);
         say("error", `The fix could not start: ${error instanceof Error ? error.message : String(error)}`);
       });
     };
@@ -104,13 +143,13 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
       say("info", `Fixing it automatically, as your --ship run allows (attempt ${tried + 1} of ${pipelineFixes}): the session is reopened, the main agent fixes it, a review runs, then it ships again.`);
       return void fix();
     }
-    if (!automatic || tried >= pipelineFixes) report("failed", `The pipeline failed: ${names}${link}.`, result.url);
-    if (automatic) return say("warning", `The pipeline still fails after ${pipelineFixes} automatic fixes. Look at the jobs yourself; /waicc-reopen <reason> to work on it in this session.`);
+    if (!automatic || tried >= pipelineFixes) report("failed", `${What} failed: ${names}${link}.`, result.url);
+    if (automatic) return say("warning", `${What} still fail${local ? "" : "s"} after ${pipelineFixes} automatic fixes. Look at the ${local ? "output" : "jobs"} yourself; /waicc-reopen <reason> to work on it in this session.`);
     if (!ctx.hasUI) return;
-    const picked = await ctx.ui.select(`The pipeline failed (${names}). Fix it?`, ["Fix it: reopen the session, the main agent fixes it, a review runs, then ship again", "Leave it"]);
+    const picked = await ctx.ui.select(`${What} failed (${names}). Fix it?`, ["Fix it: reopen the session, the main agent fixes it, a review runs, then ship again", "Leave it"]);
     if (picked?.startsWith("Fix it")) void fix();
   };
-  const timer = setInterval(async () => {
+  const tick = async () => {
     if (busy) return;
     busy = true;
     try {
@@ -121,7 +160,7 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
       if (!seen && noCi && Date.now() - started >= 2 * pollMs) {
         stopPipelineWatch(id);
         report("ended", `No pipeline: the shipped commit has no ${ciFile(shipped)}.`);
-        return say("info", `No pipeline to watch for ${where}: the shipped commit has no ${ciFile(shipped)}, so this project seems to have no CI.`);
+        return say("info", `No pipeline to watch for ${where}: the shipped commit has no ${ciFile(shipped)}, so this project seems to have no CI. To check it here instead, set "checks" for your testing role in your user file, for example ["npm test"].`);
       }
       if (Date.now() - started > (seen ? giveUpMs : noPipelineMs)) {
         stopPipelineWatch(id);
@@ -129,18 +168,24 @@ export async function watchPipeline(app: App, ctx: ExtensionCommandContext, id: 
         say("warning", seen ? `Stopped watching the pipeline for ${where} after 2 hours; it was still running.` : `No pipeline appeared for ${where} within 15 minutes, so there is nothing to watch.`);
       }
     } catch (error) {
-      if (++errors >= 5) {
+      // Local checks that cannot start (a required sandbox, a missing program) would only fail again.
+      if (local || ++errors >= 5) {
         stopPipelineWatch(id);
-        report("ended", `Could not read the pipeline: ${error instanceof Error ? error.message : String(error)}`);
-        say("warning", `Stopped watching the pipeline for ${where}: ${error instanceof Error ? error.message : String(error)}`);
+        report("ended", `Could not ${local ? "run the local checks" : "read the pipeline"}: ${error instanceof Error ? error.message : String(error)}`);
+        say("warning", `Stopped ${local ? "the local checks" : "watching the pipeline"} for ${where}: ${error instanceof Error ? error.message : String(error)}`);
       }
     } finally {
       busy = false;
     }
-  }, pollMs);
+  };
+  const timer = setInterval(tick, pollMs);
   timer.unref?.();
   watchers.set(id, { timer, chat: key(ctx) });
-  report("watching", `Watching the pipeline for ${where}.`, shipped.request.url);
-  pi.sendMessage({ customType: "waicc-pipeline", content: json({ watching: where, commit: shipped.commit }), display: false }, { triggerTurn: false });
-  ctx.ui.notify(`Watching the pipeline for ${where}: you will hear when it passes or fails.`, "info");
+  report("watching", local ? `Running the local checks for ${where}: ${local.names}.` : `Watching the pipeline for ${where}.`, shipped.request.url);
+  pi.sendMessage({ customType: "waicc-pipeline", content: json({ [local ? "checking" : "watching"]: where, commit: shipped.commit, ...(local ? { checks: local.names } : {}) }), display: false }, { triggerTurn: false });
+  ctx.ui.notify(local
+    ? `This project has no CI, so your checks run on the shipped source instead (${local.names}): you will hear when they pass or fail.`
+    : `Watching the ${what} for ${where}: you will hear when it passes or fails.`, "info");
+  // Local checks start now; a pipeline is first read after one poll.
+  if (local) void tick();
 }
