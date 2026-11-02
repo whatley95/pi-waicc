@@ -268,6 +268,12 @@ test("IDs with characters WAICC does not allow are made valid wherever the contr
   assert.deepEqual(fixed.decisions![0].affectedTaskIds, ["client-ui"]);
   assert.equal(c.requirements[0].id, "REQ 1.1", "the original is not changed");
   // A valid contract comes back as it was; a clash is left for validation to report.
+  // A folder with its trailing slash is that folder.
+  const slashed = example();
+  slashed.tasks[1].allowedPaths = ["client/", "client\\ui\\"];
+  assert.deepEqual(validateContract(tidyIds(slashed).value, requirements).tasks[1].allowedPaths, ["client", "client\\ui"]);
+  assert.deepEqual(tidyIds(slashed).renamed, []);
+  assert.throws(() => validateContract(slashed, requirements), /Unsafe path component: client\//);
   const plain = example();
   assert.equal(tidyIds(plain).value, plain);
   assert.deepEqual(tidyIds(plain).renamed, []);

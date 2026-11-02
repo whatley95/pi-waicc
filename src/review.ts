@@ -65,11 +65,14 @@ export function reviewContext(
       evidence: text(task.evidence, "Task completion evidence"),
     };
   });
+  // Name them, as for findings below: the agent then fixes the report in one try.
+  const reported = tasks.map((task) => task.taskId), planned = c.tasks.map((task) => task.id);
+  const notReported = planned.filter((id) => !reported.includes(id));
+  const notPlanned = reported.filter((id) => !planned.includes(id));
+  const twice = [...new Set(reported.filter((id, i) => reported.indexOf(id) !== i))];
   ensure(
-    tasks.length === c.tasks.length &&
-      new Set(tasks.map((task) => task.taskId)).size === tasks.length &&
-      tasks.every((task) => c.tasks.some((expected) => expected.id === task.taskId)),
-    "Finish ALL planned tasks before review; report every task exactly once with implementation/acceptance evidence",
+    !notReported.length && !notPlanned.length && !twice.length,
+    `Finish ALL planned tasks before review; report every task exactly once with implementation/acceptance evidence.${notReported.length ? ` Missing: ${notReported.join(", ")}.` : ""}${notPlanned.length ? ` Not a task in the current plan: ${notPlanned.join(", ")}.` : ""}${twice.length ? ` Given more than once: ${twice.join(", ")}.` : ""}`,
   );
   const checks = list(report.checks, "Completion checks").map((entry) => {
     const check = record(entry, "Completion check");

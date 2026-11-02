@@ -143,7 +143,8 @@ IDs use letters, digits, `-` and `_`, and start with a letter or digit. Through 
 an ID with other characters is renamed before validation wherever the contract names it
 (`AC 1.1` becomes `AC-1-1`: each run of other characters becomes `-`, and leading or
 trailing ones are dropped), and the result's `idsTidied` lists the renames. An ID whose tidied
-form is already used is left as it is, for validation to report. The CLI does not rename.
+form is already used is left as it is, for validation to report. A task's allowed path that ends in
+`/` or `\` (a folder, `src/`) loses that ending the same way, silently. The CLI does neither.
 
 ```json
 {
