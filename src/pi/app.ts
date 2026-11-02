@@ -134,10 +134,25 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   const automaticRequests = new AutoPlanningRequests();
   // Every WAICC tool accepts nested arguments sent as JSON text (see decodeJsonArguments).
   // The tracker page is refreshed after every tool and command (see track).
+  // A tool error is logged like a command's. The same one 3 times in a chat means the agent may be
+  // stuck: you are told once, since only the agent sees tool errors.
+  const toolErrors = new Map<string, number>();
   const registerTool: ExtensionAPI["registerTool"] = (tool) =>
     pi.registerTool({ ...tool, execute: async (id, params, signal, update, ctx) => {
       try {
         return await tool.execute(id, decodeJsonArguments(params, tool.parameters), signal, update, ctx);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!signal?.aborted)
+          try {
+            if (ctx.isProjectTrusted()) recordError(projectRoot(ctx.cwd), tool.name, message);
+            const same = `${key(ctx)}\0${tool.name}\0${message.slice(0, 160).replace(/\d+/g, "#")}`;
+            const count = (toolErrors.get(same) ?? 0) + 1;
+            toolErrors.set(same, count);
+            if (count === 3 && ctx.hasUI)
+              ctx.ui.notify(`The agent has hit the same WAICC error 3 times in this chat (${tool.name}): ${message.slice(0, 200)}${message.length > 200 ? "…" : ""} It may be stuck: Esc stops it, then tell it what to do.`, "warning");
+          } catch { /* the log and the hint never stand in the way of the error */ }
+        throw error;
       } finally {
         track(ctx);
       }

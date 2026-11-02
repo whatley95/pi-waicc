@@ -2074,6 +2074,10 @@ drops its oldest half past 256 KB. The tracker page (`/waicc-tracker`)
 shows each project's 20 newest, newest first, under *Recent errors and warnings* on its
 overview.
 
+Errors from WAICC tools the main agent calls (such as `waicc_prepare`) go to the same log, under
+the tool's name: the agent sees them, you normally do not. When the same one happens 3 times in
+a chat, WAICC tells you once that the agent may be stuck, so you can stop it with Esc and steer.
+
 Pi sends what a command shows in the chat to the model as well, on every later turn. A WAICC
 output longer than 6,000 characters (a full `/waicc-status` view was often 60,000 or more)
 reaches the model as a summary: short fields as they are, and each long one replaced by a note
