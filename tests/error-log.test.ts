@@ -84,3 +84,29 @@ test("a failed CLI command is logged in its project", (t) => {
   assert.equal(entry.source, "waicc continue");
   assert.equal(entry.message, cli.stderr.trim());
 });
+
+test("a WAICC tool's error is logged too; the same one 3 times in a chat tells the human the agent may be stuck", async (t) => {
+  const root = folder(t);
+  const tools = new Map<string, any>(), notices: string[] = [];
+  waicc({
+    registerCommand() {}, registerTool: (tool: any) => tools.set(tool.name, tool), on() {}, appendEntry() {},
+    getAllTools: () => [], getActiveTools: () => [], setActiveTools() {}, sendMessage() {}, sendUserMessage() {},
+  } as unknown as ExtensionAPI);
+  const ctx = (chat: string) => ({
+    cwd: root, mode: "tui", hasUI: true, isIdle: () => true, isProjectTrusted: () => true,
+    sessionManager: { getSessionId: () => chat, getBranch: () => [], getEntries: () => [] },
+    ui: { notify: (m: string, level: string) => notices.push(`${level}: ${m}`), setStatus() {}, setWidget() {} },
+  });
+  const offer = (chat: string, command: string) =>
+    tools.get("waicc_suggest_command").execute("call", { commands: [{ command, why: "x" }] }, undefined, undefined, ctx(chat));
+  for (const n of [1, 2]) await assert.rejects(offer("a", `/reload${n}`), /is not a WAICC command/);
+  assert.deepEqual(readErrors(root).map((e) => e.source), ["waicc_suggest_command", "waicc_suggest_command"]);
+  assert.equal(notices.length, 0, "twice is not yet a pattern");
+  await assert.rejects(offer("b", "/reload3"), /is not a WAICC command/);
+  assert.equal(notices.length, 0, "another chat counts on its own");
+  await assert.rejects(offer("a", "/reload3"), /is not a WAICC command/);
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /^warning: The agent has hit the same WAICC error 3 times in this chat \(waicc_suggest_command\): "\/reload3" is not a WAICC command\. .*… It may be stuck: Esc stops it, then tell it what to do\.$/);
+  await assert.rejects(offer("a", "/reload4"), /is not a WAICC command/);
+  assert.equal(notices.length, 1, "told once");
+});
