@@ -110,6 +110,8 @@ test("code review rejects incomplete/ambiguous reports, task batches and failed 
   assert.throws(() => review(root, s, { ...completion(), tasks: [first] }), new RegExp(`evidence\\. Missing: ${second.taskId}\\.$`));
   assert.throws(() => review(root, s, { ...completion(), tasks: [first, first, { taskId: "UNKNOWN", evidence: "x" }] }),
     new RegExp(`Missing: ${second.taskId}\\. Not a task in the current plan: UNKNOWN\\. Given more than once: ${first.taskId}\\.$`));
+  const { tasks: _tasks, ...noTasks } = completion();
+  assert.throws(() => review(root, s, noTasks as ReturnType<typeof completion>), new RegExp(`has no tasks: .*: ${first.taskId}, ${second.taskId}$`));
   assert.deepEqual(loadSession(root, s.id), before);
   assert.throws(() => issue(root, s.id, "planning", "Wrong mode", undefined, undefined, { kind: "code", completion: completion() }), /only apply to review/);
 });
@@ -157,12 +159,17 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
     new RegExp(`Not a prior actionable finding: ${first}:F9\\. Given more than once: ${first}:F1\\.$`));
   assert.equal(loadSession(root, s.id).rounds.length, 2);
   writeFileSync(join(root, "CLIENT.txt"), "fixed client");
-  report.findings.push({ requestId: first, findingId: "F2", disposition: "resolved", evidence: "Client fix and regression evidence" });
+  // Without its requestId, the one prior finding with that ID is meant; one that isn't prior is refused by name.
+  const bare = { findingId: "F2", disposition: "resolved", evidence: "Client fix and regression evidence" };
+  assert.throws(() => review(root, s, { ...report, findings: [...report.findings, { ...bare, findingId: "F9" }] } as typeof report),
+    /completion\.findings\[1\] \(F9\) needs its requestId: no prior actionable finding is F9$/);
+  report.findings.push(bare as typeof report.findings[number]);
   s = review(root, s, report);
   assert.equal(s.rounds.length, 3);
   const context = s.rounds.at(-1)!.review;
   assert.equal(context?.kind, "code");
   if (context?.kind !== "code") throw new Error("Expected code review");
+  assert.deepEqual(context.completion.findings.map((f) => `${f.requestId}:${f.findingId}`), [`${first}:F1`, `${first}:F2`]);
   assert.equal(context.base.fingerprint, baseline.fingerprint);
   assert.deepEqual(context.changedPaths, ["API.txt", "CLIENT.txt"]);
   s = decide(root, reply(root, s));

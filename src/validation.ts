@@ -15,7 +15,7 @@ export function ensure(condition: unknown, message: string): asserts condition {
 /** A JSON object or array sent as text, decoded; anything else is returned unchanged.
  * Some models send nested tool arguments as JSON strings and retry forever when refused. */
 export function decodeJsonText(value: unknown): unknown {
-  if (typeof value !== "string" || !/^s*[{[]/.test(value)) return value;
+  if (typeof value !== "string" || !/^\s*[{[]/.test(value)) return value;
   try {
     const parsed: unknown = JSON.parse(value);
     return parsed !== null && typeof parsed === "object" ? parsed : value;

@@ -439,7 +439,8 @@ export function registerTools(app: App): void {
       }
       ensure(
         params.claim && params.source,
-        "Proposing memory requires claim and a project-relative evidence file",
+        // Name the argument: agents sent the file as "evidence".
+        `Proposing memory needs ${[params.claim ? "" : "claim", params.source ? "" : "source"].filter(Boolean).join(" and ")}: claim is the fact, source the project-relative file it rests on`,
       );
       return result(propose(ctx.cwd, params.claim, params.source, params.kind, params.quote, by));
     },

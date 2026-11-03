@@ -95,6 +95,10 @@ test("/waicc-worktree lists branch folders with their sessions and changes, and 
   await run("list");
   assert.match(shown.at(-1)!, /\*\*develop\*\* · .*mono · this chat · main folder/);
   assert.match(shown.at(-1)!, /\*\*feature\/local\*\* · .*mono-feature-local · 1 open WAICC session · 1 changed file/);
+  // Typed as with other tools, it still lists rather than naming a branch "--list".
+  shown.length = 0;
+  await run("--list");
+  assert.match(shown.at(-1) ?? "", /^Branch folders of this repository/);
 
   await run("remove feature/local");
   assert.match(notices.at(-1)!, /has 1 changed or untracked file; commit, stash or discard them first\. Nothing was removed\./);

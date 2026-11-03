@@ -419,4 +419,9 @@ test("tools accept nested arguments sent as JSON text, which some models do", as
   assert.deepEqual(decodeJsonArguments({ focus: "{not decoded}", contract: "{\"a\":1}", note: "plain" },
     { properties: { focus: { type: "string" }, contract: {}, note: {} } }), { focus: "{not decoded}", contract: { a: 1 }, note: "plain" });
   assert.equal(decodeJsonArguments({ contract: "{broken" }, { properties: { contract: {} } }).contract, "{broken");
+  // A memory proposal that names its file "evidence" is told the argument is source.
+  await assert.rejects(() => tools.get("waicc_memory").execute("x", { action: "propose", claim: "Search is paged", evidence: "source.txt" }, undefined, undefined, ctx),
+    /^Error: Proposing memory needs source: claim is the fact, source the project-relative file it rests on$/);
+  // JSON text that starts with a newline or spaces is decoded too.
+  assert.deepEqual(decodeJsonArguments({ contract: "\n  {\"a\":1}" }, { properties: { contract: {} } }).contract, { a: 1 });
 });

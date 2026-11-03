@@ -39,6 +39,9 @@ export function registerWorktreeCommands(app: App): void {
         sweepReviewCheckouts(ctx.cwd);
       } catch { /* listed as it is */ }
 
+      // Spellings people type from other tools: /waicc-worktree --list, rm <branch>.
+      const alias: Record<string, string> = { "--list": "list", "-l": "list", ls: "list", "--remove": "remove", rm: "remove" };
+      if (words[0] && alias[words[0]]) words[0] = alias[words[0]];
       if (!words.length || words[0] === "list") {
         const rows = worktrees(ctx.cwd).map((w) => {
           if (w.waicc) return `- ${w.path} · ${basename(w.path).startsWith("waicc-review-") ? "WAICC's read-only checkout for a review that is running" : "WAICC's temporary folder for a delegated coding run"}`;
