@@ -337,6 +337,8 @@ test("/waicc-decide forgives a missing or mistyped ID, and alone lets the human 
   await h.commands.get("waicc-decide").handler("Keep the current policy", ui({ confirm: false }));
   assert.match(asked.at(-1)!, /^Record this as the answer to D1\? Which backend policy\?/);
   assert.equal(readContract(unknown.root, su.id).contract.decisions![0].status, "open", "declined: nothing recorded");
+  // Declining is the human's choice: said plainly, not an error.
+  assert.equal(h.notices.at(-1), "Closed without an answer: nothing was recorded.");
 
   // Alone: pick the decision, then accept the recommendation or type your own.
   const typed = ui({ confirm: true, typed: "Keep the current policy" }) as any;
