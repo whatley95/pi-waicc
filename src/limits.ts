@@ -20,7 +20,10 @@ function errorTexts(stdout: string): string[] {
     try {
       j = JSON.parse(line);
     } catch {
-      texts.push(line); // A plain-text line is the agent's own output, often its error.
+      // A plain-text line is the agent's own output, often its error. A piece of JSON is not: the
+      // kept tail of a long output starts mid-line, inside what the agent wrote (once a contract
+      // whose "401" read as a sign-in failure).
+      if (!/^[{[\]},:"]|\{"|":/.test(line.trim())) texts.push(line);
       continue;
     }
     if (!j || typeof j !== "object") continue;
@@ -47,10 +50,10 @@ export function agentLimit(result: { stdout: string; stderr: string; killed: boo
     const line = lines.find((l) => missing.test(l));
     if (line) return { kind: "missing", text: clip(line) };
   }
-  for (const [kind, pattern] of patterns) {
-    const line = lines.find((l) => pattern.test(l));
-    if (line) return { kind, text: clip(line) };
-  }
+  // The newest error line decides: it is why the agent stopped.
+  for (const line of lines.reverse())
+    for (const [kind, pattern] of patterns)
+      if (pattern.test(line)) return { kind, text: clip(line) };
   return null;
 }
 
