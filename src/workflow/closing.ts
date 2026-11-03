@@ -128,7 +128,8 @@ export function closeSession(cwd: string, id: string, reason: string, shipped?: 
     text(reason, "Closure reason");
     ensure(
       s.status === "READY_TO_CLOSE" || (s.status === "SPEC_APPROVED" && s.objective !== "development"),
-      "Only a fresh reviewed objective in READY_TO_CLOSE (or planning-only SPEC_APPROVED) can be closed",
+      // Say where it stands and both ways on: the human typed this.
+      `Session ${s.id} is ${s.status}: only a session whose review passed (READY_TO_CLOSE), or a planning-only one in SPEC_APPROVED, closes as done. /waicc-status shows what it needs next; to stop it without review approval: /waicc-close ${s.id} --force <reason>`,
     );
     ensure(
       !s.rounds.some((r) => r.status === "WAITING" || r.status === "RECEIVED"),

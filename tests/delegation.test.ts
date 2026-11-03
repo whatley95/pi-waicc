@@ -166,7 +166,9 @@ test("implementation report covers all work; coordinator may choose testing befo
   assert.equal(s.status, "NEEDS_REVIEW");
   assert.equal(s.contractReview, "NOT_REVIEWED");
   assert.equal(s.rounds.length, 3);
-  assert.throws(() => closeSession(root, s.id, "Testing is not code review"), /READY_TO_CLOSE/);
+  // Where it stands, and both ways on.
+  assert.throws(() => closeSession(root, s.id, "Testing is not code review"),
+    new RegExp(`Session ${s.id} is NEEDS_REVIEW: only a session whose review passed \\(READY_TO_CLOSE\\).*/waicc-status shows what it needs next; .*/waicc-close ${s.id} --force <reason>$`));
   s = issue(root, s.id, "review", "Review the full implemented change", undefined, undefined, { kind: "code", completion: report() });
   s = decide(root, answer(root, s));
   assert.equal(s.status, "READY_TO_CLOSE");

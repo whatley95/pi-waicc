@@ -57,6 +57,10 @@ export function reviewContext(
   );
   supported(report, ["summary", "tasks", "checks", "findings"]);
   text(report.summary, "Completion summary");
+  ensure(
+    report.tasks !== undefined,
+    `The completion report has no tasks: report every planned task once as {taskId, evidence}: ${c.tasks.map((task) => task.id).join(", ")}`,
+  );
   const tasks = list(report.tasks, "Completed tasks").map((entry) => {
     const task = record(entry, "Completed task");
     supported(task, ["taskId", "evidence"]);
@@ -92,21 +96,6 @@ export function reviewContext(
     checks.length > 0,
     "Record actual checks and any not_run limits before code review",
   );
-  // Left out, there are none; prior findings that need one are then named as missing below.
-  const findings = (report.findings === undefined ? [] : list(report.findings, "Completed finding dispositions", 6000)).map((entry) => {
-    const finding = record(entry, "Completed finding");
-    supported(finding, ["requestId", "findingId", "disposition", "evidence"]);
-    ensure(
-      ["resolved", "disputed"].includes(finding.disposition as string),
-      "Invalid completion finding disposition",
-    );
-    return {
-      requestId: identifier(finding.requestId),
-      findingId: identifier(finding.findingId),
-      disposition: finding.disposition as "resolved" | "disputed",
-      evidence: text(finding.evidence, "Finding completion evidence"),
-    };
-  });
   // Carry every assessed code-review finding, not only the last conversation preview.
   const required = s.rounds.flatMap((round) =>
     round.review?.kind === "code" && round.status === "ASSESSED"
@@ -115,6 +104,28 @@ export function reviewContext(
           .map((finding) => `${round.id}:${finding.id}`)
       : [],
   );
+  // Left out, there are none; prior findings that need one are then named as missing below.
+  const findings = (report.findings === undefined ? [] : list(report.findings, "Completed finding dispositions", 6000)).map((entry, i) => {
+    const finding = record(entry, "Completed finding");
+    supported(finding, ["requestId", "findingId", "disposition", "evidence"]);
+    ensure(
+      ["resolved", "disputed"].includes(finding.disposition as string),
+      "Invalid completion finding disposition",
+    );
+    const findingId = identifier(finding.findingId, `completion.findings[${i}].findingId`);
+    // Agents leave out the requestId: one prior finding with this ID says which.
+    const rounds = required.filter((key) => key.endsWith(`:${findingId}`)).map((key) => key.slice(0, -findingId.length - 1));
+    ensure(
+      finding.requestId !== undefined || rounds.length === 1,
+      `completion.findings[${i}] (${findingId}) needs its requestId: ${rounds.length ? `${findingId} is a finding in more than one review: ${rounds.join(", ")}` : `no prior actionable finding is ${findingId}`}`,
+    );
+    return {
+      requestId: identifier(finding.requestId ?? rounds[0], `completion.findings[${i}].requestId`),
+      findingId,
+      disposition: finding.disposition as "resolved" | "disputed",
+      evidence: text(finding.evidence, "Finding completion evidence"),
+    };
+  });
   const supplied = findings.map(
     (finding) => `${finding.requestId}:${finding.findingId}`,
   );
