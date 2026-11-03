@@ -6,7 +6,7 @@ import { normalizeReply, replyNormalizerVersion } from "../reply.ts";
 import { reviewContext, type ReviewRequest } from "../review.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { authorizationState, requirementsText } from "../state.ts";
-import { Collector, ensure, text, validateContract, validateReply } from "../validation.ts";
+import { Collector, contractLimit, ensure, text, validateContract, validateReply } from "../validation.ts";
 import type { ContractVersion, Mode, Reply, Round, Session } from "../types.ts";
 import { requireOpen, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
 import { requireAcceptedPlan } from "./sessions.ts";
@@ -202,7 +202,8 @@ export function validateRoundReply(
     problems.check("completion", () => ensure(reply.completion, "A completed delegated implementation needs completion evidence for ALL tasks and prior code-review findings"));
   if (r.mode === "testing" && reply.outcome === "ready")
     problems.check("checks", () => ensure(reply.checks.some((check) => check.outcome === "passed"), "Testing readiness needs actual executed check evidence, not only not_run"));
-  // With a broken proposal, show a valid shape too.
-  problems.done(proposal ? `\nEvery proposedContract field is required except decisions; a valid example: ${JSON.stringify(proposedContractExample)}` : "");
+  // With a broken proposal, show a valid shape too; not when it is only too long, where an example is noise.
+  const oversize = (JSON.stringify(reply.proposedContract)?.length ?? 0) > contractLimit;
+  problems.done(proposal && !oversize ? `\nEvery proposedContract field is required except decisions; a valid example: ${JSON.stringify(proposedContractExample)}` : "");
   return reply;
 }
