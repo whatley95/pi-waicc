@@ -147,6 +147,8 @@ messages only, and never copy their contents (hosts, project names, people) into
   each line has `level`, `version` (an older commit than `main` means that Pi window ran old code:
   not a new bug), `chat`, `sessionId`, and for tool errors `args`, the argument shape without
   text. That shape is usually enough to see the agent's mistake without opening the chat.
+  `node src/cli.ts errors --all --since <ISO time|6h>` reads every tracked project's log at once
+  (since #130), instead of globbing `/c/dev/*/…` folders.
 - `~/.pi/agent/sessions/*/*.jsonl`: Pi chats; WAICC tool failures are `toolResult` messages
   with `isError`, and very large `custom_message` entries point at oversized output.
 

@@ -462,6 +462,16 @@ export function registerTools(app: App): void {
   // Of those, the ones a session ID alone completes; the rest need their text after any ID.
   // Commands whose line carries the human's or agent's prose may be longer.
   const carriesText = new Set(["waicc-advisor", "waicc-amend", "waicc-close", "waicc-decide", "waicc-planning", "waicc-reopen"]);
+  // Names agents have offered that are a flag of another command, or a near miss.
+  const meant: Record<string, string> = {
+    "waicc-profiles": "/waicc-dispatch --profiles", "waicc-init-profiles": "/waicc-dispatch --init-profiles",
+    "waicc-progress": "/waicc-dispatch --progress", "waicc-stop": "/waicc-dispatch --stop",
+    "waicc-decision": "/waicc-decide", "waicc-errors": "waicc errors (a CLI command for a terminal)",
+  };
+  const didYouMean = (name: string | undefined) => {
+    const hint = name && (meant[name] ?? (commands.has(name.replace(/s$/, "")) ? `/${name.replace(/s$/, "")}` : commands.has(`${name}s`) ? `/${name}s` : undefined));
+    return hint ? ` Did you mean ${hint}?` : "";
+  };
   const idIsEnough = new Set(["waicc-delete", "waicc-receive", "waicc-restore", "waicc-use"]);
   const missingText = (name: string, args: string) =>
     needsText.has(name) && (idIsEnough.has(name) ? !args : !args.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b\s*/i, ""));
@@ -496,7 +506,7 @@ export function registerTools(app: App): void {
         const name = /^\/(\S+)/.exec(line)?.[1];
         const max = name && carriesText.has(name) ? 4000 : 500;
         ensure(line.length <= max, `${JSON.stringify(line.slice(0, 60))} is ${line.length} characters; a ${name ? `/${name}` : "command"} line may have at most ${max}`);
-        ensure(name && commands.has(name), `${JSON.stringify(line.slice(0, 60))} is not a WAICC command. Only these can be offered: ${[...commands.keys()].sort().map((n) => `/${n}`).join(", ")}`);
+        ensure(name && commands.has(name), `${JSON.stringify(line.slice(0, 60))} is not a WAICC command.${didYouMean(name)} Only these can be offered: ${[...commands.keys()].sort().map((n) => `/${n}`).join(", ")}`);
         const args = line.slice(name.length + 1).trim();
         const fill = missingText(name, args);
         const shown = line.length > 200 ? `${line.slice(0, 200)}…` : line;

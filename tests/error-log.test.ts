@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
-import { argumentShape, errorLogLimit, readErrors, recordError } from "../src/error-log.ts";
+import { argumentShape, errorLogLimit, readErrors, recordError, sinceTime } from "../src/error-log.ts";
 import { initialize, runtimePath } from "../src/files.ts";
 import { loggingContext } from "../src/pi/app.ts";
 
@@ -117,6 +117,22 @@ test("a WAICC tool's error is logged too; the same one 3 times in a chat tells t
   assert.match(notices[0], /^warning: The agent has hit the same WAICC error 3 times in this chat \(waicc_suggest_command\): "\/reload3" is not a WAICC command\. .*… It may be stuck: Esc stops it, then tell it what to do\.$/);
   await assert.rejects(offer("a", "/reload4"), /is not a WAICC command/);
   assert.equal(notices.length, 1, "told once");
+});
+
+test("waicc errors lists this project's errors, from a time or how long ago", (t) => {
+  const root = folder(t);
+  writeFileSync(join(root, runtimePath, "errors.jsonl"), [
+    { at: "2026-11-01T10:00:00.000Z", source: "loop", message: "old" },
+    { at: "2026-11-03T10:00:00.000Z", source: "waicc_prepare", message: "new" },
+  ].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const cli = (...args: string[]) => spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, "errors", ...args], { encoding: "utf8", windowsHide: true });
+  const since = JSON.parse(cli("--since", "2026-11-02T00:00Z").stdout);
+  assert.equal(since.count, 1);
+  assert.deepEqual(since.projects[0].errors.map((e: { message: string }) => e.message), ["new"]);
+  assert.equal(JSON.parse(cli().stdout).count, 2, "without --since, all of them");
+  assert.match(cli("--since", "yesterday").stderr, /Not a time: "yesterday"\. Use an ISO time such as .*, or how long ago: 30m, 6h, 2d/);
+  assert.equal(sinceTime("2h", Date.parse("2026-11-03T10:00:00Z")), "2026-11-03T08:00:00.000Z");
+  assert.equal(sinceTime("1d", Date.parse("2026-11-03T10:00:00Z")), "2026-11-02T10:00:00.000Z");
 });
 
 test("a tool's arguments are kept as names and types: a field some entries lack says how many have it", () => {

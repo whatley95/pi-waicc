@@ -2083,6 +2083,11 @@ agent sent as field names and value types only (for example `findings: ["2×", {
 of 2)": "string", …}]`), never the text it wrote. When the same one happens 3 times in
 a chat, WAICC tells you once that the agent may be stuck, so you can stop it with Esc and steer.
 
+`waicc errors` prints this project's log as JSON. `--since` limits it to entries after an ISO
+time or a while ago (`30m`, `6h`, `2d`), and `--all` reads every project on the tracker (those
+Pi updated in the last 14 days; the tracker must be on) instead of only this one:
+`waicc errors --all --since 1d`.
+
 Pi sends what a command shows in the chat to the model as well, on every later turn. A WAICC
 output longer than 6,000 characters (a full `/waicc-status` view was often 60,000 or more)
 reaches the model as a summary: short fields as they are, and each long one replaced by a note

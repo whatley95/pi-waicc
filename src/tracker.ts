@@ -521,7 +521,7 @@ export function inbox(): { name: string; root: string; updatedAt: string; needsY
 }
 
 /** The projects the page shows: updated in the last 14 days and still on disk, at most 30. */
-function trackedProjects() {
+export function trackedProjects() {
   const dir = trackerDirectory();
   const cutoff = Date.now() - 14 * 24 * 3_600_000;
   let names: string[];

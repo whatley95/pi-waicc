@@ -6,7 +6,8 @@ import { configureSvnIgnore } from "./ignore.ts";
 import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { auditMemory, curate, propose, recall } from "./memory.ts";
 import { initProject, projectRoot } from "./source.ts";
-import { recordError } from "./error-log.ts";
+import { readErrors, recordError, sinceTime } from "./error-log.ts";
+import { trackedProjects } from "./tracker.ts";
 import { checkpointView, refreshCheckpoint } from "./checkpoint.ts";
 import {
   assess,
@@ -296,6 +297,23 @@ try {
     case "learn":
       output = propose(cwd, rest.join(" "), id);
       break;
+    case "errors": {
+      // This project's error log, or with --all every project on the tracker: oldest first.
+      const input = args.slice(1);
+      const since = flag(input, "--since");
+      const all = input.includes("--all");
+      ensure(input.every((word, i) => word === "--all" || word === "--since" || input[i - 1] === "--since"), "Usage: waicc errors [--since <ISO time or 30m|6h|2d>] [--all]");
+      const from = since === undefined ? "" : sinceTime(since);
+      const projects = all ? trackedProjects().map((p) => ({ name: p.name, root: p.root })) : [{ name: null, root: projectRoot(cwd) }];
+      const rows = projects.map((p) => ({ ...p, errors: readErrors(p.root).filter((e) => e.at > from) })).filter((p) => !all || p.errors.length);
+      output = {
+        since: from || null,
+        ...(all ? { note: "Projects on the tracker (updated by Pi in the last 14 days; the tracker must be on)." } : {}),
+        count: rows.reduce((n, p) => n + p.errors.length, 0),
+        projects: rows,
+      };
+      break;
+    }
     case "recover-lock":
       recoverLock(projectRoot(cwd));
       output = { recovered: true };
@@ -305,7 +323,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | errors [--since <ISO time or 30m|6h|2d>] [--all] | recover-lock",
       };
   }
   process.stdout.write(json(output));

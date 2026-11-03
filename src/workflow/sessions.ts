@@ -181,7 +181,8 @@ export function beginDevelopment(cwd: string, id: string, owner?: "main" | "dele
     const specPass = (s.reviewApproval?.kind ?? "contract") === "contract" && approvalIsCurrent(s, source.fingerprint);
     noFailedSpecification(s);
     const acceptedRequestId = acceptedPlanRequestId(root, s);
-    ensure(acceptedRequestId || specPass, "Accept the current source-backed planning reply or obtain a fresh specification PASS before /waicc-develop");
+    // Say what is missing and the way on: the human typed /waicc-develop.
+    ensure(acceptedRequestId || specPass, `Session ${s.id} has no accepted plan for its current contract (v${s.contractVersion}), so coding cannot start yet: the contract changed after its plan was accepted, or no planning reply has been accepted. Have the main agent request planning on the current contract and accept the reply as planned, or get a fresh specification review PASS (/waicc-review --contract); then /waicc-develop. /waicc-status shows where it stands.`);
     if (owner) s.implementationOwner = owner;
     s.planApproval = { contractVersion: s.contractVersion, requirementsDigest: v.requirementsDigest,
       requestId: specPass ? s.reviewApproval!.requestId : acceptedRequestId! };
