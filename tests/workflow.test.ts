@@ -2291,6 +2291,6 @@ test("a revision that drops or rewrites a requirement or decision names which", 
   after.requirements[0] = { ...after.requirements[0], sourceQuote: "reworded" };
   after.requirements.splice(1, 1);
   assert.throws(() => stableIds(before, after),
-    new RegExp(`as amendments\. Dropped: ${before.requirements[1].id}\. Original quote changed: ${before.requirements[0].id}\.$`));
+    new RegExp(`as amendments\\. Dropped: ${before.requirements[1].id}\\. Original quote changed: ${before.requirements[0].id}\\.$`));
   assert.doesNotThrow(() => stableIds(before, structuredClone(before)));
 });
