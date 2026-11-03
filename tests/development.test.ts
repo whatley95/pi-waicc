@@ -409,7 +409,12 @@ test("/waicc-reopen <id> reopens a session from a chat that has none selected, a
   await closer.commands.get("waicc-force-close").handler(s.id, closer.ctx);
   const h = harness(root);
   await h.commands.get("waicc-reopen").handler("Needed after all", h.ctx);
-  assert.match(h.notices.at(-1)!, /^No WAICC session selected/);
+  assert.match(h.notices.at(-1)!, /^No WAICC session selected\. There is no open session here: start \/waicc-planning, or \/waicc-status all lists closed ones\.$/);
+  // With open sessions, it names them, so one can be picked at once.
+  const other = createSession(root, "Add export");
+  await h.commands.get("waicc-close").handler("Done", h.ctx);
+  assert.equal(h.notices.at(-1)!, `No WAICC session selected. Open here, newest first: ${other.id} (DRAFT). Select one with /waicc-use <session-id>, or start /waicc-planning.`);
+  await h.commands.get("waicc-delete").handler(other.id, h.ctx);
   await h.commands.get("waicc-reopen").handler(s.id, h.ctx);
   assert.ok(h.notices.at(-1)!.startsWith(`Say why it is reopened: /waicc-reopen ${s.id} <reason>`), h.notices.at(-1));
   assert.equal(loadSession(root, s.id).status, "CLOSED", "nothing changed");

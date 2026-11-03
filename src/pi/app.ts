@@ -7,7 +7,7 @@ import type { PipelineResult } from "../pipelines.ts";
 import type { PiSpawner } from "../queue.ts";
 import type { Shipped } from "../types.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { json, loadSession } from "../files.ts";
+import { json, listSessions, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
 import type { CheckRunner } from "../checks.ts";
 import type { AgentRunner } from "../dispatch.ts";
@@ -269,10 +269,17 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   };
   function selected(ctx: ExtensionContext, explicit?: string): string {
     const id = explicit || bindings.get(key(ctx))?.sessionId;
-    ensure(
-      id,
-      "No WAICC session selected. Use /waicc-status, then /waicc-use <session-id>, or start /waicc-planning.",
-    );
+    if (!id) {
+      // Name the open ones, so the human (or the agent, through the picker) chooses in one step.
+      let open: string[] = [];
+      try {
+        open = listSessions(projectRoot(ctx.cwd)).filter((s) => s.status !== "CLOSED")
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((s) => `${s.id} (${s.status})`);
+      } catch { /* the message stands without them */ }
+      throw new Error(`No WAICC session selected. ${open.length
+        ? `Open here, newest first: ${open.slice(0, 5).join(", ")}${open.length > 5 ? `, and ${open.length - 5} more (/waicc-status)` : ""}. Select one with /waicc-use <session-id>, or start /waicc-planning.`
+        : "There is no open session here: start /waicc-planning, or /waicc-status all lists closed ones."}`);
+    }
     return id;
   }
   function trusted(ctx: ExtensionContext): void {
