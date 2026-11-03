@@ -33,6 +33,12 @@ test("a limit is read from the agent's own error lines, never from files it read
   const said = JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "The API returns 429 when the rate limit is hit." }] } });
   assert.equal(agentLimit(run(`${read}\n${said}`)), null);
   assert.equal(agentLimit(run("", "TypeError: cannot read properties of undefined")), null);
+  // A long output's kept tail starts mid-line, inside what the agent wrote: that piece is not its
+  // error, and the newest error line (here Claude's own result) decides.
+  const piece = `:[{"id":"AC-1","text":"Unauthorized calls return 401"}]}}]}`;
+  const limited = JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "You've hit your 5-hour limit · resets 9:30pm" });
+  assert.deepEqual(agentLimit(run(`${piece}\n${limited}`)), { kind: "usage", text: "You've hit your 5-hour limit · resets 9:30pm" });
+  assert.equal(agentLimit(run(piece)), null);
   // Stopped or timed out: never a limit, whatever it printed.
   assert.equal(agentLimit(run(claudeLimited, "", true)), null);
 });
@@ -160,6 +166,16 @@ test("no retry without a fallback, for other failures, or a second time", async 
   await settle();
   assert.deepEqual(a.programs, ["claude"]);
   assert.match(a.outcomes()[0].nextAction, /claude hit its usage limit/);
+  // The human is told why it ended, not only that it did.
+  assert.ok(a.notices.includes("claude hit its usage limit before it replied: Claude AI usage limit reached|1760000000"), a.notices.join("\n"));
+
+  const slow = reviewWaiting(t, { opus: { via: "claude", timeoutMinutes: 30 } });
+  const s = harness(slow.root, slow.id, { claude: { stdout: "", stderr: "", code: 1, killed: true } }, []);
+  await s.use();
+  await s.dispatch("");
+  await waitFor(() => s.outcomes().length === 1, "the run");
+  await settle();
+  assert.ok(s.notices.includes("claude reached its 30-minute time limit before it replied. Dispatch again, or give it longer with --timeout <minutes>."), s.notices.join("\n"));
 
   const crash = reviewWaiting(t);
   const b = harness(crash.root, crash.id, { claude: { stdout: "", stderr: "TypeError: boom", code: 1, killed: false } }, []);

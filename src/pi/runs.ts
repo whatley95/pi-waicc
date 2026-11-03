@@ -207,9 +207,14 @@ export function createRuns(app: Core) {
         // and the loop's next dispatch must not see this run as still going.
         release();
         const continuing = outcome.replySubmitted && options.continue;
+        // Without a reply, say why it ended: a limit, its time running out, or the human stopping it.
+        const ended = controller.signal.aborted ? `${plan.via} was stopped before it replied.`
+          : outcome.limit ? `${plan.via} ${limitText(outcome.limit)} before it replied: ${outcome.limit.text}`
+          : outcome.killed ? `${plan.via} reached its ${Math.round(plan.timeoutMs / 60_000)}-minute time limit before it replied. Dispatch again, or give it longer with --timeout <minutes>.`
+          : `${plan.via} finished without a reply; see the log.`;
         ctx.ui.notify(outcome.replySubmitted
           ? `${plan.via} submitted a reply${usageText(outcome.usage) ? ` (${usageText(outcome.usage)})` : ""}.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
-          : `${plan.via} finished without a reply; see the log.`, outcome.replySubmitted ? "info" : "warning");
+          : ended, outcome.replySubmitted ? "info" : "warning");
         const cost = usageText(outcome.usage), pace = runPace(outcome.usage, outcome.durationMs);
         notice(ctx, outcome.replySubmitted ? "info" : "warning", `${label.replace(/^WAICC · /, "")}: ${outcome.replySubmitted ? "reply submitted" : `finished without a reply (exit ${outcome.code}${outcome.killed ? ", stopped" : ""})`} after ${elapsed(outcome.durationMs)}${cost ? `, ${cost}` : ""}${pace ? ` (${pace})` : ""}.`);
         pi.sendMessage({ customType: "waicc-dispatch", content: json(outcome), display: true }, { triggerTurn: false });
