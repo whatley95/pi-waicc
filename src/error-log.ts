@@ -90,6 +90,14 @@ export function recordError(root: string, source: string, message: string, conte
   } catch { /* the log only helps later; it must never turn into an error of its own */ }
 }
 
+/** A time to read errors from: an ISO time, or how long ago (30m, 6h, 2d). */
+export function sinceTime(value: string, now = Date.now()): string {
+  const ago = /^(\d+)([mhd])$/.exec(value.trim());
+  const at = ago ? now - Number(ago[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[ago[2] as "m" | "h" | "d"] : Date.parse(value);
+  if (Number.isNaN(at)) throw new Error(`Not a time: ${JSON.stringify(value)}. Use an ISO time such as 2026-11-03T08:00Z, or how long ago: 30m, 6h, 2d`);
+  return new Date(at).toISOString();
+}
+
 export function readErrors(root: string): ErrorEntry[] {
   const path = join(root, runtimePath, errorLogName);
   if (!existsSync(path)) return [];

@@ -134,6 +134,10 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   // Only real WAICC commands, one line each; no picker without UI.
   await assert.rejects(suggest([{ command: "/reload", why: "x" }], chat), /"\/reload" is not a WAICC command\. Only these can be offered: .*\/waicc-worktree/);
   await assert.rejects(suggest([{ command: "waicc-status", why: "x" }], chat), /is not a WAICC command/);
+  // A flag of another command, or a near miss, is named.
+  await assert.rejects(suggest([{ command: "/waicc-profiles", why: "x" }], chat), /is not a WAICC command\. Did you mean \/waicc-dispatch --profiles\? Only these/);
+  await assert.rejects(suggest([{ command: "/waicc-decision D1 yes", why: "x" }], chat), /Did you mean \/waicc-decide\?/);
+  await assert.rejects(suggest([{ command: "/waicc-uses", why: "x" }], chat), /Did you mean \/waicc-use\?/);
   await assert.rejects(suggest([{ command: "/waicc-status\n/waicc-close done", why: "x" }], chat), /more than one command line; offer each as its own entry/);
   // Text over several lines is one line with spaces, and text commands may be long; the picker shows the start.
   const prose = `split item 4 into\n(4a) the build and\n  (4b) the deploy. ${"x".repeat(1500)}`;
