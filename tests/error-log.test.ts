@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
-import { errorLogLimit, readErrors, recordError } from "../src/error-log.ts";
+import { argumentShape, errorLogLimit, readErrors, recordError } from "../src/error-log.ts";
 import { initialize, runtimePath } from "../src/files.ts";
 import { loggingContext } from "../src/pi/app.ts";
 
@@ -31,6 +31,9 @@ test("errors are kept in the project's WAICC folder, never create one, and stay 
   assert.equal(entry.source, "/waicc-amend");
   assert.match(entry.message, /^Requirement amendment must be nonempty text/);
   assert.ok(!Number.isNaN(Date.parse(entry.at)));
+  assert.equal(entry.level, "error");
+  // Run from this checkout, the version names its commit: an error from an older WAICC shows as one.
+  assert.match(entry.version!, /^\d+\.\d+\.\d+ [0-9a-f]{10}$/);
 
   for (let i = 0; i < 200; i++) recordError(root, "loop", `failure ${i} ${"x".repeat(1_900)}`);
   const path = join(root, runtimePath, "errors.jsonl");
@@ -60,7 +63,7 @@ test("a Pi command's error, and a warning shown later on its context, go to the 
   const later = loggingContext(ctx, "dispatch");
   later.ui.notify("codex has shown no new step for 10 minutes", "warning");
   later.ui.notify("codex submitted a reply.", "info");
-  assert.deepEqual(readErrors(root).map((e) => e.source), ["/waicc-reopen", "dispatch"]);
+  assert.deepEqual(readErrors(root).map((e) => [e.source, e.level, e.chat]), [["/waicc-reopen", "error", "log-chat"], ["dispatch", "warning", "log-chat"]]);
   assert.equal(loggingContext(later, "other"), later, "wrapped once");
   trusted = false;
   later.ui.notify("untrusted", "error");
@@ -101,6 +104,11 @@ test("a WAICC tool's error is logged too; the same one 3 times in a chat tells t
     tools.get("waicc_suggest_command").execute("call", { commands: [{ command, why: "x" }] }, undefined, undefined, ctx(chat));
   for (const n of [1, 2]) await assert.rejects(offer("a", `/reload${n}`), /is not a WAICC command/);
   assert.deepEqual(readErrors(root).map((e) => e.source), ["waicc_suggest_command", "waicc_suggest_command"]);
+  // With the chat and what the agent sent, as names and types: never the command it wrote.
+  const [first] = readErrors(root);
+  assert.equal(first.chat, "a");
+  assert.deepEqual(first.args, { commands: ["1×", { command: "string", why: "string" }] });
+  assert.ok(!JSON.stringify(first.args).includes("reload"));
   assert.equal(notices.length, 0, "twice is not yet a pattern");
   await assert.rejects(offer("b", "/reload3"), /is not a WAICC command/);
   assert.equal(notices.length, 0, "another chat counts on its own");
@@ -109,4 +117,23 @@ test("a WAICC tool's error is logged too; the same one 3 times in a chat tells t
   assert.match(notices[0], /^warning: The agent has hit the same WAICC error 3 times in this chat \(waicc_suggest_command\): "\/reload3" is not a WAICC command\. .*… It may be stuck: Esc stops it, then tell it what to do\.$/);
   await assert.rejects(offer("a", "/reload4"), /is not a WAICC command/);
   assert.equal(notices.length, 1, "told once");
+});
+
+test("a tool's arguments are kept as names and types: a field some entries lack says how many have it", () => {
+  const report = {
+    summary: "Customer secret text",
+    tasks: [{ taskId: "T1", evidence: "x" }],
+    findings: [{ requestId: "R1", findingId: "F1" }, { findingId: "F2" }],
+    extra: "[1,2]", count: 3, done: false, none: null, empty: [],
+  };
+  assert.deepEqual(argumentShape({ sessionId: "s", completion: report }), {
+    sessionId: "string",
+    completion: {
+      summary: "string",
+      tasks: ["1×", { taskId: "string", evidence: "string" }],
+      findings: ["2×", { "requestId (in 1 of 2)": "string", findingId: "string" }],
+      extra: "string (JSON text)", count: "number", done: "boolean", none: "null", empty: [],
+    },
+  });
+  assert.ok(!JSON.stringify(argumentShape(report)).includes("secret"));
 });

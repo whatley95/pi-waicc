@@ -2066,8 +2066,11 @@ See [skill provenance](THIRD_PARTY_NOTICES.md).
 
 **Error log.** Errors and warnings WAICC shows you are also kept in the project's own WAICC
 folder, `.pi/pi-waicc/errors.jsonl`, one JSON line each with the time, where it came from (a
-command such as `/waicc-amend`, `loop`, `picker`, `auto-continue` or a CLI command) and the
-message. Pi does not save these notices in the chat, so this is what to look at, or attach to
+command such as `/waicc-amend`, `loop`, `picker`, `auto-continue` or a CLI command), the
+message, and whether it was an error or a warning. Each line also names the WAICC version that
+raised it (with its commit when Pi runs WAICC from a Git checkout, so an error from a Pi window
+still running older code is easy to tell apart), and, in Pi, the chat and the WAICC session it
+had selected. Pi does not save these notices in the chat, so this is what to look at, or attach to
 an issue, when something went wrong. It stays on your machine (the folder is ignored by Git),
 is never created in a folder that does not use WAICC or a project you have not trusted, and
 drops its oldest half past 256 KB. The tracker page (`/waicc-tracker`)
@@ -2075,7 +2078,9 @@ shows each project's 20 newest, newest first, under *Recent errors and warnings*
 overview.
 
 Errors from WAICC tools the main agent calls (such as `waicc_prepare`) go to the same log, under
-the tool's name: the agent sees them, you normally do not. When the same one happens 3 times in
+the tool's name: the agent sees them, you normally do not. Such a line also has `args`, what the
+agent sent as field names and value types only (for example `findings: ["2×", {"requestId (in 1
+of 2)": "string", …}]`), never the text it wrote. When the same one happens 3 times in
 a chat, WAICC tells you once that the agent may be stuck, so you can stop it with Esc and steer.
 
 Pi sends what a command shows in the chat to the model as well, on every later turn. A WAICC

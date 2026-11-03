@@ -15,7 +15,7 @@ import { sourceFirst, contractOwner, recipientResponsibilities } from "../instru
 import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
 import { loadAgentConfig } from "../profiles.ts";
 import { inbox, trackerEnabled } from "../tracker.ts";
-import { loggingContext, modelLimit, modelView, type App } from "./app.ts";
+import { modelLimit, modelView, type App } from "./app.ts";
 import { stopPipelineWatches } from "./pipelines.ts";
 
 /** Git's words for a merge, rebase, cherry-pick or stash that stopped on conflicts. */
@@ -23,7 +23,7 @@ export const mergeConflict = /^CONFLICT \(|Automatic merge failed|^error: could 
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
-  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
+  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, logged, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
   // Set when a dispatched recipient's binding is refused; its every turn then only explains why.
   let dispatchRefusal: string | undefined;
   pi.on("input", async (event, ctx) => {
@@ -117,7 +117,7 @@ export function registerHooks(app: App): void {
     marksAtStart.delete(key(ctx));
     endMain(ctx);
     automaticRequests.clear(ctx);
-    advanceLoop(loggingContext(ctx, "loop"));
+    advanceLoop(logged(ctx, "loop"));
     track(ctx);
     warnOutdated(ctx);
     autoCompact(ctx, before);
@@ -134,7 +134,7 @@ export function registerHooks(app: App): void {
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);
-    if (ctx.hasUI) watchReplies(loggingContext(ctx, "auto-continue"));
+    if (ctx.hasUI) watchReplies(logged(ctx, "auto-continue"));
     track(ctx);
     // What waits for you elsewhere, once per chat start; this project's own needs show in its status.
     if (ctx.hasUI && trackerEnabled()) {

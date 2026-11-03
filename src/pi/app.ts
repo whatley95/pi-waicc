@@ -1,4 +1,4 @@
-import { recordError } from "../error-log.ts";
+import { argumentShape, recordError } from "../error-log.ts";
 import { recipientAssignment } from "../recipient.ts";
 import type { GitLabCall, GitLabHost, GitLabProject, OriginProbe } from "../gitlab.ts";
 import type { ShipPlan } from "../ship.ts";
@@ -69,13 +69,21 @@ export function modelView(content: string): string {
 }
 
 const logging = Symbol("waicc-error-log");
+/** Pi's chat ID, for the error log; a context without one logs without it. */
+const chatOf = (ctx: ExtensionContext): string | undefined => {
+  try {
+    return ctx.sessionManager?.getSessionId();
+  } catch {
+    return undefined;
+  }
+};
 /**
  * The same context, except that the errors and warnings it shows are also written to the
  * project's error log. Copied by property descriptor, as Pi copies its own contexts, so its
  * getters stay live. Background work keeps the context its command started with, so a
  * dispatch or loop that fails later is logged too.
  */
-export function loggingContext<T extends ExtensionContext>(ctx: T, source: string): T {
+export function loggingContext<T extends ExtensionContext>(ctx: T, source: string, session?: () => string | undefined): T {
   if ((ctx as unknown as Record<symbol, unknown>)[logging]) return ctx;
   const copy = Object.defineProperties({}, Object.getOwnPropertyDescriptors(ctx)) as T;
   Object.defineProperty(copy, "ui", {
@@ -85,7 +93,7 @@ export function loggingContext<T extends ExtensionContext>(ctx: T, source: strin
         notify(message: string, level?: "info" | "warning" | "error") {
           if (level === "error" || level === "warning")
             try {
-              if (ctx.isProjectTrusted()) recordError(projectRoot(ctx.cwd), source, message);
+              if (ctx.isProjectTrusted()) recordError(projectRoot(ctx.cwd), source, message, { level, chat: chatOf(ctx), sessionId: session?.() });
             } catch { /* the log never stands in the way of the message */ }
           return ui.notify(message, level);
         },
@@ -139,13 +147,20 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   const toolErrors = new Map<string, number>();
   const registerTool: ExtensionAPI["registerTool"] = (tool) =>
     pi.registerTool({ ...tool, execute: async (id, params, signal, update, ctx) => {
+      const decoded = decodeJsonArguments(params, tool.parameters);
       try {
-        return await tool.execute(id, decodeJsonArguments(params, tool.parameters), signal, update, ctx);
+        return await tool.execute(id, decoded, signal, update, ctx);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!signal?.aborted)
           try {
-            if (ctx.isProjectTrusted()) recordError(projectRoot(ctx.cwd), tool.name, message);
+            // What the agent sent, as names and types: enough to see the mistake, none of its text.
+            const sent = (decoded ?? {}) as { sessionId?: unknown };
+            if (ctx.isProjectTrusted())
+              recordError(projectRoot(ctx.cwd), tool.name, message, {
+                chat: chatOf(ctx), args: argumentShape(decoded),
+                sessionId: typeof sent.sessionId === "string" ? sent.sessionId : bindings.get(key(ctx))?.sessionId,
+              });
             const same = `${key(ctx)}\0${tool.name}\0${message.slice(0, 160).replace(/\d+/g, "#")}`;
             const count = (toolErrors.get(same) ?? 0) + 1;
             toolErrors.set(same, count);
@@ -202,7 +217,9 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   const stepLine = (event: ProgressEvent) => `${elapsed(event.at).padStart(7)}  ${mark(event)} ${event.text}`;
   const key = (ctx: ExtensionContext): string =>
     `${projectRoot(ctx.cwd)}:${ctx.sessionManager.getSessionId()}`;
-  const toLive = (kind: LiveRun["kind"], sessionId: string | null, label: string, startedAt: number, events: ProgressEvent[]): LiveRun => ({
+  /** A context whose errors and warnings go to the error log, with the session this chat has selected. */
+  const logged = <T extends ExtensionContext>(ctx: T, source: string): T => loggingContext(ctx, source, () => bindings.get(key(ctx))?.sessionId);
+  const toLive =(kind: LiveRun["kind"], sessionId: string | null, label: string, startedAt: number, events: ProgressEvent[]): LiveRun => ({
     kind, sessionId, label, startedAt,
     steps: events.filter((event) => event.kind !== "note").slice(-12),
     said: events.findLast((event) => event.kind === "note")?.text ?? null,
@@ -416,7 +433,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   ): void {
     // Resolves to the error the human was shown, or null: waicc_suggest_command reports it.
     const run = async (args: string, shown: ExtensionCommandContext): Promise<string | null> => {
-        const ctx = loggingContext(shown, `/${name}`);
+        const ctx = logged(shown, `/${name}`);
         // A line above the input box while the command runs, so a slow one does not look hung.
         // RPC clients can show widgets too; print mode has no UI.
         const busy = ctx.hasUI;
@@ -544,7 +561,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, commands, commandDone,compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
+  return { pi, services, bindings, copied, commands, commandDone,compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, logged, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;
