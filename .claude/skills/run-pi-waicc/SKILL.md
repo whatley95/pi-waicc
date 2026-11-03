@@ -143,7 +143,10 @@ pattern is `tests/extension.test.ts`, which uses Pi's own `loadExtensions()`.
 Two local sources show what went wrong in the user's own projects. Read them for counts and
 messages only, and never copy their contents (hosts, project names, people) into this public repo:
 - `<project>/.pi/pi-waicc/errors.jsonl`: every error and warning WAICC showed, with its source,
-  and (since #121) errors from WAICC tools the main agent called, under the tool name.
+  and (since #121) errors from WAICC tools the main agent called, under the tool name. Since #125
+  each line has `level`, `version` (an older commit than `main` means that Pi window ran old code:
+  not a new bug), `chat`, `sessionId`, and for tool errors `args`, the argument shape without
+  text. That shape is usually enough to see the agent's mistake without opening the chat.
 - `~/.pi/agent/sessions/*/*.jsonl`: Pi chats; WAICC tool failures are `toolResult` messages
   with `isError`, and very large `custom_message` entries point at oversized output.
 
