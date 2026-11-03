@@ -29,6 +29,12 @@ export function registerTools(app: App): void {
     if (warning && ctx.hasUI) ctx.ui.notify(warning, "warning");
     return view;
   };
+  // Name what was sent: an agent sent reviewKind with a planning handoff.
+  const reviewOnly = (params: { mode: string; reviewKind?: unknown; completion?: unknown }) => {
+    const sent = [params.reviewKind === undefined ? "" : "reviewKind", params.completion === undefined ? "" : "completion"].filter(Boolean);
+    ensure(params.mode === "review" || !sent.length,
+      `${sent.join(" and ")} ${sent.length > 1 ? "apply" : "applies"} only to mode review; this is a ${params.mode} handoff, so leave ${sent.length > 1 ? "them" : "it"} out`);
+  };
   registerTool({
     name: "waicc_ask_advisor",
     label: "Ask the advisor for a second opinion",
@@ -194,7 +200,7 @@ export function registerTools(app: App): void {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      ensure(params.mode === "review" || (params.reviewKind === undefined && params.completion === undefined), "Review kind/completion only apply to review mode");
+      reviewOnly(params);
       ensure(!params.fullReview || (params.mode === "review" && (params.reviewKind ?? "code") === "code"), "fullReview applies only to a code review");
       const tidy = tidyIds(params.contract);
       prepare(
@@ -330,7 +336,7 @@ export function registerTools(app: App): void {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      ensure(params.mode === "review" || (params.reviewKind === undefined && params.completion === undefined), "Review kind/completion only apply to review mode");
+      reviewOnly(params);
       ensure(!params.fullReview || (params.mode === "review" && (params.reviewKind ?? "code") === "code"), "fullReview applies only to a code review");
       issue(
         ctx.cwd,

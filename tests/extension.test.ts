@@ -419,6 +419,10 @@ test("tools accept nested arguments sent as JSON text, which some models do", as
   assert.deepEqual(decodeJsonArguments({ focus: "{not decoded}", contract: "{\"a\":1}", note: "plain" },
     { properties: { focus: { type: "string" }, contract: {}, note: {} } }), { focus: "{not decoded}", contract: { a: 1 }, note: "plain" });
   assert.equal(decodeJsonArguments({ contract: "{broken" }, { properties: { contract: {} } }).contract, "{broken");
+  // A review kind sent with a planning handoff is named.
+  await assert.rejects(() => tools.get("waicc_prepare").execute("x", {
+    sessionId: session.id, expectedVersion: 1, mode: "planning", reviewKind: "code", focus: "Plan search", contract,
+  }, undefined, undefined, ctx), /reviewKind applies only to mode review; this is a planning handoff, so leave it out$/);
   // A memory proposal that names its file "evidence" is told the argument is source.
   await assert.rejects(() => tools.get("waicc_memory").execute("x", { action: "propose", claim: "Search is paged", evidence: "source.txt" }, undefined, undefined, ctx),
     /^Error: Proposing memory needs source: claim is the fact, source the project-relative file it rests on$/);

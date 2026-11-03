@@ -112,6 +112,11 @@ test("code review rejects incomplete/ambiguous reports, task batches and failed 
     new RegExp(`Missing: ${second.taskId}\\. Not a task in the current plan: UNKNOWN\\. Given more than once: ${first.taskId}\\.$`));
   const { tasks: _tasks, ...noTasks } = completion();
   assert.throws(() => review(root, s, noTasks as ReturnType<typeof completion>), new RegExp(`has no tasks: .*: ${first.taskId}, ${second.taskId}$`));
+  // Which field, and which check, by name.
+  assert.throws(() => review(root, s, { ...completion(), title: "Done" } as ReturnType<typeof completion>),
+    /The completion report has unsupported fields: title\. Allowed: summary, tasks, checks, findings$/);
+  assert.throws(() => review(root, s, { ...completion(), checks: [{ description: "Tests", outcome: "failed", evidence: "Failure is not done" }] }),
+    /not_run with limits\. checks\[0\] \(Tests\) has outcome "failed"$/);
   assert.deepEqual(loadSession(root, s.id), before);
   assert.throws(() => issue(root, s.id, "planning", "Wrong mode", undefined, undefined, { kind: "code", completion: completion() }), /only apply to review/);
 });

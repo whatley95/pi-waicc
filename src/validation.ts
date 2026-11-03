@@ -379,9 +379,10 @@ export function validateContract(
     w.check("affectedTaskIds", () => {
       const affected = strings(d.affectedTaskIds, "Affected task IDs");
       unique(affected, "affected task IDs");
+      const unknown = affected.filter((id) => !ids.includes(id));
       ensure(
-        affected.length > 0 && affected.every((id) => ids.includes(id)),
-        "A decision must name existing affected tasks",
+        affected.length > 0 && !unknown.length,
+        `A decision must name existing affected tasks${unknown.length ? `; not a task in this contract: ${unknown.join(", ")}` : ""}. Tasks: ${ids.join(", ")}`,
       );
     });
     w.check("evidence", () => ensure(

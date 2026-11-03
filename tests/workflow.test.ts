@@ -299,6 +299,11 @@ test("decisions require investigation evidence, task scope and explicit recorded
     Object.assign(c.decisions![0], change);
     assert.throws(() => validateContract(c, requirements));
   }
+  // The unknown task is named, with the tasks there are.
+  const unknownTask = gatedPlan();
+  unknownTask.decisions![0].affectedTaskIds = ["UNKNOWN"];
+  assert.throws(() => validateContract(unknownTask, requirements),
+    new RegExp(`not a task in this contract: UNKNOWN\\. Tasks: ${unknownTask.tasks.map((task) => task.id).join(", ")}`));
   const agentOwned = gatedPlan();
   agentOwned.decisions![0].owner = "agent";
   assert.throws(

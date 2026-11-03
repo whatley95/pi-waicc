@@ -14,10 +14,12 @@ import {
   text,
 } from "./validation.ts";
 
-function supported(value: Record<string, unknown>, fields: string[]): void {
+function supported(value: Record<string, unknown>, fields: string[], name = "The completion report"): void {
+  // Name them: agents added "title" or "summaryLine" and could not tell which was refused.
+  const extra = Object.keys(value).filter((key) => !fields.includes(key));
   ensure(
-    Object.keys(value).every((key) => fields.includes(key)),
-    "Unsupported completion report fields",
+    !extra.length,
+    `${name} has unsupported fields: ${extra.join(", ")}. Allowed: ${fields.join(", ")}`,
   );
 }
 
@@ -63,7 +65,7 @@ export function reviewContext(
   );
   const tasks = list(report.tasks, "Completed tasks").map((entry) => {
     const task = record(entry, "Completed task");
-    supported(task, ["taskId", "evidence"]);
+    supported(task, ["taskId", "evidence"], "A completed task");
     return {
       taskId: identifier(task.taskId),
       evidence: text(task.evidence, "Task completion evidence"),
@@ -78,12 +80,12 @@ export function reviewContext(
     !notReported.length && !notPlanned.length && !twice.length,
     `Finish ALL planned tasks before review; report every task exactly once with implementation/acceptance evidence.${notReported.length ? ` Missing: ${notReported.join(", ")}.` : ""}${notPlanned.length ? ` Not a task in the current plan: ${notPlanned.join(", ")}.` : ""}${twice.length ? ` Given more than once: ${twice.join(", ")}.` : ""}`,
   );
-  const checks = list(report.checks, "Completion checks").map((entry) => {
+  const checks = list(report.checks, "Completion checks").map((entry, i) => {
     const check = record(entry, "Completion check");
-    supported(check, ["description", "outcome", "evidence", "extensions"]);
+    supported(check, ["description", "outcome", "evidence", "extensions"], "A completion check");
     ensure(
       (allowFailedChecks ? ["passed", "failed", "not_run"] : ["passed", "not_run"]).includes(check.outcome as string),
-      "Fix all failed checks before code review; unavailable checks must be honestly not_run with limits",
+      `Fix all failed checks before code review; unavailable checks must be honestly not_run with limits. checks[${i}]${typeof check.description === "string" ? ` (${check.description.slice(0, 120)})` : ""} has outcome ${JSON.stringify(check.outcome)}`,
     );
     return {
       description: text(check.description, "Check description"),
@@ -107,7 +109,7 @@ export function reviewContext(
   // Left out, there are none; prior findings that need one are then named as missing below.
   const findings = (report.findings === undefined ? [] : list(report.findings, "Completed finding dispositions", 6000)).map((entry, i) => {
     const finding = record(entry, "Completed finding");
-    supported(finding, ["requestId", "findingId", "disposition", "evidence"]);
+    supported(finding, ["requestId", "findingId", "disposition", "evidence"], "A completed finding");
     ensure(
       ["resolved", "disputed"].includes(finding.disposition as string),
       "Invalid completion finding disposition",
