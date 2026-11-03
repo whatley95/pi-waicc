@@ -60,6 +60,7 @@ import {
 import type { Contract, Reply, Session } from "../src/types.ts";
 import { pathToFileURL } from "node:url";
 import { decisionGates } from "../src/decisions.ts";
+import { stableIds } from "../src/workflow/shared.ts";
 
 function fixture(t: TestContext, git = false): string {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
@@ -388,7 +389,7 @@ test("planned rejects stale source and decision removal; other modes cannot use 
         decision: "planned",
         contract: example(),
       }),
-    /Preserve decision/,
+    /Preserve decision IDs\/questions across revisions; carry answers and evidence forward instead of dropping prior decisions\. Dropped: DEC-001\.$/,
   );
   writeFileSync(join(root, "app.txt"), "Source changed");
   assert.throws(
@@ -2282,4 +2283,14 @@ test("CLI can create and recover sessions without a Pi process", (t) => {
     windowsHide: true,
   });
   assert.equal(unknown.status, 2);
+});
+
+test("a revision that drops or rewrites a requirement or decision names which", () => {
+  const before = { ...example(), decisions: [] } as Contract;
+  const after = structuredClone(before);
+  after.requirements[0] = { ...after.requirements[0], sourceQuote: "reworded" };
+  after.requirements.splice(1, 1);
+  assert.throws(() => stableIds(before, after),
+    new RegExp(`as amendments\. Dropped: ${before.requirements[1].id}\. Original quote changed: ${before.requirements[0].id}\.$`));
+  assert.doesNotThrow(() => stableIds(before, structuredClone(before)));
 });

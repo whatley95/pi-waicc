@@ -83,21 +83,21 @@ export function contractFiles(
   };
 }
 export function stableIds(previous: Contract, next: Contract): void {
+  // Name them: the agent then restores exactly those instead of guessing.
+  const changes = <T extends { id: string }>(before: T[], after: T[], same: (a: T, b: T) => boolean, what: string) => {
+    const dropped = before.filter((p) => !after.some((n) => n.id === p.id)).map((p) => p.id);
+    const changed = before.filter((p) => after.some((n) => n.id === p.id && !same(p, n))).map((p) => p.id);
+    return `${dropped.length ? ` Dropped: ${dropped.join(", ")}.` : ""}${changed.length ? ` ${what} changed: ${changed.join(", ")}.` : ""}`;
+  };
+  const requirements = changes(previous.requirements, next.requirements, (a, b) => a.sourceQuote === b.sourceQuote, "Original quote");
   ensure(
-    previous.requirements.every((r) =>
-      next.requirements.some(
-        (n) => n.id === r.id && n.sourceQuote === r.sourceQuote,
-      ),
-    ),
-    "Preserve requirement IDs and original quotes across revisions; record scope changes as amendments",
+    !requirements,
+    `Preserve requirement IDs and original quotes across revisions; record scope changes as amendments.${requirements}`,
   );
+  const decisions = changes(previous.decisions ?? [], next.decisions ?? [], (a, b) => a.question === b.question, "Question");
   ensure(
-    (previous.decisions ?? []).every((d) =>
-      (next.decisions ?? []).some(
-        (n) => n.id === d.id && n.question === d.question,
-      ),
-    ),
-    "Preserve decision IDs/questions across revisions; carry answers and evidence forward instead of dropping prior decisions",
+    !decisions,
+    `Preserve decision IDs/questions across revisions; carry answers and evidence forward instead of dropping prior decisions.${decisions}`,
   );
 }
 export function skillFiles(names: string[], prefix: string): Record<string, string> {

@@ -174,6 +174,8 @@ export function registerCommands(app: App): void {
     const recommended = (text: string) => /^(recommended|recommendation|rec)$/i.test(text.trim());
     const record = (decision: (typeof open)[number], answer: string) => resolveDecision(ctx.cwd, id, decision.id, answer);
     const done = () => show(ctx, { ...decisionsView(ctx.cwd, id), session: status(ctx.cwd, id) });
+    // A dialog closed without an answer is the human's choice, not an error to show or log.
+    const cancelled = () => ctx.ui.notify("Closed without an answer: nothing was recorded.", "info");
     if (args.toLowerCase() === "auto") {
       const enabled = decisionSettings(ctx.cwd).autoDecide === "low-risk";
       const accepted = enabled ? autoResolve(ctx, id) : [];
@@ -191,9 +193,9 @@ export function registerCommands(app: App): void {
     const word = /^(\S+)\s*([\s\S]*)$/.exec(args);
     if (word && word[1].toLowerCase() === "all") {
       ensure(recommended(word[2]), "Usage: /waicc-decide all recommended (accept every open decision's recommendation)");
-      if (ctx.hasUI)
-        ensure(await ctx.ui.confirm(`Accept the recommendation for all ${open.length} open decision${open.length === 1 ? "" : "s"}?`,
-          open.map((d) => `${d.id}: ${d.question}\n  → ${d.recommendation}`).join("\n\n")), "Nothing recorded.");
+      if (ctx.hasUI && !(await ctx.ui.confirm(`Accept the recommendation for all ${open.length} open decision${open.length === 1 ? "" : "s"}?`,
+        open.map((d) => `${d.id}: ${d.question}\n  → ${d.recommendation}`).join("\n\n"))))
+        return cancelled();
       for (const decision of open) record(decision, decision.recommendation);
       return done();
     }
@@ -203,31 +205,31 @@ export function registerCommands(app: App): void {
       // An answer typed without its ID: with one open decision, confirm it is meant for that one.
       ensure(open.length === 1 && ctx.hasUI, `${JSON.stringify(word![1])} is not an open decision ID. ${listed}`);
       const text = recommended(args) ? open[0].recommendation : args;
-      ensure(await ctx.ui.confirm(`Record this as the answer to ${open[0].id}?`, `${open[0].question}\n\nAnswer: ${text}`), "Nothing recorded.");
+      if (!(await ctx.ui.confirm(`Record this as the answer to ${open[0].id}?`, `${open[0].question}\n\nAnswer: ${text}`))) return cancelled();
       [decision, answer] = [open[0], text];
     }
     if (!decision) {
       ensure(ctx.hasUI, `Usage: /waicc-decide <decision-id> <answer>, or <decision-id> recommended. ${listed}`);
       const labels = open.map((d) => `${d.id} (${d.owner}): ${d.question}`);
       const picked = await ctx.ui.select("Which decision are you answering?", labels);
-      ensure(picked, "Nothing recorded.");
+      if (!picked) return cancelled();
       decision = open[labels.indexOf(picked)];
     }
     if (recommended(answer)) {
       // Typed explicitly; show what that means when a dialog is available.
       if (ctx.hasUI)
-        ensure(await ctx.ui.confirm(`Accept the recommendation for ${decision.id}?`, `${decision.question}\n\n→ ${decision.recommendation}`), "Nothing recorded.");
+        if (!(await ctx.ui.confirm(`Accept the recommendation for ${decision.id}?`, `${decision.question}\n\n→ ${decision.recommendation}`))) return cancelled();
       answer = decision.recommendation;
     }
     if (!answer) {
       ensure(ctx.hasUI, `Add your answer: /waicc-decide ${decision.id} <answer>, or /waicc-decide ${decision.id} recommended`);
       const accept = `Accept the recommendation: ${decision.recommendation}`;
       const choice = await ctx.ui.select(`${decision.id}: ${decision.question}`, [accept, "Type my own answer"]);
-      ensure(choice, "Nothing recorded.");
+      if (!choice) return cancelled();
       answer = choice === accept
         ? decision.recommendation
         : (await ctx.ui.input(`${decision.id}: ${decision.question}`, `Recommended: ${decision.recommendation}`))?.trim() ?? "";
-      ensure(answer, "Nothing recorded.");
+      if (!answer) return cancelled();
     }
     record(decision, answer);
     done();
