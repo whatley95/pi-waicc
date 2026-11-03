@@ -197,14 +197,21 @@ const idOf = (entry: unknown): string | null => {
 };
 const each = (v: Collector, value: unknown, at: string, name: string, max?: number): unknown[] => v.check(at, () => list(value, name, max)) ?? [];
 
+/** A contract's most characters as JSON: every handoff of the session carries it. */
+export const contractLimit = 128_000;
+
 export function validateContract(
   value: unknown,
   requirements: string,
 ): Contract {
-  ensure(
-    JSON.stringify(value)?.length <= 128_000,
-    "Contract exceeds 128,000 characters",
-  );
+  const size = JSON.stringify(value)?.length ?? 0;
+  if (size > contractLimit) {
+    // How much to cut and where: a planner that spent many minutes on a draft shortens it in one try.
+    const parts = value && typeof value === "object" && !Array.isArray(value)
+      ? Object.entries(value).map(([name, part]) => [name, JSON.stringify(part)?.length ?? 0] as const).sort((a, b) => b[1] - a[1]).slice(0, 4)
+      : [];
+    throw new Error(`The contract is ${size.toLocaleString("en")} characters; cut at least ${(size - contractLimit).toLocaleString("en")} to keep it within ${contractLimit.toLocaleString("en")}, since every handoff carries it.${parts.length ? ` Largest parts: ${parts.map(([name, n]) => `${name} ${n.toLocaleString("en")}`).join(", ")}.` : ""} Shorten wording and evidence; keep every ID.`);
+  }
   const c = record(value, "Contract");
   const v = new Collector();
   v.check("", () => keys(

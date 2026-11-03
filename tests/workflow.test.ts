@@ -2294,3 +2294,11 @@ test("a revision that drops or rewrites a requirement or decision names which", 
     new RegExp(`as amendments\\. Dropped: ${before.requirements[1].id}\\. Original quote changed: ${before.requirements[0].id}\\.$`));
   assert.doesNotThrow(() => stableIds(before, structuredClone(before)));
 });
+
+test("a contract over the size limit says by how much and where the bulk is", () => {
+  const big = example();
+  big.risks = Array.from({ length: 140 }, (_, i) => `Risk ${i} ${"x".repeat(1_000)}`);
+  const size = JSON.stringify(big).length;
+  assert.throws(() => validateContract(big, requirements),
+    new RegExp(`^Error: The contract is ${size.toLocaleString("en")} characters; cut at least ${(size - 128_000).toLocaleString("en")} to keep it within 128,000, since every handoff carries it\\. Largest parts: risks \\d{3},\\d{3}, `));
+});
