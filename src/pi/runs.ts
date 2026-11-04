@@ -44,7 +44,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** /waicc-continue, and the dispatch engine: launching agents, automatic loops and the budget. */
 export function createRuns(app: Core) {
-  const { pi, services, bindings, dispatches, doing, stepLine, key, toLive, track, notice, selected, show, prompt, bind } = app;
+  const { pi, services, bindings, dispatches, doing, stepLine, key, activity, toLive, track, notice, selected, show, prompt, bind } = app;
   async function continueSession(ctx: ExtensionCommandContext, note = ""): Promise<void> {
     const ask = (instruction: string, focus?: string) => prompt(ctx, note ? `${instruction}\n\n${note}` : instruction, focus);
     const s = ingest(ctx.cwd, selected(ctx));
@@ -160,6 +160,11 @@ export function createRuns(app: Core) {
     const controller = new AbortController();
     const label = `WAICC · ${plan.via}${plan.model ? ` ${plan.model}` : ""}${plan.effort ? ` (${plan.effort})` : ""} ${doing[plan.mode] ?? plan.mode}${fallbackFrom ? ` · fallback for ${fallbackFrom.profile}` : ""}${plan.resume ? " · continuing its earlier review" : ""}${loop ? ` · cycle ${loop.cycle}/${loop.max}` : ""}`;
     const { quietMs } = alertSettings(ctx.cwd);
+    // In the activity log under the command that started it; a retry or the next cycle is its own step.
+    const logEnd = activity(ctx, `dispatch ${plan.mode}`, {
+      via: plan.via, model: plan.model ?? null, effort: plan.effort ?? null, profile, requestId: plan.requestId,
+      ...(fallbackFrom ? { fallbackFor: fallbackFrom.profile } : {}), ...(loop ? { cycle: loop.cycle } : {}),
+    });
     const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root, lastActivityAt: Date.now(), quietAfterMs: quietMs };
     let quietWarned = false;
     // A live panel above the editor, its first line a working row like Pi's, and a footer status.
@@ -214,6 +219,10 @@ export function createRuns(app: Core) {
         // Release this run before continuing: the assessment can last the main agent's whole turn,
         // and the loop's next dispatch must not see this run as still going.
         release();
+        logEnd(outcome.replySubmitted ? "reply" : controller.signal.aborted ? "stopped" : outcome.limit ? "limit" : outcome.killed ? "timeout" : "no-reply", {
+          sessionId: plan.sessionId,
+          detail: { exitCode: outcome.code, steps: outcome.steps, ...(outcome.usage ? { inputTokens: outcome.usage.inputTokens, outputTokens: outcome.usage.outputTokens, costUsd: outcome.usage.costUsd } : {}) },
+        });
         const continuing = outcome.replySubmitted && options.continue;
         // Without a reply, say why it ended: a limit, its time running out, or the human stopping it.
         const ended = controller.signal.aborted ? `${plan.via} was stopped before it replied.`
@@ -270,6 +279,7 @@ export function createRuns(app: Core) {
         });
       })
       .catch((error) => {
+        logEnd("error", { sessionId: plan.sessionId });
         if (loops.has(id)) endLoop(ctx, id, `${loopName(loops.get(id)!)} stopped: ${error instanceof Error ? error.message : String(error)}`, "error");
         else ctx.ui.notify(`Dispatch failed: ${error instanceof Error ? error.message : String(error)}`, "error");
       })

@@ -27,8 +27,10 @@ export interface ErrorEntry {
   sessionId?: string;
   /** A tool's arguments as names and types only (see argumentShape): never their text. */
   args?: unknown;
+  /** The command or run it happened in: its steps are in the activity log under the same flow. */
+  flow?: string;
 }
-export type ErrorContext = Pick<ErrorEntry, "level" | "chat" | "sessionId" | "args">;
+export type ErrorContext = Pick<ErrorEntry, "level" | "chat" | "sessionId" | "args" | "flow">;
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 let running: string | undefined;
@@ -81,13 +83,19 @@ export function recordError(root: string, source: string, message: string, conte
       ...(context.chat ? { chat: context.chat.slice(0, 80) } : {}),
       ...(context.sessionId ? { sessionId: context.sessionId.slice(0, 80) } : {}),
       ...(args === undefined ? {} : { args }),
+      ...(context.flow ? { flow: context.flow.slice(0, 40) } : {}),
     };
-    appendFileSync(path, `${JSON.stringify(entry)}\n`);
-    if (statSync(path).size > errorLogLimit) {
-      const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
-      writeFileSync(path, `${lines.slice(Math.floor(lines.length / 2)).join("\n")}\n`);
-    }
+    appendCapped(path, JSON.stringify(entry), errorLogLimit);
   } catch { /* the log only helps later; it must never turn into an error of its own */ }
+}
+
+/** Adds a line; past the limit the oldest half of the file is dropped. */
+export function appendCapped(path: string, line: string, limit: number): void {
+  appendFileSync(path, `${line}\n`);
+  if (statSync(path).size > limit) {
+    const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+    writeFileSync(path, `${lines.slice(Math.floor(lines.length / 2)).join("\n")}\n`);
+  }
 }
 
 /** A time to read errors from: an ISO time, or how long ago (30m, 6h, 2d). */

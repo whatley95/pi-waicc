@@ -2097,7 +2097,8 @@ command such as `/waicc-amend`, `loop`, `picker`, `auto-continue` or a CLI comma
 message, and whether it was an error or a warning. Each line also names the WAICC version that
 raised it (with its commit when Pi runs WAICC from a Git checkout, so an error from a Pi window
 still running older code is easy to tell apart), and, in Pi, the chat and the WAICC session it
-had selected. Pi does not save these notices in the chat, so this is what to look at, or attach to
+had selected. Its `flow` names the command or run it happened in: `waicc activity --flow <id>`
+shows the steps that led to it (see the activity log below). Pi does not save these notices in the chat, so this is what to look at, or attach to
 an issue, when something went wrong. It stays on your machine (the folder is ignored by Git),
 is never created in a folder that does not use WAICC or a project you have not trusted, and
 drops its oldest half past 256 KB. The tracker page (`/waicc-tracker`)
@@ -2114,6 +2115,24 @@ a chat, WAICC tells you once that the agent may be stuck, so you can stop it wit
 time or a while ago (`30m`, `6h`, `2d`), and `--all` reads every project on the tracker (those
 Pi updated in the last 14 days; the tracker must be on) instead of only this one:
 `waicc errors --all --since 1d`.
+
+**Activity log.** Beside it, `.pi/pi-waicc/activity.jsonl` records what WAICC did, step by step:
+each `/waicc-*` command, each WAICC tool the main agent called, each dispatched agent's run, each
+of the main agent's turns, and each `waicc` CLI command. Every line has the time, the step, and,
+when it ended, how long it took and how it went (`ok`, `error`, or a run's own outcome such as
+`reply`, `no-reply`, `timeout`, `limit` or `stopped`). A dispatch also records the agent, model,
+effort and profile, its exit code and token counts. The steps one command led to (a
+`/waicc-dispatch` and the agent run it started, say) share a `flow` ID, and an error logged
+during that command carries the same `flow`, so you can see what came before it. A start with no
+end is a step that never finished. Like the error log, it keeps names, IDs, numbers and outcomes
+only, never what anyone wrote: a command's options (`--force`) are kept, the text typed with them
+is not. It stays on your machine, is written only in a trusted project that uses WAICC, and drops
+its oldest half past 512 KB.
+
+`waicc activity` prints it as JSON, with `--since` as for `waicc errors`. `--flow <id>` shows one
+flow's steps and the errors logged in it, and `--summary` totals each step: how often it ran, how
+often it failed and how, its average and longest time, and how many never finished. That shows
+where the time goes and what fails most: `waicc activity --summary --since 7d`.
 
 Pi sends what a command shows in the chat to the model as well, on every later turn. A WAICC
 output longer than 6,000 characters (a full `/waicc-status` view was often 60,000 or more)
