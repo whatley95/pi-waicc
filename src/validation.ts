@@ -68,7 +68,10 @@ export function list(value: unknown, name: string, max = 300): unknown[] {
   return value;
 }
 function strings(value: unknown, name: string): string[] {
-  return list(value, name).map((entry) => text(entry, name));
+  return list(value, name).map((entry, i) => {
+    ensure(!entry || typeof entry !== "object", `${name}[${i}] is an object; each entry is plain text, such as "Which edge opens the menu?"`);
+    return text(entry, name);
+  });
 }
 export function identifier(value: unknown, name = "ID"): string {
   const id = text(value, name, 80);
@@ -81,8 +84,9 @@ export function identifier(value: unknown, name = "ID"): string {
 /**
  * IDs with characters WAICC does not allow ("AC 1.1") made valid ("AC-1-1") wherever the contract
  * names them, so one typo does not send a whole plan back. An ID that would clash is left for
- * validation to report. A task's allowed folder written with a trailing slash loses it. Returns a
- * copy and the IDs renamed.
+ * validation to report. A task's allowed folder written with a trailing slash or as a pattern
+ * becomes the folder, and a question (or exclusion, assumption, risk) written as {id, text}
+ * becomes its text. Returns a copy and the IDs renamed.
  */
 export function tidyIds(value: unknown): { value: unknown; renamed: [string, string][] } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { value, renamed: [] };
@@ -104,8 +108,14 @@ export function tidyIds(value: unknown): { value: unknown; renamed: [string, str
   const folderTail = /(?<=[^/\\*])(?:[/\\]+\*{0,2})+$/;
   const slashed = (v: unknown) => typeof v === "string" && folderTail.test(v);
   const paths = rows((value as Record<string, unknown>).tasks).some((t) => Array.isArray(t.allowedPaths) && t.allowedPaths.some(slashed));
-  if (!map.size && !paths) return { value, renamed: [] };
+  // A question, exclusion, assumption or risk written as {id, text} is its text, with the ID kept in front.
+  const notes = ["exclusions", "assumptions", "questions", "risks"];
+  const noted = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as Record<string, unknown>).text === "string";
+  const asText = (v: unknown) => noted(v) ? `${typeof v.id === "string" && v.id.trim() ? `${v.id.trim()}: ` : ""}${v.text as string}` : v;
+  const objects = notes.some((field) => { const v = (value as Record<string, unknown>)[field]; return Array.isArray(v) && v.some(noted); });
+  if (!map.size && !paths && !objects) return { value, renamed: [] };
   const c = structuredClone(value) as Record<string, unknown>;
+  for (const field of notes) if (Array.isArray(c[field])) c[field] = (c[field] as unknown[]).map(asText);
   for (const t of rows(c.tasks))
     if (Array.isArray(t.allowedPaths)) t.allowedPaths = t.allowedPaths.map((p) => slashed(p) ? (p as string).replace(folderTail, "") : p);
   const fix = (o: Record<string, unknown>, key: string) => {
