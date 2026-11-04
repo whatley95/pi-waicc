@@ -285,6 +285,15 @@ test("IDs with characters WAICC does not allow are made valid wherever the contr
   assert.throws(() => validateContract(tidyIds(patterns).value, requirements), /Not a path but a pattern: src\/\*\.ts\. List files or folders instead; a folder covers everything in it/);
   patterns.tasks[1].allowedPaths = ["**"];
   assert.throws(() => validateContract(tidyIds(patterns).value, requirements), /Not a path but a pattern: \*\*/);
+  // A question written as {id, text} is its text, the ID kept in front; any other object says what to write.
+  const asked = example() as unknown as Record<string, unknown>;
+  asked.questions = [{ id: "Q1", text: "Which edge opens the menu?" }, { text: "Dark mode too?" }, "Plain one?"];
+  asked.risks = [{ id: "RISK-1", text: "Older phones", severity: "low" }];
+  const tidied = validateContract(tidyIds(asked).value, requirements);
+  assert.deepEqual([tidied.questions, tidied.risks], [["Q1: Which edge opens the menu?", "Dark mode too?", "Plain one?"], ["RISK-1: Older phones"]]);
+  assert.deepEqual(tidyIds(asked).renamed, []);
+  asked.questions = [{ question: "Which edge?" }];
+  assert.throws(() => validateContract(tidyIds(asked).value, requirements), /questions\[0\] is an object; each entry is plain text, such as "Which edge opens the menu\?"/);
   const plain = example();
   assert.equal(tidyIds(plain).value, plain);
   assert.deepEqual(tidyIds(plain).renamed, []);
