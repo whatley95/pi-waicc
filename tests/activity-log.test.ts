@@ -127,10 +127,11 @@ test("a CLI command is one line; waicc activity lists them, one flow with its er
   const cli = (...args: string[]) => spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, ...args], { encoding: "utf8", windowsHide: true });
   assert.equal(cli("continue", "00000000-0000-4000-8000-000000000000").status, 1);
   assert.equal(cli("list").status, 0);
+  assert.equal(cli("my private words").status, 2);
   const all = JSON.parse(cli("activity").stdout);
   assert.deepEqual(all.entries.map((e: ActivityEntry) => [e.step, e.outcome, e.sessionId ?? null]), [
     ["waicc continue", "error", "00000000-0000-4000-8000-000000000000"], ["waicc list", "ok", null],
-  ], "reading the log is not itself logged");
+  ], "reading the log is not itself logged, nor a word that is no command");
   const one = JSON.parse(cli("activity", "--flow", all.entries[0].flow).stdout);
   assert.equal(one.count, 1);
   assert.deepEqual(one.errors.map((e: { source: string }) => e.source), ["waicc continue"]);

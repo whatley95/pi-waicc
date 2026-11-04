@@ -77,7 +77,7 @@ function flag(input: string[], name: string): string | undefined {
 }
 // Each command is one line in the activity log, written when it ends; reading the logs is not.
 const flow = newFlow(), startedAt = Date.now();
-let outcome = "ok";
+let outcome = "ok", known = true;
 try {
   let output: unknown;
   switch (command) {
@@ -337,6 +337,8 @@ try {
       output = { recovered: true };
       break;
     default:
+      // Not a command: not logged either, since the word typed could be anything.
+      known = false;
       if (command && command !== "help" && command !== "--help")
         process.exitCode = 2;
       output = {
@@ -354,7 +356,7 @@ try {
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 }
-if (command && !["activity", "errors", "mcp", "help", "--help"].includes(command))
+if (command && known && !["activity", "errors", "mcp"].includes(command))
   try {
     // Which options were used and which session, never what was typed with them.
     const flags = [...new Set(args.filter((word) => /^--[a-z][a-z-]*$/.test(word)))].join(" ");
