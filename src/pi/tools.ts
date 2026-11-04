@@ -504,7 +504,8 @@ export function registerTools(app: App): void {
         ensure(!/[\r\n]\s*\/waicc-/.test(command), `${JSON.stringify(command.trim().slice(0, 60))} holds more than one command line; offer each as its own entry`);
         const line = command.replace(/\s+/g, " ").trim();
         const name = /^\/(\S+)/.exec(line)?.[1];
-        const max = name && carriesText.has(name) ? 4000 : 500;
+        // An amendment or a new request carries the human's own requirements: as long as the command takes.
+        const max = name === "waicc-amend" || name === "waicc-planning" ? 32_000 : name && carriesText.has(name) ? 4000 : 500;
         ensure(line.length <= max, `${JSON.stringify(line.slice(0, 60))} is ${line.length} characters; a ${name ? `/${name}` : "command"} line may have at most ${max}`);
         ensure(name && commands.has(name), `${JSON.stringify(line.slice(0, 60))} is not a WAICC command.${didYouMean(name)} Only these can be offered: ${[...commands.keys()].sort().map((n) => `/${n}`).join(", ")}`);
         const args = line.slice(name.length + 1).trim();
