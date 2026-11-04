@@ -164,6 +164,12 @@ export function progressParser(via: Agent, cwd: string, startedAt = Date.now()) 
 }
 
 /** A short "1m 05s" style elapsed time. */
+/**
+ * A turning mark for WAICC's panels and footer while work runs in the background. Pi's own
+ * loader shows only during the agent's turn (as for the advisor), so the rest show their own.
+ */
+export const spinner = (now = Date.now()): string => "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(now / 1000) % 10];
+
 export function elapsed(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;

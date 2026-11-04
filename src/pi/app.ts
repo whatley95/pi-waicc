@@ -17,7 +17,7 @@ import { buildOutdated, loadedBuild } from "../build.ts";
 import { newNeeds, projectStatus, publish, recordChat, trackerEnabled, type LiveRun, type Notice, type ProjectStatus } from "../tracker.ts";
 import { notifyDesktop } from "../alerts.ts";
 import { autoDecidable } from "../decisions.ts";
-import { elapsed, type ProgressEvent } from "../progress.ts";
+import { elapsed, spinner, type ProgressEvent } from "../progress.ts";
 import { checkpointView } from "../checkpoint.ts";
 import { recall } from "../memory.ts";
 import { projectRoot, samePath, snapshot } from "../source.ts";
@@ -540,16 +540,43 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     let settle!: () => void;
     const settled = new Promise<void>((resolve) => (settle = resolve));
     compactions.set(chat, settled);
+    // A turning footer status while Pi summarizes: it can take minutes on a large chat.
+    const startedAt = Date.now();
+    const status = (text: string | undefined) => { try { ctx.ui.setStatus?.("waicc-compact", text); } catch { /* only a hint */ } };
+    const show = () => status(`${spinner()} compacting · ${elapsed(Date.now() - startedAt)}`);
+    const ticker = setInterval(show, 1_000);
+    ticker.unref?.();
+    show();
     const finish = (message: string, level: "info" | "warning" | "error") => {
+      clearInterval(ticker);
+      status(undefined);
       if (compactions.get(chat) === settled) compactions.delete(chat);
       settle();
       ctx.ui.notify(message, level);
     };
-    ctx.compact({
-      customInstructions: compactionInstructions(recovery),
-      onComplete: () => finish(done.complete, "info"),
-      onError: (error) => finish(done.failed(error.message), "error"),
-    });
+    let huge = false;
+    try {
+      const usage = ctx.getContextUsage();
+      huge = !!usage?.tokens && !!usage.contextWindow && usage.tokens * 2 > usage.contextWindow;
+    } catch { /* no usage: only the error's own words decide */ }
+    try {
+      ctx.compact({
+        customInstructions: compactionInstructions(recovery),
+        onComplete: () => finish(done.complete, "info"),
+        // Too large to summarize, compacting again fails the same way: a new chat is the way on.
+        // Pi may report only that it was aborted, so a chat over half its model's window counts too.
+        onError: (error) => finish(`${done.failed(error.message)}${/context length|context window|too many tokens|prompt is too long|max_model_len/i.test(error.message) || huge
+          ? ` The chat is now too large for the model to summarize. Start a new chat (/new) and select the session there with /waicc-use ${bindings.get(chat)?.sessionId ?? "<session-id>"}: WAICC's session state is on disk.`
+          : ""}`, "error"),
+      });
+    } catch (error) {
+      // It never started: no spinner left turning, and prompts are not held for it.
+      clearInterval(ticker);
+      status(undefined);
+      if (compactions.get(chat) === settled) compactions.delete(chat);
+      settle();
+      throw error;
+    }
   }
   async function prompt(
     ctx: ExtensionCommandContext,

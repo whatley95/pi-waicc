@@ -67,7 +67,7 @@ export function registerHooks(app: App): void {
     const after = roundMarks(ctx);
     if (after === null) return;
     const assessed = after.assessed > before.assessed;
-    if (!assessed && !(after.rounds > before.rounds && after.waiting)) return;
+    const sent = after.rounds > before.rounds && after.waiting;
     let limit: number;
     try {
       limit = loadAgentConfig(ctx.cwd).autoCompactTokens;
@@ -76,6 +76,9 @@ export function registerHooks(app: App): void {
     }
     const tokens = ctx.getContextUsage()?.tokens;
     if (!limit || tokens == null || tokens < limit) return;
+    // Between breaks only once it is twice the limit: many turns with no round (answering
+    // decisions, say) once grew a chat past what its model could still summarize.
+    if (!assessed && !sent && tokens < 2 * limit) return;
     const id = binding.sessionId;
     let tries = 0;
     // Pi marks the chat idle just after agent_end: wait for that, and give up if a new turn runs on.
@@ -85,7 +88,7 @@ export function registerHooks(app: App): void {
       if (!ctx.isIdle()) return void (++tries < 50 && setTimeout(attempt, 200));
       try {
         const recovery = refreshCheckpoint(ctx.cwd, id);
-        ctx.ui.notify(`Compacting this chat ${assessed ? "after the assessment" : "while it waits for the reply"}: ${Math.round(tokens / 1000)}k tokens, over your ${Math.round(limit / 1000)}k autoCompactTokens. WAICC's session state is on disk and is not affected.`, "info");
+        ctx.ui.notify(`Compacting this chat ${assessed ? "after the assessment" : sent ? "while it waits for the reply" : "after this turn"}: ${Math.round(tokens / 1000)}k tokens, ${assessed || sent ? "over" : "twice"} your ${Math.round(limit / 1000)}k autoCompactTokens. WAICC's session state is on disk and is not affected.`, "info");
         compactChat(ctx, recovery, {
           complete: "Chat compacted. WAICC checkpoint and original evidence retained; recover with waicc_checkpoint.",
           failed: (message) => `Automatic compaction failed: ${message}. Nothing was lost; /waicc-compact tries again.`,

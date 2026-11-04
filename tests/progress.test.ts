@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 import { prepareDispatch, runAgent, runDispatch, type AgentRunner } from "../src/dispatch.ts";
-import { elapsed, progressParser } from "../src/progress.ts";
+import { elapsed, progressParser, spinner } from "../src/progress.ts";
 import { createSession, prepare } from "../src/workflow.ts";
 import type { Contract } from "../src/types.ts";
 
@@ -153,9 +153,10 @@ test("Pi shows a live dispatch panel and status, lists steps on --progress, and 
   await commands.get("waicc-dispatch").handler("--via claude --model sonnet --effort low", ctx);
   await new Promise((done) => setTimeout(done, 50));
   const panel = widgets.at(-1)!;
-  assert.match(panel[0], /^WAICC · claude sonnet \(low\) planning · \d+s · 1 steps/);
+  // A turning mark first: it runs after the agent's turn, where Pi shows no loader of its own.
+  assert.match(panel[0], /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] WAICC · claude sonnet \(low\) planning · \d+s · 1 steps/);
   assert.match(panel[1], /› Reading source\.txt$/);
-  assert.match(statuses.at(-1)!, /^claude planning · \d+s$/);
+  assert.match(statuses.at(-1)!, /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] claude planning · \d+s$/);
 
   await commands.get("waicc-dispatch").handler("--progress", ctx);
   assert.match(shown.at(-1).content, /Reading source\.txt/);
@@ -182,4 +183,10 @@ test("handoff files are named instead of shown by their deep WAICC paths", () =>
     "step: Reading the handoff's contracts/v001/contract.json",
     "step: Loading its tools",
   ]);
+});
+
+test("the working mark turns once a second and wraps", () => {
+  assert.equal(spinner(0), "⠋");
+  assert.equal(spinner(1_999), "⠙");
+  assert.equal(spinner(10_000), "⠋");
 });
