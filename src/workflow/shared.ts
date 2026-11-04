@@ -82,6 +82,19 @@ export function contractFiles(
     [`${versionDirectory(v.version)}/DECISIONS.md`]: `Contract v${v.version}; session ${s.id}.\n\n${decisionBrief(c)}`,
   };
 }
+/**
+ * A revised contract whose decision leaves out its question (agents send the answer and evidence
+ * and forget it) gets the question that decision already had: it may not change anyway.
+ */
+export function carryQuestions(previous: Contract, value: unknown): unknown {
+  const decisions = (value as { decisions?: unknown } | null)?.decisions;
+  if (!Array.isArray(decisions)) return value;
+  const asked = new Map((previous.decisions ?? []).map((d) => [d.id, d.question]));
+  const missing = (d: unknown): d is Record<string, unknown> =>
+    !!d && typeof d === "object" && asked.has((d as { id?: unknown }).id as string) && ((d as { question?: unknown }).question ?? "") === "";
+  if (!decisions.some(missing)) return value;
+  return { ...(value as object), decisions: decisions.map((d) => missing(d) ? { ...d, question: asked.get(d.id as string) } : d) };
+}
 export function stableIds(previous: Contract, next: Contract): void {
   // Name them: the agent then restores exactly those instead of guessing.
   const changes = <T extends { id: string }>(before: T[], after: T[], same: (a: T, b: T) => boolean, what: string) => {

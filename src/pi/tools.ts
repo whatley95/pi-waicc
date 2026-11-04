@@ -260,7 +260,11 @@ export function registerTools(app: App): void {
       signal?.throwIfAborted();
       // A contract adopted here is tidied as waicc_prepare tidies one.
       const tidy = params.contract === undefined ? null : tidyIds(params.contract);
-      assess(ctx.cwd, params.sessionId, (tidy ? { ...params, contract: tidy.value } : params) as Assessment);
+      const assessed = assess(ctx.cwd, params.sessionId, (tidy ? { ...params, contract: tidy.value } : params) as Assessment);
+      const kept = assessed.rounds.find((round) => round.id === params.requestId)?.dispositions?.length ?? 0;
+      const dispositionsIgnored = params.dispositions.length > kept
+        ? `This reply has no findings, so your ${params.dispositions.length} finding disposition(s) (${params.dispositions.map((d) => d.findingId).join(", ")}) were left out. Next time send dispositions: [] for a reply without findings.`
+        : null;
       const autoDecided = autoResolve(ctx, params.sessionId);
       let recurring: ReturnType<typeof recurringFindings> = null;
       try {
@@ -268,6 +272,7 @@ export function registerTools(app: App): void {
       } catch { /* learning is a bonus; the assessment stands */ }
       return result({
         ...(tidy?.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}),
+        ...(dispositionsIgnored ? { dispositionsIgnored } : {}),
         ...(autoDecided.length ? { autoDecided } : {}), ...(recurring ? { recurringFindings: recurring } : {}), ...(status(ctx.cwd, params.sessionId) as object),
       }, ctx, true);
     },

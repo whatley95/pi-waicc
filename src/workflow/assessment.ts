@@ -5,7 +5,7 @@ import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { acceptedPlanCurrent, requirementsText } from "../state.ts";
 import { ensure, identifier, list, record, text, validateContract, readyContract, readyPlan } from "../validation.ts";
 import type { Contract, ContractVersion, Session } from "../types.ts";
-import { requireOpen, resetReview, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
+import { requireOpen, resetReview, carryQuestions, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
 
 /** Assessing a reply: the owner's decision, adopted revisions, dispositions and the next state. */
 
@@ -86,6 +86,9 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
       currentSource.fingerprint === intakeSource.fingerprint,
       "Source changed after reply intake; issue a fresh request. Files were edited between taking the reply in and assessing it: assess a reply before editing, then fix.",
     );
+    // A reply without findings needs no dispositions: ones sent anyway (often carried over from an
+    // earlier review) are left out rather than refusing the assessment. waicc_assess says so.
+    if (!r.reply.findings.length && Array.isArray(a.dispositions) && a.dispositions.length) a = { ...a, dispositions: [] };
     const seen = new Set<string>();
     for (const item of list(a.dispositions, "Finding dispositions")) {
       const d = record(item, "Disposition");
@@ -122,8 +125,9 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     let c = contract(root, s).contract;
     if (a.contract) {
       const keepPlanApproval = r.review?.kind === "code" && acceptedPlanCurrent(root, s);
-      c = validateContract(a.contract, requirementsText(s));
-      stableIds(contract(root, s).contract, c);
+      const previous = contract(root, s).contract;
+      c = validateContract(carryQuestions(previous, a.contract), requirementsText(s));
+      stableIds(previous, c);
       c.tasks
         .flatMap((t) => t.allowedPaths)
         .forEach((path) => safePath(root, path));

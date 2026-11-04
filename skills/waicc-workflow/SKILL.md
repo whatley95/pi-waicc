@@ -17,6 +17,9 @@ The tools reject these, so get them right the first time:
   `.git`, `.svn` or `.pi/pi-waicc`, not even for a merge or rebase task.
 - Every requirement ID appears in some task's `acceptance[].requirementIds`.
 - `questions`, `exclusions`, `assumptions` and `risks` are lists of plain text, not objects.
+- A revised contract keeps every decision's ID and question word for word; only its answer,
+  status and evidence change.
+- A reply without findings takes `dispositions: []`.
 - A lesson (`waicc_learn_pattern`, memory) is at most 600 characters: one rule and its reason.
 - Assess or cancel the pending request before issuing another; review needs every planned task
   reported once and every earlier actionable finding answered once.

@@ -175,3 +175,16 @@ test("a contract adopted in waicc_assess is tidied as waicc_prepare tidies one: 
   const task = readContract(root, id).contract.tasks[0];
   assert.deepEqual([task.allowedPaths, task.acceptance[0].id], [["app.txt"], "AC-1"]);
 });
+
+test("finding dispositions sent for a reply without findings are left out, and the agent is told", async (t) => {
+  const { root, id } = project(t, {}, []);
+  const h = harness(root);
+  await h.commands.get("waicc-use").handler(id, h.ctx);
+  const requestId = loadSession(root, id).rounds.at(-1)!.id;
+  const assessed = JSON.parse((await h.tool("waicc_assess", {
+    sessionId: id, requestId, decision: "planned", rationale: "Plan checked", contract: contract([]),
+    dispositions: [{ findingId: "F1", disposition: "resolved", evidence: "Fixed in the earlier review" }],
+  })).content[0].text);
+  assert.match(assessed.dispositionsIgnored, /^This reply has no findings, so your 1 finding disposition\(s\) \(F1\) were left out\./);
+  assert.deepEqual(loadSession(root, id).rounds.find((r) => r.id === requestId)!.dispositions, []);
+});

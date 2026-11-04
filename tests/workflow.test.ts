@@ -386,6 +386,21 @@ test("review and human closure can accept documented future gates without author
   );
 });
 
+test("a revised decision without its question keeps the question it had", (t) => {
+  const root = fixture(t),
+    initial = createSession(root, requirements);
+  const s = prepare(root, initial.id, gatedPlan(), "planning", "Investigate", 0);
+  respond(root, s, (reply) => {
+    reply.outcome = "planned";
+  });
+  const received = ingest(root, s.id);
+  const asked = gatedPlan().decisions![0].question;
+  const revised = gatedPlan() as unknown as { decisions: Record<string, unknown>[] };
+  delete revised.decisions[0].question;
+  assess(root, s.id, { ...assessment(received), decision: "planned", contract: revised as never });
+  assert.equal(readContract(root, s.id).contract.decisions![0].question, asked);
+});
+
 test("planned rejects stale source and decision removal; other modes cannot use planned", (t) => {
   const root = fixture(t),
     initial = createSession(root, requirements);
