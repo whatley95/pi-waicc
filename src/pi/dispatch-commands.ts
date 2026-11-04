@@ -14,6 +14,7 @@ import { authorizationState } from "../state.ts";
 import type { RoundPhase } from "../types.ts";
 import { sessionCommandInput } from "./shared.ts";
 import type { App } from "./app.ts";
+import { openTerminal } from "./worktrees.ts";
 
 /** /waicc-dispatch, and the commands that select, close, reopen, cancel, amend, export or limit a session, plus memory. */
 export function registerDispatchCommands(app: App): void {
@@ -104,6 +105,38 @@ export function registerDispatchCommands(app: App): void {
     async (args, ctx) => {
       bind(ctx, args);
       show(ctx, status(ctx.cwd, args));
+    },
+  );
+  // A chat grown too large (or just long) hands its session to a fresh one; the session lives on disk.
+  command(
+    "waicc-handover",
+    "Carry the selected session to a fresh chat: [session-id] here, or --tab / --window opens Pi in a new terminal (Windows); the old chat stays in /resume",
+    async (args, ctx) => {
+      const words = args.trim().split(/\s+/).filter(Boolean);
+      const place = words.find((word) => word === "--tab" || word === "--window");
+      const given = words.filter((word) => word !== place);
+      ensure(given.length <= 1 && !given.some((word) => word.startsWith("--")), "Usage: /waicc-handover [session-id] [--tab|--window]");
+      const id = selected(ctx, given[0]);
+      loadSession(projectRoot(ctx.cwd), id);
+      if (place) {
+        ensure(process.platform === "win32", "A new tab or window opens on Windows only. Use /waicc-handover for a new chat here, or start Pi in another terminal and /waicc-use <session-id>.");
+        const opened = (app.services.openTerminal ?? openTerminal)(ctx.cwd, { place: place === "--tab" ? "tab" : "window", handover: id });
+        ensure(opened, `Could not open a terminal. Start Pi in ${ctx.cwd} and run /waicc-use ${id} there.`);
+        const running = dispatches.has(id) || loops.has(id);
+        ctx.ui.notify(`Opened a new ${place.slice(2)} running Pi with session ${id} selected.${running ? " This chat's dispatch or loop keeps running here: close this window only once it has finished." : " You can close this one."}`, "info");
+        return;
+      }
+      // Its runs report to this chat, which is about to be replaced: hand those over in a new terminal.
+      ensure(!dispatches.has(id) && !loops.has(id), `A dispatch or review loop for this session is running in this chat and reports here. Wait for it to finish, or use /waicc-handover --tab (or --window) to keep it running here.`);
+      await ctx.waitForIdle();
+      const { cancelled } = await ctx.newSession({
+        withSession: async (next) => {
+          bind(next, id);
+          show(next, status(next.cwd, id));
+          next.ui.notify(`This new chat carries session ${id}; the previous chat stays in /resume.`, "info");
+        },
+      });
+      if (cancelled) ctx.ui.notify("Handover cancelled; this chat keeps the session.", "info");
     },
   );
   const closed = (ctx: ExtensionCommandContext, id: string) => show(ctx, status(ctx.cwd, id));

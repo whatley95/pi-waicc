@@ -605,6 +605,21 @@ plain `/waicc-compact` still works without altering that frozen packet. Closed s
 remain read-only. Recipients recover only their exact issued checkpoint, not a newer
 owner assignment, and compaction never widens editing/check permissions.
 
+**Hand the session to a fresh chat.** When a chat is too long, or too large to compact at all,
+carry its session over instead:
+
+```text
+/waicc-handover            # a new chat in this window, with the session selected
+/waicc-handover --tab      # Pi in a new Windows Terminal tab, which selects it as it starts
+/waicc-handover --window   # the same, in a new window
+```
+
+The session is on disk, so nothing is lost; the old chat stays in Pi's `/resume`. A dispatch
+or review loop running in this chat reports to it, so the same-window form waits until it has
+finished. `--tab` and `--window` open the new terminal at once and leave that run going here:
+close this window only after it ends. They are Windows only; elsewhere start Pi in another
+terminal and `/waicc-use <session-id>`.
+
 Agents can call `waicc_checkpoint` for read-only compact recovery and expand exact
 contracts/original evidence when needed. Full code review must still cover every
 requirement/task/acceptance criterion and every prior actionable finding. Old checks

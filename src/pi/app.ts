@@ -5,6 +5,7 @@ import type { ShipPlan } from "../ship.ts";
 import type { FetchedIssue } from "../issues.ts";
 import type { PipelineResult } from "../pipelines.ts";
 import type { PiSpawner } from "../queue.ts";
+import type { TerminalOptions } from "./worktrees.ts";
 import type { Shipped } from "../types.ts";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { json, listSessions, loadSession } from "../files.ts";
@@ -112,7 +113,7 @@ export interface Services {
   /** Finds where a GitLab server really answers (redirects followed, no token), replaceable in tests. */
   gitlabOrigin?: OriginProbe;
   /** Opens a new terminal in a folder running Pi, replaceable in tests. */
-  openTerminal?: (path: string) => boolean;
+  openTerminal?: (path: string, options?: TerminalOptions) => boolean;
   /** Reads a shipped pull request's checks (gh), replaceable in tests. */
   githubChecks?: (root: string, shipped: Shipped) => Promise<PipelineResult>;
   /** Starts a queued task's headless Pi (RPC), replaceable in tests. */
@@ -566,7 +567,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
         // Too large to summarize, compacting again fails the same way: a new chat is the way on.
         // Pi may report only that it was aborted, so a chat over half its model's window counts too.
         onError: (error) => finish(`${done.failed(error.message)}${/context length|context window|too many tokens|prompt is too long|max_model_len/i.test(error.message) || huge
-          ? ` The chat is now too large for the model to summarize. Start a new chat (/new) and select the session there with /waicc-use ${bindings.get(chat)?.sessionId ?? "<session-id>"}: WAICC's session state is on disk.`
+          ? ` The chat is now too large for the model to summarize. /waicc-handover carries the session to a new chat (--tab or --window: in a new terminal), or /new then /waicc-use ${bindings.get(chat)?.sessionId ?? "<session-id>"}: WAICC's session state is on disk.`
           : ""}`, "error"),
       });
     } catch (error) {
