@@ -5,7 +5,7 @@ import { dispatchChecksVariable, dispatchPinVariable, maxCheckMs } from "../disp
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "../checkpoint.ts";
 import { recall } from "../memory.ts";
 import { projectRoot, samePath, snapshot } from "../source.ts";
-import { readContract, requirementsText } from "../workflow.ts";
+import { readContract, requirementsText, status } from "../workflow.ts";
 import { ensure } from "../validation.ts";
 import type { RecipientPin, Session } from "../types.ts";
 import { authorizationState } from "../state.ts";
@@ -23,7 +23,7 @@ export const mergeConflict = /^CONFLICT \(|Automatic merge failed|^error: could 
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
-  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, logged, track, trusted, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
+  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, logged, track, trusted, bind, show, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
   // Set when a dispatched recipient's binding is refused; its every turn then only explains why.
   let dispatchRefusal: string | undefined;
   pi.on("input", async (event, ctx) => {
@@ -191,6 +191,21 @@ export function registerHooks(app: App): void {
       }
     }
     const pinned = process.env[dispatchPinVariable];
+    // A Pi opened by /waicc-handover --tab or --window: select the session it was handed, once,
+    // in its first chat only (a later /new starts empty as usual).
+    const handover = process.env.WAICC_HANDOVER;
+    if (handover && !pinned) {
+      delete process.env.WAICC_HANDOVER;
+      if (ctx.hasUI && !bindings.get(key(ctx)))
+        try {
+          trusted(ctx);
+          bind(ctx, handover);
+          show(ctx, status(ctx.cwd, handover));
+          ctx.ui.notify(`This window carries session ${handover}, handed over from another chat.`, "info");
+        } catch (error) {
+          ctx.ui.notify(`Could not select the handed-over session ${handover}: ${error instanceof Error ? error.message : String(error)}. /waicc-use <session-id> selects one.`, "warning");
+        }
+    }
     if (pinned) {
       // A dispatched headless Pi: pin read-only before the first model turn. This can only
       // narrow tools; a refusal leaves no tools and the run is told to stop.

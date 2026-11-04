@@ -7,12 +7,25 @@ import { sweepReviewCheckouts } from "../worktree.ts";
 import type { App } from "./app.ts";
 
 /** A new terminal in the folder, running Pi (Windows Terminal, else a PowerShell window); false elsewhere. */
-export function openTerminal(path: string): boolean {
+export interface TerminalOptions {
+  /** A tab in the current Windows Terminal window, or a new window; else as Windows Terminal is set up. */
+  place?: "tab" | "window";
+  /** The WAICC session the new Pi selects as it starts (see WAICC_HANDOVER in hooks.ts). */
+  handover?: string;
+}
+/** The program and arguments that open it: Windows Terminal when there is one, else a PowerShell window. */
+export function terminalCommand(path: string, options: TerminalOptions, wt: string | null): [string, string[]] {
+  ensure(!options.handover || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.handover), "Not a session ID");
+  // Windows Terminal reads ";" as its own separator, so it is escaped there.
+  const run = (separator: string) => options.handover ? `$env:WAICC_HANDOVER='${options.handover}'${separator} pi` : "pi";
+  return wt
+    ? [wt, [...(options.place === "tab" ? ["-w", "0", "nt"] : options.place === "window" ? ["-w", "new"] : []), "-d", path, "powershell", "-NoExit", "-Command", run("\\;")]]
+    : ["cmd.exe", ["/c", "start", "", "/D", path, "powershell", "-NoExit", "-Command", run(";")]];
+}
+export function openTerminal(path: string, options: TerminalOptions = {}): boolean {
   if (process.platform !== "win32") return false;
   const wt = join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WindowsApps", "wt.exe");
-  const [program, args] = existsSync(wt)
-    ? [wt, ["-d", path, "powershell", "-NoExit", "-Command", "pi"]]
-    : ["cmd.exe", ["/c", "start", "", "/D", path, "powershell", "-NoExit", "-Command", "pi"]];
+  const [program, args] = terminalCommand(path, options, existsSync(wt) ? wt : null);
   try {
     const child = spawn(program, args, { detached: true, stdio: "ignore", windowsHide: false });
     child.on("error", () => { /* the path is shown instead */ });
