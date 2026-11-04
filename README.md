@@ -2097,7 +2097,8 @@ command such as `/waicc-amend`, `loop`, `picker`, `auto-continue` or a CLI comma
 message, and whether it was an error or a warning. Each line also names the WAICC version that
 raised it (with its commit when Pi runs WAICC from a Git checkout, so an error from a Pi window
 still running older code is easy to tell apart), and, in Pi, the chat and the WAICC session it
-had selected. Pi does not save these notices in the chat, so this is what to look at, or attach to
+had selected. Its `flow` names the command or run it happened in: `waicc activity --flow <id>`
+shows the steps that led to it (see the activity log below). Pi does not save these notices in the chat, so this is what to look at, or attach to
 an issue, when something went wrong. It stays on your machine (the folder is ignored by Git),
 is never created in a folder that does not use WAICC or a project you have not trusted, and
 drops its oldest half past 256 KB. The tracker page (`/waicc-tracker`)
