@@ -159,3 +159,19 @@ test("a standing policy answers a human-owned decision through the main agent, n
   const journal = readFileSync(join(root, ".pi", "pi-waicc", "sessions", id, record.match(/record in (\S+)$/)![1]), "utf8");
   assert.equal(JSON.parse(journal).recordedBy, "standing-policy");
 });
+
+test("a contract adopted in waicc_assess is tidied as waicc_prepare tidies one: IDs, and a folder written as a pattern", async (t) => {
+  const { root, id } = project(t, {}, []);
+  const h = harness(root);
+  await h.commands.get("waicc-use").handler(id, h.ctx);
+  const requestId = loadSession(root, id).rounds.at(-1)!.id;
+  const untidy = contract([]);
+  untidy.tasks[0].allowedPaths = ["app.txt/**"];
+  untidy.tasks[0].acceptance[0].id = "AC 1";
+  const assessed = JSON.parse((await h.tool("waicc_assess", {
+    sessionId: id, requestId, decision: "planned", rationale: "Plan checked", dispositions: [], contract: untidy,
+  })).content[0].text);
+  assert.match(assessed.idsTidied, /"AC 1" → AC-1/);
+  const task = readContract(root, id).contract.tasks[0];
+  assert.deepEqual([task.allowedPaths, task.acceptance[0].id], [["app.txt"], "AC-1"]);
+});
