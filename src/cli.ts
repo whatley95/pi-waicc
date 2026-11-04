@@ -7,6 +7,7 @@ import { deleteSession, restoreSession } from "./lifecycle.ts";
 import { auditMemory, curate, propose, recall } from "./memory.ts";
 import { initProject, projectRoot } from "./source.ts";
 import { readErrors, recordError, sinceTime } from "./error-log.ts";
+import { newFlow, readActivity, recordActivity, summarizeActivity } from "./activity-log.ts";
 import { trackedProjects } from "./tracker.ts";
 import { checkpointView, refreshCheckpoint } from "./checkpoint.ts";
 import {
@@ -74,6 +75,9 @@ function flag(input: string[], name: string): string | undefined {
   ensure(input[index + 1], `${name} requires a value`);
   return input[index + 1];
 }
+// Each command is one line in the activity log, written when it ends; reading the logs is not.
+const flow = newFlow(), startedAt = Date.now();
+let outcome = "ok";
 try {
   let output: unknown;
   switch (command) {
@@ -314,6 +318,20 @@ try {
       };
       break;
     }
+    case "activity": {
+      // This project's activity log, oldest first: all of it, one flow with its errors, or each step's totals.
+      const input = args.slice(1);
+      const since = flag(input, "--since"), only = flag(input, "--flow");
+      const summary = input.includes("--summary");
+      ensure(input.every((word, i) => ["--summary", "--since", "--flow"].includes(word) || ["--since", "--flow"].includes(input[i - 1])), "Usage: waicc activity [--since <ISO time or 30m|6h|2d>] [--flow <id>] [--summary]");
+      const from = since === undefined ? "" : sinceTime(since);
+      const root = projectRoot(cwd);
+      const entries = readActivity(root).filter((e) => e.at > from && (!only || e.flow === only));
+      output = summary
+        ? { since: from || null, steps: summarizeActivity(entries) }
+        : { since: from || null, count: entries.length, entries, ...(only ? { errors: readErrors(root).filter((e) => e.flow === only) } : {}) };
+      break;
+    }
     case "recover-lock":
       recoverLock(projectRoot(cwd));
       output = { recovered: true };
@@ -323,15 +341,25 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | errors [--since <ISO time or 30m|6h|2d>] [--all] | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | errors [--since <ISO time or 30m|6h|2d>] [--all] | activity [--since <ISO time or 30m|6h|2d>] [--flow <id>] [--summary] | recover-lock",
       };
   }
   process.stdout.write(json(output));
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
+  outcome = "error";
   try {
-    recordError(projectRoot(cwd), `waicc ${command ?? ""}`.trim(), message);
+    recordError(projectRoot(cwd), `waicc ${command ?? ""}`.trim(), message, { flow });
   } catch { /* no project here: nothing to log into */ }
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 }
+if (command && !["activity", "errors", "mcp", "help", "--help"].includes(command))
+  try {
+    // Which options were used and which session, never what was typed with them.
+    const flags = [...new Set(args.filter((word) => /^--[a-z][a-z-]*$/.test(word)))].join(" ");
+    recordActivity(projectRoot(cwd), {
+      flow, step: `waicc ${command}`.slice(0, 40), phase: "end", ms: Date.now() - startedAt, outcome,
+      ...(id && /^[a-f0-9-]{36}$/.test(id) ? { sessionId: id } : {}), ...(flags ? { detail: { flags } } : {}),
+    });
+  } catch { /* no project here: nothing to log into */ }

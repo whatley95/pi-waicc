@@ -23,7 +23,7 @@ export const mergeConflict = /^CONFLICT \(|Automatic merge failed|^error: could 
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
-  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, logged, track, trusted, bind, show, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
+  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, logged, activity, track, trusted, bind, show, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
   // Set when a dispatched recipient's binding is refused; its every turn then only explains why.
   let dispatchRefusal: string | undefined;
   pi.on("input", async (event, ctx) => {
@@ -40,9 +40,10 @@ export function registerHooks(app: App): void {
     } catch { /* a step the tracker cannot read is left out */ }
     track(ctx);
   };
-  const endMain = (ctx: Parameters<typeof track>[0]) => {
+  const endMain = (ctx: Parameters<typeof track>[0], outcome = "ok") => {
     const turn = mainTurns.get(key(ctx));
     if (turn) clearInterval(turn.ticker);
+    turn?.logEnd?.(outcome, { detail: { steps: turn.events.filter((event) => event.kind !== "note").length } });
     mainTurns.delete(key(ctx));
   };
   // Automatic compaction: a turn that assessed a round, or sent out new work, is a natural break.
@@ -103,12 +104,14 @@ export function registerHooks(app: App): void {
     // A dispatched recipient's own Pi is not this project's main agent.
     if (bindings.get(key(ctx))?.role === "recipient") return;
     marksAtStart.set(key(ctx), roundMarks(ctx));
-    endMain(ctx);
+    // A turn that never ended (Pi missed its end) is closed as such before the next one.
+    endMain(ctx, "replaced");
     // Refreshed while it thinks without using tools, so the page does not take it for gone.
     const ticker = setInterval(() => track(ctx), 20_000);
     ticker.unref?.();
     const model = ctx.model?.id;
-    mainTurns.set(key(ctx), { root: projectRoot(ctx.cwd), label: `Main agent${model ? ` · ${model}` : ""} working`, startedAt: Date.now(), events: [], read: progressParser("pi", ctx.cwd), ticker });
+    mainTurns.set(key(ctx), { root: projectRoot(ctx.cwd), label: `Main agent${model ? ` · ${model}` : ""} working`, startedAt: Date.now(), events: [], read: progressParser("pi", ctx.cwd), ticker,
+      logEnd: activity(ctx, "main turn", model ? { model } : undefined) });
     track(ctx);
   });
   pi.on("tool_execution_start", async (event, ctx) => feedMain(ctx, { type: "tool_execution_start", toolCallId: event.toolCallId, toolName: event.toolName, args: event.args }));
@@ -133,7 +136,7 @@ export function registerHooks(app: App): void {
   });
   pi.on("model_select", async (_event, ctx) => { track(ctx); });
   // Pi is closing this chat: its agents stop with it, so the page shows the project idle.
-  pi.on("session_shutdown", async (_event, ctx) => { endMain(ctx); stopWatching(ctx); stopPipelineWatches(key(ctx)); track(ctx, true, false); });
+  pi.on("session_shutdown", async (_event, ctx) => { endMain(ctx, "shutdown"); stopWatching(ctx); stopPipelineWatches(key(ctx)); track(ctx, true, false); });
   pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);
