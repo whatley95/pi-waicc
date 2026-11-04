@@ -92,6 +92,20 @@ test("a turn that sends out new work compacts too, so its reply is read in a sma
   assert.equal(notices.length, 0);
 });
 
+test("between breaks, a chat twice the limit is compacted after the turn; one too large to summarize is told to start anew", async (t) => {
+  // Answering decisions, say, assesses and sends nothing: a chat once grew past what its model could summarize.
+  const { compactions, notices, turn } = await setup(t, {}, 600_000);
+  await turn(false);
+  assert.equal(compactions.length, 1);
+  assert.ok(notices.some((n) => n.startsWith("Compacting this chat after this turn: 600k tokens, twice your 150k autoCompactTokens.")), notices.join("\n"));
+  // Over half the model's window, a failure that only says it was aborted still names the way on.
+  compactions[0].onError!(new Error("Turn prefix summarization failed: This operation was aborted"));
+  assert.match(notices.at(-1)!, /^Automatic compaction failed: Turn prefix summarization failed: This operation was aborted\. Nothing was lost; \/waicc-compact tries again\. The chat is now too large for the model to summarize\. Start a new chat \(\/new\) and select the session there with \/waicc-use [0-9a-f-]{36}: WAICC's session state is on disk\.$/);
+  const under = await setup(t, {}, 250_000);
+  await under.turn(false);
+  assert.equal(under.compactions.length, 0, "over the limit but under twice it waits for a break");
+});
+
 test("a reply that arrives while the chat compacts waits for it: Pi refuses prompts during compaction", async (t) => {
   const { compactions, prompts, commands, ctx } = await setup(t, {}, 100_000);
   await commands.get("waicc-compact").handler("", ctx);

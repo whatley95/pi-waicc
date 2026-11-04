@@ -8,7 +8,7 @@ import { roundDirectory } from "../render.ts";
 import { limitText } from "../limits.ts";
 import { quietMinutes, sessionSpend } from "../tracker.ts";
 import { runPace, usageText } from "../usage.ts";
-import { elapsed, type ProgressEvent } from "../progress.ts";
+import { elapsed, spinner, type ProgressEvent } from "../progress.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { beginDevelopment, readContract, ingest, reopenSession, status } from "../workflow.ts";
 import { ensure } from "../validation.ts";
@@ -162,7 +162,7 @@ export function createRuns(app: Core) {
     const state = { controller, done: Promise.resolve() as Promise<unknown>, label, startedAt: Date.now(), events: [] as ProgressEvent[], root: plan.root, lastActivityAt: Date.now(), quietAfterMs: quietMs };
     let quietWarned = false;
     // A live panel above the editor and a footer status, refreshed on each step and every few seconds.
-    const render = () => {
+    const render = (publish = true) => {
       const recent = state.events.filter((event) => event.kind !== "note").slice(-5);
       const said = state.events.findLast((event) => event.kind === "note");
       const quiet = quietMinutes({ ...toLive("dispatch", id, label, state.startedAt, []), lastActivityAt: state.lastActivityAt, quietAfterMs: quietMs });
@@ -173,14 +173,16 @@ export function createRuns(app: Core) {
         ctx.ui.notify(`${plan.via} has shown no new step for ${quiet} minutes${last ? ` (last: ${last.text})` : ""}. It may still be working; /waicc-dispatch --progress shows its steps, --stop ends it.`, "warning");
       }
       ctx.ui.setWidget?.("waicc-dispatch", [
-        `${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps${quiet !== null ? ` · no new step for ${quiet}m` : ""}   (/waicc-dispatch --progress, --stop)`,
+        `${spinner()} ${label} · ${elapsed(Date.now() - state.startedAt)} · ${state.events.length} steps${quiet !== null ? ` · no new step for ${quiet}m` : ""}   (/waicc-dispatch --progress, --stop)`,
         ...(recent.length ? recent.map(stepLine) : ["        starting the agent…"]),
         ...(said ? [`         says: ${said.text}`] : []),
       ]);
-      ctx.ui.setStatus?.("waicc-dispatch", `${plan.via} ${doing[plan.mode] ?? plan.mode}${loop ? ` ${loop.cycle}/${loop.max}` : ""} · ${elapsed(Date.now() - state.startedAt)}`);
-      track(ctx);
+      ctx.ui.setStatus?.("waicc-dispatch", `${spinner()} ${plan.via} ${doing[plan.mode] ?? plan.mode}${loop ? ` ${loop.cycle}/${loop.max}` : ""} · ${elapsed(Date.now() - state.startedAt)}`);
+      if (publish) track(ctx);
     };
-    const ticker = setInterval(render, 5_000);
+    // Every second, so it visibly works; the tracker page every 5.
+    let ticks = 0;
+    const ticker = setInterval(() => render(++ticks % 5 === 0), 1_000);
     ticker.unref?.();
     render();
     let released = false;

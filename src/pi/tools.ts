@@ -8,7 +8,7 @@ import { maxCheckMs, runAgent } from "../dispatch.ts";
 import { consultSettings, sandboxSettings, decisionSettings } from "../profiles.ts";
 import { consultAdvisor } from "../consult.ts";
 import { learnPattern, recurringFindings } from "../learning.ts";
-import { elapsed, type ProgressEvent } from "../progress.ts";
+import { elapsed, spinner, type ProgressEvent } from "../progress.ts";
 import { checkpointView, frozenCheckpointView } from "../checkpoint.ts";
 import { propose, proposeDecision, recall } from "../memory.ts";
 import { projectRoot, snapshot } from "../source.ts";
@@ -76,16 +76,18 @@ export function registerTools(app: App): void {
       ctx.ui.notify(`Asking the advisor (${settings.profile}): ${params.question.slice(0, 160)}`, "info");
       const startedAt = Date.now();
       const events: ProgressEvent[] = [];
-      const render = () => {
+      const render = (publish = true) => {
         ctx.ui.setWidget?.("waicc-advisor", [
-          `${label} · ${elapsed(Date.now() - startedAt)}`,
+          `${spinner()} ${label} · ${elapsed(Date.now() - startedAt)}`,
           ...(events.length ? events.filter((event) => event.kind !== "note").slice(-4).map(stepLine) : ["        starting the advisor…"]),
         ]);
-        ctx.ui.setStatus?.("waicc-advisor", `advisor · ${elapsed(Date.now() - startedAt)}`);
+        ctx.ui.setStatus?.("waicc-advisor", `${spinner()} advisor · ${elapsed(Date.now() - startedAt)}`);
         advising.set(chat, { ...toLive("advisor", binding?.role === "coordinator" ? binding.sessionId : null, `${label} · ${params.question.slice(0, 120)}`, startedAt, events), root: projectRoot(ctx.cwd) });
-        track(ctx);
+        if (publish) track(ctx);
       };
-      const ticker = setInterval(render, 5_000);
+      // Every second, as a dispatch's panel; the tracker page every 5.
+      let ticks = 0;
+      const ticker = setInterval(() => render(++ticks % 5 === 0), 1_000);
       ticker.unref?.();
       render();
       try {

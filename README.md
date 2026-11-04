@@ -576,8 +576,16 @@ round or sent out new work** (a handoff now waiting for its reply), once the cha
 The main agent is idle until the reply comes, so a long coding turn that ends by sending out
 the code review is compacted before that review's reply is read. In a `--loop` run that's
 while the next reviewer works; when the reviewer replies, its assessment waits until compaction is
-done. It tells you when it compacts. Set `"autoCompactTokens"` in your
+done. Many turns with no such break (answering decisions one by one, say) can still grow a
+chat, so any turn compacts it once it is **twice** that size: a chat left to grow can pass what
+its model can still summarize, and then only a new chat helps (`/new`, then `/waicc-use
+<session-id>`; WAICC says so if compaction fails that way). It tells you when it compacts, and
+the footer shows a turning `compacting · 12s` while it does. Set `"autoCompactTokens"` in your
 user agent config to change the size, or `0` to turn it off.
+
+While a dispatch, the advisor or a compaction runs, WAICC's panel above the editor and its
+footer status turn and count the time every second. Work that runs after the agent's turn has
+ended gets no loader from Pi itself, so this shows it is still working.
 
 For an immediate manual compaction in the selected chat:
 
@@ -1307,7 +1315,8 @@ Safety rules:
   dispatch that returns a valid reply, and takes in replies to handoffs you gave out by hand;
   `false` turns it off. A project file that sets it is rejected.
 - **`"autoCompactTokens": 150000`** (user file only; the default) compacts the main agent's
-  chat after it assesses a round or sends out new work, once its context is over that many tokens; `0` turns it off.
+  chat after it assesses a round or sends out new work, once its context is over that many tokens,
+  and after any turn once it is over twice that; `0` turns it off.
 - **`"resumeReviews": true`** (user file only; off by default) lets a follow-up code review
   continue the earlier reviewer's own conversation (`claude --resume`, `codex exec resume`)
   when WAICC dispatched that review to the same Claude or Codex model within the hour. It has
