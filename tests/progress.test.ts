@@ -7,6 +7,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import waicc from "../src/index.ts";
 import { prepareDispatch, runAgent, runDispatch, type AgentRunner } from "../src/dispatch.ts";
 import { elapsed, progressParser, spinner } from "../src/progress.ts";
+import { showWorking, workingPanel } from "../src/pi/working-row.ts";
 import { createSession, prepare } from "../src/workflow.ts";
 import type { Contract } from "../src/types.ts";
 
@@ -131,7 +132,7 @@ test("the dispatch log keeps every step and the agent's last message", async (t)
 test("Pi shows a live dispatch panel and status, lists steps on --progress, and clears both when done", async (t) => {
   const { root, id } = planning(t);
   const commands = new Map<string, any>(), shown: any[] = [], entries: any[] = [];
-  const widgets: (string[] | undefined)[] = [], statuses: (string | undefined)[] = [];
+  const widgets: any[] = [], statuses: (string | undefined)[] = [];
   let release!: () => void;
   const gate = new Promise<void>((done) => { release = done; });
   waicc({
@@ -145,17 +146,26 @@ test("Pi shows a live dispatch panel and status, lists steps on --progress, and 
     sessionManager: { getSessionId: () => "progress-chat", getBranch: () => entries },
     ui: {
       notify() {},
-      setWidget: (key: string, lines: string[] | undefined) => { assert.equal(key, "waicc-dispatch"); widgets.push(lines); },
+      setWidget: (key: string, lines: unknown) => { assert.equal(key, "waicc-dispatch"); widgets.push(lines); },
       setStatus: (key: string, text: string | undefined) => { assert.equal(key, "waicc-dispatch"); statuses.push(text); },
     },
   } as unknown as ExtensionCommandContext;
   await commands.get("waicc-use").handler(id, ctx);
   await commands.get("waicc-dispatch").handler("--via claude --model sonnet --effort low", ctx);
   await new Promise((done) => setTimeout(done, 50));
-  const panel = widgets.at(-1)!;
-  // A turning mark first: it runs after the agent's turn, where Pi shows no loader of its own.
-  assert.match(panel[0], /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] WAICC · claude sonnet \(low\) planning · \d+s · 1 steps/);
+  // In Pi's terminal UI the panel is one live component, set once, whose first line is a working
+  // row like Pi's own: it runs after the agent's turn, where Pi shows no loader.
+  const live = widgets.filter((w) => typeof w === "function");
+  assert.equal(live.length, 1, "set once; it repaints itself");
+  let renders = 0;
+  const component = live[0]({ requestRender: () => renders++ }, { fg: (_color: string, text: string) => text });
+  const panel: string[] = component.render(120);
+  assert.match(panel[0], /^── [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] WAICC · claude sonnet \(low\) planning · \d+s · 1 steps .* ─+$/);
+  assert.equal([...panel[0]].length, 120, "a full-width row");
   assert.match(panel[1], /› Reading source\.txt$/);
+  await new Promise((done) => setTimeout(done, 200));
+  assert.ok(renders >= 2, "it turns at Pi's pace");
+  component.dispose();
   assert.match(statuses.at(-1)!, /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] claude planning · \d+s$/);
 
   await commands.get("waicc-dispatch").handler("--progress", ctx);
@@ -189,4 +199,18 @@ test("the working mark turns once a second and wraps", () => {
   assert.equal(spinner(0), "⠋");
   assert.equal(spinner(1_999), "⠙");
   assert.equal(spinner(10_000), "⠋");
+});
+
+test("the working row fits any width, and RPC clients get plain lines instead", () => {
+  const row = workingPanel(() => "WAICC · claude reviewing · 2m 14s", () => ["  step"])({ requestRender() {} }, { fg: (_c, text) => text });
+  for (const width of [12, 40, 200]) assert.equal([...row.render(width)[0]].length, width);
+  assert.ok(row.render(12)[0].includes("…"), "a long title is cut, not wrapped");
+  row.dispose();
+  const set: unknown[] = [];
+  const ctx = (mode: string) => ({ mode, ui: { setWidget: (_key: string, content: unknown) => set.push(content) } }) as never;
+  const repaint = showWorking(ctx("rpc"), "k", () => "title", () => ["line"]);
+  repaint();
+  assert.deepEqual(set, [["title", "line"], ["title", "line"]]);
+  showWorking(ctx("tui"), "k", () => "title");
+  assert.equal(typeof set.at(-1), "function");
 });

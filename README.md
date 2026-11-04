@@ -583,9 +583,12 @@ its model can still summarize, and then only a new chat helps (`/new`, then `/wa
 the footer shows a turning `compacting · 12s` while it does. Set `"autoCompactTokens"` in your
 user agent config to change the size, or `0` to turn it off.
 
-While a dispatch, the advisor or a compaction runs, WAICC's panel above the editor and its
-footer status turn and count the time every second. Work that runs after the agent's turn has
-ended gets no loader from Pi itself, so this shows it is still working.
+Pi shows its `── ⠇ Working ──` row only while the agent's turn runs (as for the advisor, which
+the agent calls). A dispatch, review loop or queue keeps working after that turn has ended, so
+WAICC's panel above the editor starts with a working row of its own,
+`── ⠇ WAICC · claude reviewing · 2m 14s · 12 steps ──`, turning at Pi's pace. The footer status
+and a running compaction's `⠹ compacting · 12s` count the time too. (RPC clients get the panel
+as plain lines.)
 
 For an immediate manual compaction in the selected chat:
 

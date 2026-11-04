@@ -8,6 +8,7 @@ import { ensure } from "../validation.ts";
 import { issueNumber } from "../issues.ts";
 import { fetchIssue } from "./merge-requests.ts";
 import type { App } from "./app.ts";
+import { showWorking } from "./working-row.ts";
 
 const usage = "Usage: /waicc-queue [list] · add <task> · add --issue <number> [more] · remove <n> · clear · run [--code-with p] [--plan-with p] [--review-with p] · stop";
 const mark: Record<QueueItem["status"], string> = { waiting: "⏳", running: "▶️", shipped: "✅", reviewed: "🟡", stopped: "⏹️", failed: "❌" };
@@ -40,7 +41,14 @@ export function registerQueueCommands(app: App): void {
   async function run(ctx: ExtensionCommandContext, dispatch: string, options: Partial<RunOptions>) {
     const root = projectRoot(ctx.cwd);
     const controller = (running = new AbortController());
-    const line = (text: string) => { try { ctx.ui.setWidget("waicc-queue", [`🌙 WAICC queue: ${text}   (/waicc-queue stop)`]); } catch { /* only a hint */ } };
+    // A working row like Pi's while the queue runs: shown once, then it reads the latest text.
+    let now = "";
+    let repaint: (() => void) | undefined;
+    const line = (text: string) => {
+      now = text;
+      repaint ??= showWorking(ctx, "waicc-queue", () => `WAICC queue: ${now}   (/waicc-queue stop)`);
+      repaint();
+    };
     // Kept in the queue file too, so the tracker page shows where the running task is.
     const step = (id: number, text: string | undefined) => {
       try {
