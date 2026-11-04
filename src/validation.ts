@@ -99,13 +99,15 @@ export function tidyIds(value: unknown): { value: unknown; renamed: [string, str
     const clean = id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^[^A-Za-z0-9]+|-+$/g, "").slice(0, 80);
     if (valid.test(clean) && !ids.includes(clean) && ![...map.values()].includes(clean)) map.set(id, clean);
   }
-  // A folder written with its slash ("src/") is that folder; nothing else in the contract names a path.
-  const slashed = (v: unknown) => typeof v === "string" && /[^/\\][/\\]+$/.test(v);
+  // A folder written with its slash ("src/") or as everything in it ("src/**", "src/*") is that
+  // folder, which already covers everything in it; nothing else in the contract names a path.
+  const folderTail = /(?<=[^/\\*])(?:[/\\]+\*{0,2})+$/;
+  const slashed = (v: unknown) => typeof v === "string" && folderTail.test(v);
   const paths = rows((value as Record<string, unknown>).tasks).some((t) => Array.isArray(t.allowedPaths) && t.allowedPaths.some(slashed));
   if (!map.size && !paths) return { value, renamed: [] };
   const c = structuredClone(value) as Record<string, unknown>;
   for (const t of rows(c.tasks))
-    if (Array.isArray(t.allowedPaths)) t.allowedPaths = t.allowedPaths.map((p) => slashed(p) ? (p as string).replace(/[/\\]+$/, "") : p);
+    if (Array.isArray(t.allowedPaths)) t.allowedPaths = t.allowedPaths.map((p) => slashed(p) ? (p as string).replace(folderTail, "") : p);
   const fix = (o: Record<string, unknown>, key: string) => {
     const v = o[key];
     if (typeof v === "string") o[key] = map.get(v) ?? v;
@@ -129,6 +131,10 @@ export function advisorInput(input: string): {
 }
 export function relativePath(value: unknown): string {
   const path = text(value, "Relative path", 1000).replaceAll("\\", "/");
+  ensure(
+    !/[*?]/.test(path),
+    `Not a path but a pattern: ${path}. List files or folders instead; a folder covers everything in it`,
+  );
   ensure(
     !isAbsolute(path) && !/^[A-Za-z]:|[:\x00-\x1f*?]/.test(path),
     `Unsafe relative path: ${path}`,

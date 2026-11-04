@@ -19,6 +19,10 @@ import { autoPlanningMode } from "../auto-planning.ts";
 import { modeSchema, sessionSchema, guidance } from "./shared.ts";
 import { type App } from "./app.ts";
 
+/** What the agent is told when tidyIds renamed IDs in its contract. */
+const idsTidied = (renamed: [string, string][]): string =>
+  `IDs may use only letters, digits, - and _, so these were renamed everywhere in the contract; use the new IDs from now on: ${renamed.map(([from, to]) => `${JSON.stringify(from)} → ${to}`).join(", ")}`;
+
 /** The main agent's and recipients' WAICC tools. */
 export function registerTools(app: App): void {
   const { pi, services, bindings, commands, commandDone, automaticRequests, registerTool, advising, dispatches, stepLine, key, logged, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
@@ -216,7 +220,7 @@ export function registerTools(app: App): void {
       );
       const view = budgetNotice(ctx, status(ctx.cwd, params.sessionId)) as object;
       return result(tidy.renamed.length
-        ? { idsTidied: `IDs may use only letters, digits, - and _, so these were renamed everywhere in the contract; use the new IDs from now on: ${tidy.renamed.map(([from, to]) => `${JSON.stringify(from)} → ${to}`).join(", ")}`, ...view }
+        ? { idsTidied: idsTidied(tidy.renamed), ...view }
         : view, ctx, true);
     },
   });
@@ -254,13 +258,18 @@ export function registerTools(app: App): void {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      assess(ctx.cwd, params.sessionId, params as Assessment);
+      // A contract adopted here is tidied as waicc_prepare tidies one.
+      const tidy = params.contract === undefined ? null : tidyIds(params.contract);
+      assess(ctx.cwd, params.sessionId, (tidy ? { ...params, contract: tidy.value } : params) as Assessment);
       const autoDecided = autoResolve(ctx, params.sessionId);
       let recurring: ReturnType<typeof recurringFindings> = null;
       try {
         recurring = recurringFindings(ctx.cwd, params.sessionId, params.requestId);
       } catch { /* learning is a bonus; the assessment stands */ }
-      return result({ ...(autoDecided.length ? { autoDecided } : {}), ...(recurring ? { recurringFindings: recurring } : {}), ...(status(ctx.cwd, params.sessionId) as object) }, ctx, true);
+      return result({
+        ...(tidy?.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}),
+        ...(autoDecided.length ? { autoDecided } : {}), ...(recurring ? { recurringFindings: recurring } : {}), ...(status(ctx.cwd, params.sessionId) as object),
+      }, ctx, true);
     },
   });
   registerTool({

@@ -12,7 +12,8 @@ each active requirement to task acceptance criteria and planned verification.
 Questions and assumptions stay visible until resolved by evidence or a user decision.
 
 The tools reject these, so get them right the first time:
-- Every task lists `allowedPaths`: the repository-relative files or folders it changes. Never
+- Every task lists `allowedPaths`: the repository-relative files or folders it changes (a folder
+  covers everything in it, so no wildcards: `src/api`, not `src/api/**`). Never
   `.git`, `.svn` or `.pi/pi-waicc`, not even for a merge or rebase task.
 - Every requirement ID appears in some task's `acceptance[].requirementIds`.
 - A lesson (`waicc_learn_pattern`, memory) is at most 600 characters: one rule and its reason.
