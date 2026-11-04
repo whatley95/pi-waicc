@@ -409,7 +409,12 @@ export function validateContract(
     w.done();
   }));
   v.check("decisions", () => unique(decisions.map(idOf).filter((id): id is string => id !== null), "decision IDs"));
-  v.done();
+  // Most quotes missing: the agent quoted what the human said in the chat, not the saved request.
+  const quoted = Array.isArray(c.requirements) ? c.requirements.map((r) => (r as { sourceQuote?: unknown } | null)?.sourceQuote) : [];
+  const unquoted = quoted.filter((q) => typeof q === "string" && q.trim() && !requirements.includes(q)).length;
+  v.done(unquoted >= 2 && unquoted * 2 >= quoted.length
+    ? `\n${unquoted} of ${quoted.length} quotes are not in the session's request, which is ${requirements.length.toLocaleString("en")} characters${requirements.length <= 300 ? `: ${JSON.stringify(requirements.trim())}` : ""}. Quote only the request and its amendments. If the human gave these requirements in the chat, offer them /waicc-amend <that text> through waicc_suggest_command, then quote the amendment.`
+    : "");
   return structuredClone(c) as unknown as Contract;
 }
 /** A complete specification can gate execution on documented human/external decisions. */
@@ -446,9 +451,10 @@ export function readyPlan(contract: Contract): void {
 }
 export function readyContract(contract: Contract): void {
   readyPlan(contract);
+  const open = (contract.decisions ?? []).filter((d) => d.status !== "resolved");
   ensure(
-    (contract.decisions ?? []).every((d) => d.status === "resolved"),
-    "Execution is gated by unresolved contract decisions; plan acceptance is not implementation authorization",
+    !open.length,
+    `Execution is gated by unresolved contract decisions; plan acceptance is not implementation authorization. Open: ${open.slice(0, 10).map((d) => `${d.id} (${d.owner})`).join(", ")}${open.length > 10 ? `, and ${open.length - 10} more` : ""}. The human answers them with /waicc-decide (offer it through waicc_suggest_command); /waicc-decisions lists them.`,
   );
 }
 export function validateReply(value: unknown): Reply {

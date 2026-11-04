@@ -2295,6 +2295,17 @@ test("a revision that drops or rewrites a requirement or decision names which", 
   assert.doesNotThrow(() => stableIds(before, structuredClone(before)));
 });
 
+test("quotes taken from the chat instead of the saved request say so, and how to add the text", () => {
+  const fromChat = example();
+  for (const r of fromChat.requirements) r.sourceQuote = `Said in the chat about ${r.id}`;
+  assert.throws(() => validateContract(fromChat, requirements),
+    new RegExp(`\\n2 of 2 quotes are not in the session's request, which is ${requirements.length} characters: "Add customer search\\. Protect customer data\\."\\. Quote only the request and its amendments\\. If the human gave these requirements in the chat, offer them /waicc-amend <that text> through waicc_suggest_command, then quote the amendment\\.$`));
+  // One stray quote is an ordinary mistake: no hint.
+  const one = example();
+  one.requirements[0].sourceQuote = "Not in the request";
+  assert.throws(() => validateContract(one, requirements), (error: Error) => !/quotes are not in the session's request/.test(error.message));
+});
+
 test("a contract over the size limit says by how much and where the bulk is", () => {
   const big = example();
   big.risks = Array.from({ length: 140 }, (_, i) => `Risk ${i} ${"x".repeat(1_000)}`);

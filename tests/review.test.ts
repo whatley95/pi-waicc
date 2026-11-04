@@ -126,7 +126,7 @@ test("all genuine decision gates must be resolved before whole-work code review"
   const gated: Contract = { ...scope, decisions: [{ id: "D1", question: "Which product behavior?", owner: "human", status: "open", affectedTaskIds: ["CLIENT"], evidence: ["User choice not in source"], recommendation: "Wait for authorized answer" }] };
   let s = prepare(root, id, gated, "planning", "Plan with explicit future gate", 0);
   s = decide(root, reply(root, s, { outcome: "planned" }), "planned");
-  assert.throws(() => review(root, s), /gated by unresolved/);
+  assert.throws(() => review(root, s), /gated by unresolved.* Open: D1 \(human\)\. The human answers them with \/waicc-decide/);
   assert.equal(loadSession(root, id).rounds.length, 1);
   const specification = issue(root, id, "review", "Specification only", undefined, undefined, { kind: "contract" });
   assert.equal(specification.rounds.at(-1)!.review!.kind, "contract");

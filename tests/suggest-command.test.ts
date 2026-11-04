@@ -143,7 +143,9 @@ test("the main agent offers WAICC commands in a picker that opens after its turn
   const prose = `split item 4 into\n(4a) the build and\n  (4b) the deploy. ${"x".repeat(1500)}`;
   const long = await suggest([{ command: `/waicc-amend ${prose}`, why: "record it" }], chat);
   assert.match(text(long), /^Offered to the human in a picker that opens when your turn ends: \/waicc-amend split item 4 into \(4a\) the build and \(4b\) the deploy\. x{1500}\./);
-  await assert.rejects(suggest([{ command: `/waicc-amend ${"x".repeat(4000)}`, why: "x" }], chat), /is 4013 characters; a \/waicc-amend line may have at most 4000/);
+  // An amendment carries the human's requirements, as long as /waicc-amend takes; other text commands stay shorter.
+  await assert.rejects(suggest([{ command: `/waicc-amend ${"x".repeat(32_000)}`, why: "x" }], chat), /is 32013 characters; a \/waicc-amend line may have at most 32000/);
+  await assert.rejects(suggest([{ command: `/waicc-decide D1 ${"x".repeat(4000)}`, why: "x" }], chat), /a \/waicc-decide line may have at most 4000/);
   await assert.rejects(suggest([{ command: `/waicc-status ${"x".repeat(500)}`, why: "x" }], chat), /a \/waicc-status line may have at most 500/);
   answer = (options) => { asked.push(`labels ${options[0].length}`); return options.at(-1); };
   await suggest([{ command: `/waicc-amend ${prose}`, why: "record it" }], chat);
