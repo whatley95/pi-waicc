@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 import { loadSession } from "../src/files.ts";
-import { codingAgent, loadAgentConfig, profilesView, resolveDispatch } from "../src/profiles.ts";
+import { codingAgent, loadAgentConfig, profilesBrief, profilesView, resolveDispatch } from "../src/profiles.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { assess, createSession, delegateWork, ingest, prepare } from "../src/workflow.ts";
 import type { Contract } from "../src/types.ts";
@@ -319,4 +319,23 @@ test("--code-with takes an optional coding profile and --review-once needs a rev
   assert.throws(() => codingAgent(root, "agy"), /Antigravity, which cannot code yet/);
   const unset = project(t, { user: { profiles, roles: { planning: "claude" } } });
   assert.throws(() => codingAgent(unset.root), /--code-with needs a coding agent/);
+});
+
+test("the main agent's summary names each role's agent, every other profile, fallbacks and the switches", (t) => {
+  const { root } = project(t, {
+    user: { autoAdvisor: { maxPerChat: 2 }, profiles: { ...profiles, codex: { ...profiles.codex, effort: "high", fallback: "claude" } }, roles: { planning: "claude", review: "codex" } },
+    project: { profiles: { local: { via: "pi", model: "qwen" } } },
+  });
+  const brief = profilesBrief(root);
+  assert.match(brief, /planning: claude = claude \(opus\); review: codex = codex \(gpt-5\.5, effort high, 45 min, falls back to claude\); advisor: not set; implementation: not set; testing: not set\./);
+  assert.match(brief, /Other profiles: deepseek = pi \(deepseek\/deepseek-v4-pro\); local = pi \(qwen\) \[project file\]\./);
+  assert.match(brief, /Settings: autoContinue (on|off), resumeReviews off, autoShip off, autoAdvisor 2 per chat, budget none\./);
+  assert.match(brief, /retries the handoff once with its profile's fallback\.$/);
+
+  const plain = project(t, { user: { profiles, roles: { planning: "claude" } } });
+  assert.match(profilesBrief(plain.root), /No profile has a fallback, so an agent that hits a usage limit ends its run/);
+  const none = project(t);
+  assert.match(profilesBrief(none.root), /^WAICC agent profiles: none yet, so \/waicc-dispatch needs --via claude\|codex\|pi\|agy\./);
+  const broken = project(t, { user: "{not json" });
+  assert.match(profilesBrief(broken.root), /^WAICC agent profiles: unreadable \(.+\)\. Tell the human/);
 });

@@ -1324,6 +1324,11 @@ To write it yourself, create either file, or both:
 - Unknown fields, agents, roles or undefined profiles are reported with the file and field.
   `/waicc-dispatch --profiles` (CLI: `waicc profiles`) shows both files, every profile and
   what each role resolves to.
+- The main agent gets the same in brief on every turn of a WAICC session: each role's profile,
+  every other profile with its model, effort and fallback, and whether `autoContinue`,
+  `resumeReviews`, `autoShip`, `autoAdvisor` and a budget are set. So it suggests the right
+  `/waicc-dispatch <profile>`, and knows when no fallback is set. It never sees GitLab tokens or
+  other secrets, and it never edits these files.
 
 Safety rules:
 
