@@ -223,18 +223,30 @@ const each = (v: Collector, value: unknown, at: string, name: string, max?: numb
 /** A contract's most characters as JSON: every handoff of the session carries it. */
 export const contractLimit = 128_000;
 
+/** A contract's size in characters, and its four largest parts ("tasks 72,080, decisions 28,598"). */
+export function contractSize(value: unknown): { size: number; largest: string } {
+  const parts = value && typeof value === "object" && !Array.isArray(value)
+    ? Object.entries(value).map(([name, part]) => [name, JSON.stringify(part)?.length ?? 0] as const).sort((a, b) => b[1] - a[1]).slice(0, 4)
+    : [];
+  return { size: JSON.stringify(value)?.length ?? 0, largest: parts.map(([name, n]) => `${name} ${n.toLocaleString("en")}`).join(", ") };
+}
+/** Past this share of the limit the main agent is told the size, so it tightens wording before a revision is refused. */
+export const contractWarnShare = 0.8;
+/** The note for a contract past contractWarnShare of the limit, or null. */
+export function contractSizeNote(c: Contract): string | null {
+  const { size, largest } = contractSize(c);
+  return size > contractLimit * contractWarnShare
+    ? `The contract is ${size.toLocaleString("en")} of ${contractLimit.toLocaleString("en")} characters, and a revision past the limit is refused. Largest parts: ${largest}. In the next revision shorten wording, list folders rather than many files in allowedPaths, and keep acceptance criteria brief; keep every ID.`
+    : null;
+}
 export function validateContract(
   value: unknown,
   requirements: string,
 ): Contract {
-  const size = JSON.stringify(value)?.length ?? 0;
-  if (size > contractLimit) {
+  const { size, largest } = contractSize(value);
+  if (size > contractLimit)
     // How much to cut and where: a planner that spent many minutes on a draft shortens it in one try.
-    const parts = value && typeof value === "object" && !Array.isArray(value)
-      ? Object.entries(value).map(([name, part]) => [name, JSON.stringify(part)?.length ?? 0] as const).sort((a, b) => b[1] - a[1]).slice(0, 4)
-      : [];
-    throw new Error(`The contract is ${size.toLocaleString("en")} characters; cut at least ${(size - contractLimit).toLocaleString("en")} to keep it within ${contractLimit.toLocaleString("en")}, since every handoff carries it.${parts.length ? ` Largest parts: ${parts.map(([name, n]) => `${name} ${n.toLocaleString("en")}`).join(", ")}.` : ""} Shorten wording and evidence; keep every ID.`);
-  }
+    throw new Error(`The contract is ${size.toLocaleString("en")} characters; cut at least ${(size - contractLimit).toLocaleString("en")} to keep it within ${contractLimit.toLocaleString("en")}, since every handoff carries it.${largest ? ` Largest parts: ${largest}.` : ""} Shorten wording and evidence; keep every ID.`);
   const c = record(value, "Contract");
   const v = new Collector();
   v.check("", () => keys(

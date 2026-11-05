@@ -8,7 +8,7 @@ import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { authorizationState, requirementsText } from "../state.ts";
 import { Collector, contractLimit, ensure, text, validateContract, validateReply } from "../validation.ts";
 import type { ContractVersion, Mode, Reply, Round, Session } from "../types.ts";
-import { requireOpen, carryQuestions, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
+import { requireOpen, revision, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
 import { requireAcceptedPlan } from "./sessions.ts";
 
 /** Preparing and issuing handoffs, and taking in and validating their replies. */
@@ -34,11 +34,12 @@ export function prepare(
       ["planning", "review"].includes(mode),
       "Prepare supports planning/review only; request advisor separately, or use assessment for implementation",
     );
-    const c = validateContract(s.contractVersion ? carryQuestions(contract(root, s).contract, value) : value, requirementsText(s));
+    const previous = s.contractVersion ? contract(root, s) : null;
+    const c = validateContract(previous ? revision(previous, value) : value, requirementsText(s));
     c.tasks
       .flatMap((t) => t.allowedPaths)
       .forEach((path) => safePath(root, path));
-    if (s.contractVersion) stableIds(contract(root, s).contract, c);
+    if (previous) stableIds(previous.contract, c);
     s.planApproval = null;
     s.contractVersion++;
     const files = contractFiles(s, c);

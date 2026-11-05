@@ -95,6 +95,39 @@ export function carryQuestions(previous: Contract, value: unknown): unknown {
   if (!decisions.some(missing)) return value;
   return { ...(value as object), decisions: decisions.map((d) => missing(d) ? { ...d, question: asked.get(d.id as string) } : d) };
 }
+const slimmed = /^Resolved in contract v\d+;/;
+/**
+ * A decision already resolved in the previous version keeps what later work needs: its question,
+ * answer, who recorded the answer, and a short recommendation. Its investigation evidence stays in
+ * the version it was resolved in, which the first evidence entry names. Otherwise every settled
+ * decision's research rides along in each revision and handoff (one contract reached the size
+ * limit this way). Applied to a revision as sent, before validation, so the limit counts the result.
+ */
+export function slimDecisions(previous: ContractVersion, value: unknown): unknown {
+  const decisions = (value as { decisions?: unknown } | null)?.decisions;
+  if (!Array.isArray(decisions)) return value;
+  const before = new Map((previous.contract.decisions ?? []).map((d) => [d.id, d]));
+  let changed = false;
+  const next = decisions.map((entry) => {
+    const d = entry as Record<string, unknown> | null;
+    const old = d && typeof d === "object" ? before.get(d.id as string) : undefined;
+    if (!old || old.status !== "resolved" || d!.status !== "resolved" || d!.answer !== old.answer) return entry;
+    const slim = slimmed.test(old.evidence[0] ?? "")
+      ? { ...d, evidence: old.evidence, recommendation: old.recommendation }
+      : { ...d,
+          evidence: [`Resolved in contract v${previous.version}; its investigation evidence is kept in ${versionDirectory(previous.version)}/contract.json`,
+            // Who recorded the answer, and where (see resolveDecision), stays with the decision.
+            ...old.evidence.filter((e) => /\bdecisions\/[0-9a-f-]{36}\.json\b/.test(e))],
+          recommendation: old.recommendation.length > 200 ? `${old.recommendation.slice(0, 199)}…` : old.recommendation };
+    if (json(slim).length >= json(entry).length) return entry;
+    changed = true;
+    return slim;
+  });
+  return changed ? { ...(value as object), decisions: next } : value;
+}
+/** A revision as sent, with missing decision questions carried over and settled decisions slimmed. */
+export const revision = (previous: ContractVersion, value: unknown): unknown =>
+  slimDecisions(previous, carryQuestions(previous.contract, value));
 export function stableIds(previous: Contract, next: Contract): void {
   // Name them: the agent then restores exactly those instead of guessing.
   const changes = <T extends { id: string }>(before: T[], after: T[], same: (a: T, b: T) => boolean, what: string) => {
