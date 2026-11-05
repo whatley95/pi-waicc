@@ -22,7 +22,12 @@ The tools reject these, so get them right the first time:
 - A reply without findings takes `dispositions: []`.
 - A lesson (`waicc_learn_pattern`, memory) is at most 600 characters: one rule and its reason.
 - Assess or cancel the pending request before issuing another; review needs every planned task
-  reported once and every earlier actionable finding answered once.
+  reported once and every earlier actionable finding answered once. Those are code-review
+  findings only: specification-review findings were settled when they were assessed, so leave
+  them out.
+- When you are stuck or the work is difficult, ask the human's advisor with
+  `waicc_ask_advisor` before guessing, going in circles, giving up or asking the human; the
+  profiles summary names it and how many questions you have. Verify its answer against the source.
 - A closed selected contract is never replaced automatically: offer `/waicc-planning <request>`
   with `waicc_suggest_command`.
 - If the work grows during the turn (merge conflicts, a failing build, more files than

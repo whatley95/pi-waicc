@@ -1816,9 +1816,12 @@ upgraded to PASS; request a fresh review to use closure.
 
 While it works, with or without a WAICC session, the main agent can ask your advisor (the
 `advisor` role's profile, Sonnet in the default template) for a second opinion by itself.
-It does this when it is genuinely stuck: the same check still fails after two real fix
-attempts, it cannot find a bug's cause, or it must choose between risky designs it cannot
-settle from the code. You can also just tell it "ask the advisor".
+It is told on every turn who your advisor is and to rely on it: whenever it is stuck or the
+work is difficult, it asks before guessing, going in circles, giving up or asking you. For
+example, a check still fails after a real fix attempt, it cannot find a bug's cause, a WAICC
+tool keeps rejecting its input, it doubts a reviewer's finding, or it must choose between
+risky designs it cannot settle from the code. You can also just tell it "ask the advisor".
+To let it ask more often, raise `"autoAdvisor": { "maxPerChat": n }` (up to 20) in your user file.
 
 - The advisor reads the project **read-only**: Claude gets only Read/Grep/Glob, Codex runs
   in its read-only sandbox, Pi gets only read/grep/find/ls. It gets the question, what was

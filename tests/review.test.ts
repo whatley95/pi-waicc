@@ -162,6 +162,9 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   assert.throws(() => review(root, s, leftOut as typeof report), new RegExp(`Missing: ${first}:F1, ${first}:F2\\.$`), "left out, every prior finding is named");
   assert.throws(() => review(root, s, { ...report, findings: [...report.findings, report.findings[0], { ...report.findings[0], findingId: "F9" }] }),
     new RegExp(`Not a prior actionable finding: ${first}:F9\\. Given more than once: ${first}:F1\\.$`));
+  const plan = s.rounds[0].id;
+  assert.throws(() => review(root, s, { ...report, findings: [...report.findings, { ...report.findings[0], requestId: plan }] }),
+    new RegExp(`From a planning or specification-review round, settled when it was assessed, so leave them out: ${plan}:F1\\.$`), "a plan round's finding is named as one to leave out");
   assert.equal(loadSession(root, s.id).rounds.length, 2);
   writeFileSync(join(root, "CLIENT.txt"), "fixed client");
   // Without its requestId, the one prior finding with that ID is meant; one that isn't prior is refused by name.

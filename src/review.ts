@@ -136,9 +136,13 @@ export function reviewContext(
   const unknown = supplied.filter((key) => !required.includes(key));
   const repeated = [...new Set(supplied.filter((key, i) => supplied.indexOf(key) !== i))];
   const keys = (list: string[]) => list.slice(0, 20).join(", ") + (list.length > 20 ? `, and ${list.length - 20} more` : "");
+  // Agents list the plan reviews' findings too: say that those are not wanted, not just unknown.
+  const planReviews = new Set(s.rounds.filter((round) => round.review?.kind !== "code").map((round) => round.id));
+  const fromPlan = unknown.filter((key) => planReviews.has(key.slice(0, key.indexOf(":"))));
+  const other = unknown.filter((key) => !fromPlan.includes(key));
   ensure(
     !missing.length && !unknown.length && !repeated.length,
-    `Finish ALL review fixes before re-review; record every prior actionable finding exactly once (requestId + findingId), with fix or dispute evidence.${missing.length ? ` Missing: ${keys(missing)}.` : ""}${unknown.length ? ` Not a prior actionable finding: ${keys(unknown)}.` : ""}${repeated.length ? ` Given more than once: ${keys(repeated)}.` : ""}`,
+    `Finish ALL review fixes before re-review; record every prior actionable finding exactly once (requestId + findingId), with fix or dispute evidence.${missing.length ? ` Missing: ${keys(missing)}.` : ""}${fromPlan.length ? ` From a planning or specification-review round, settled when it was assessed, so leave them out: ${keys(fromPlan)}.` : ""}${other.length ? ` Not a prior actionable finding: ${keys(other)}.` : ""}${repeated.length ? ` Given more than once: ${keys(repeated)}.` : ""}`,
   );
   const completion: WorkCompletion = {
     summary: report.summary as string, tasks, checks, findings,

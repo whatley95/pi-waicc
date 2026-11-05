@@ -128,6 +128,8 @@ export function planShip(cwd: string, id: string, options: ShipOptions = {}): Sh
   const root = projectRoot(cwd);
   const s = loadSession(root, id);
   ensure(!s.revisionReview, "This session reviews an existing change; there is nothing of yours to ship.");
+  if (s.status === "CLOSED" && s.shipped)
+    throw new Error(`Already shipped as ${s.shipped.request.url ?? `branch ${s.shipped.branch}`} (commit ${s.shipped.commit.slice(0, 10)}) and closed; nothing to ship. To change it: /waicc-reopen <reason>.`);
   ensure(s.status === "READY_TO_CLOSE" && s.reviewApproval?.kind === "code",
     `Only a change whose whole-change code review passed can be shipped (READY_TO_CLOSE); this session is ${s.status}.`);
   const fingerprint = snapshot(root).fingerprint;

@@ -136,6 +136,9 @@ export function parseDispatchArgs(input: string | string[]): DispatchArgs {
       if (count === undefined) i -= 1;
       continue;
     }
+    // An unknown option first: "--sonnet" is not an option missing its value.
+    ensure(["--via", "--model", "-m", "--plan-with", "--review-with", "--effort", "--timeout", "--check", "--check-timeout"].includes(flag),
+      `Unknown dispatch option ${flag}.${/^--?[A-Za-z0-9][A-Za-z0-9_-]*$/.test(flag) ? ` A profile goes first, without dashes (/waicc-dispatch ${flag.replace(/^-+/, "")}); a model goes after --model (--model ${flag.replace(/^-+/, "")}).` : ""}`);
     ensure(value !== undefined, `${flag} requires a value`);
     if (flag === "--via") {
       ensure((agents as readonly string[]).includes(value), `--via must be one of ${agents.join(", ")}`);

@@ -147,6 +147,7 @@ test("new phase budgets remain bounded by the unchanged overall budget; transiti
   assert.equal(initial.maxRounds, 20);
   assert.equal(initial.roundLimits!.specification, 8);
   let s = cancel(root, initial.id);
+  assert.throws(() => setRoundLimit(root, s.id, 21, "specification"), { message: "specification has used 1 round (limit 8), so its limit can be 2–20; 20 is the most." });
   s = setRoundLimit(root, s.id, 2, "specification");
   s = issue(root, s.id, "planning", "Second planning round");
   s = accept(root, answer(root, s), "planned");
@@ -156,6 +157,7 @@ test("new phase budgets remain bounded by the unchanged overall budget; transiti
   assert.deepEqual(loadSession(root, s.id), before);
   s = beginDevelopment(root, s.id);
   assert.equal(s.rounds.length, 2); assert.equal(s.roundLimits!.specification, 2); assert.equal(s.maxRounds, 20);
+  assert.throws(() => setRoundLimit(root, s.id, 1), { message: "This session has used 2 of its 20 rounds, so its limit can be 2–20; 20 is the most a session allows. A phase has its own limit: /waicc-limit <phase> <n>." });
   s = setRoundLimit(root, s.id, 2);
   assert.throws(() => issue(root, s.id, "review", "Overall budget still enforced", undefined, undefined, { kind: "code", completion: report() }), /2-round limit/);
   s = setRoundLimit(root, s.id, 3);

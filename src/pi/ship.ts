@@ -30,6 +30,17 @@ export function shipSummary(plan: ShipPlan): string {
  * Returns what went out, or null when you said no.
  */
 export async function shipSession(app: App, ctx: ExtensionCommandContext, id: string, options: ShipOptions, automatic = false): Promise<Shipped | null> {
+  // A second /waicc-ship while the first waits for its yes, or is pushing, would ship twice.
+  ensure(!shipping.has(id), "This session is already being shipped (another /waicc-ship waits for your yes or is pushing). Wait for it.");
+  shipping.add(id);
+  try {
+    return await shipOnce(app, ctx, id, options, automatic);
+  } finally {
+    shipping.delete(id);
+  }
+}
+const shipping = new Set<string>();
+async function shipOnce(app: App, ctx: ExtensionCommandContext, id: string, options: ShipOptions, automatic: boolean): Promise<Shipped | null> {
   const { pi, notice } = app;
   const plan = planShip(ctx.cwd, id, options);
   const unasked = automatic && loadAgentConfig(ctx.cwd).autoShip;

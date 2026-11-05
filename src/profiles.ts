@@ -405,7 +405,15 @@ export function profilesBrief(cwd: string): string {
   ];
   return `WAICC agent profiles (the human's; never edit their files). Each handoff dispatches to its role's profile: ${roleLines.join("; ")}.${others.length ? ` Other profiles: ${others.join("; ")}.` : ""} Settings: ${switches.join(", ")}. To use another profile once, suggest /waicc-dispatch <profile>; a role that is not set needs a profile name or --via. ${names.some((name) => config.profiles[name].fallback)
     ? "An agent that hits a usage limit retries the handoff once with its profile's fallback."
-    : "No profile has a fallback, so an agent that hits a usage limit ends its run (a loop stops); the human can add one."}`;
+    : "No profile has a fallback, so an agent that hits a usage limit ends its run (a loop stops); the human can add one."} ${advisorBrief(config)}`;
+}
+
+/** The human wants the advisor consulted whenever the main agent is stuck: say who it is and when to ask. */
+function advisorBrief(config: AgentConfig): string {
+  const role = config.roles.advisor;
+  if (!role) return "No advisor role is set, so waicc_ask_advisor cannot be used: when you are stuck, tell the human (roles.advisor in their user file sets one).";
+  if (!config.autoAdvisor) return `Advisor: ${role.profile}, but asking it on your own is off ("autoAdvisor"): when you are stuck, tell the human, who can ask it with /waicc-advisor.`;
+  return `Advisor: ${role.profile}. The human wants you to rely on it: whenever you are stuck or the work is difficult, ask it with waicc_ask_advisor (up to ${config.autoAdvisor} questions per chat) before guessing, going in circles, giving up or asking the human, then verify its answer against the source.`;
 }
 
 /** Your standing policies and low-risk setting, from your user file only. */
