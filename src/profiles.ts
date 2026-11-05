@@ -369,6 +369,45 @@ export function profilesView(cwd: string) {
   };
 }
 
+/**
+ * The agent profiles in a few lines, for the main agent's context on every turn: which agent each
+ * role dispatches to, every profile with its model, effort and fallback, and the switches that
+ * change what happens after a dispatch. It suggests the right /waicc-dispatch without guessing.
+ */
+export function profilesBrief(cwd: string): string {
+  let config: AgentConfig;
+  try {
+    config = loadAgentConfig(cwd);
+  } catch (error) {
+    return `WAICC agent profiles: unreadable (${error instanceof Error ? error.message : String(error)}). Tell the human; /waicc-dispatch --profiles shows the problem.`;
+  }
+  const names = Object.keys(config.profiles);
+  if (!names.length)
+    return `WAICC agent profiles: none yet, so /waicc-dispatch needs --via claude|codex|pi|agy. ${initHint}.`;
+  const agent = (name: string) => {
+    const p = config.profiles[name];
+    if (!p) return `${name} (no such profile)`;
+    const parts = [p.model, p.effort && `effort ${p.effort}`, p.timeoutMinutes && `${p.timeoutMinutes} min`, p.fallback && `falls back to ${p.fallback}`].filter(Boolean);
+    return `${name} = ${p.via}${parts.length ? ` (${parts.join(", ")})` : ""}${p.source === "project" ? " [project file]" : ""}`;
+  };
+  const used = new Set<string>();
+  const roleLines = roles.map((role) => {
+    const choice = config.roles[role];
+    if (!choice) return `${role}: not set`;
+    used.add(choice.profile);
+    return `${role}: ${agent(choice.profile)}${choice.checks?.length ? `; ${choice.checks.length} check command(s)` : ""}`;
+  });
+  const others = names.filter((name) => !used.has(name)).map(agent);
+  const switches = [
+    `autoContinue ${config.autoContinue ? "on" : "off"}`, `resumeReviews ${config.resumeReviews ? "on" : "off"}`,
+    `autoShip ${config.autoShip ? "on" : "off"}`, `autoAdvisor ${config.autoAdvisor ? `${config.autoAdvisor} per chat` : "off"}`,
+    `budget ${config.budget.perSessionUsd === null ? "none" : `$${config.budget.perSessionUsd} per session`}`,
+  ];
+  return `WAICC agent profiles (the human's; never edit their files). Each handoff dispatches to its role's profile: ${roleLines.join("; ")}.${others.length ? ` Other profiles: ${others.join("; ")}.` : ""} Settings: ${switches.join(", ")}. To use another profile once, suggest /waicc-dispatch <profile>; a role that is not set needs a profile name or --via. ${names.some((name) => config.profiles[name].fallback)
+    ? "An agent that hits a usage limit retries the handoff once with its profile's fallback."
+    : "No profile has a fallback, so an agent that hits a usage limit ends its run (a loop stops); the human can add one."}`;
+}
+
 /** Your standing policies and low-risk setting, from your user file only. */
 export function decisionSettings(cwd: string): Pick<AgentConfig, "policies" | "autoDecide"> {
   const { policies, autoDecide } = loadAgentConfig(cwd);

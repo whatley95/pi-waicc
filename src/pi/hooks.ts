@@ -13,7 +13,7 @@ import { autoPlanningInstructions } from "../auto-planning.ts";
 import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
 import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
-import { loadAgentConfig } from "../profiles.ts";
+import { loadAgentConfig, profilesBrief } from "../profiles.ts";
 import { inbox, trackerEnabled } from "../tracker.ts";
 import { modelLimit, modelView, type App } from "./app.ts";
 import { stopPipelineWatches } from "./pipelines.ts";
@@ -344,7 +344,7 @@ export function registerHooks(app: App): void {
     return {
       message: {
         customType: "waicc-context",
-        content: `${automatic}\n\n${contractOwner}${policiesFor(ctx)}\n\n${sourceFirst}\n\nWAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}. If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-ship, /waicc-mr-merge, /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
+        content: `${automatic}\n\n${contractOwner}${policiesFor(ctx)}\n\n${profilesBrief(ctx.cwd)}\n\n${sourceFirst}\n\nWAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}. If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-ship, /waicc-mr-merge, /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
         display: false,
       },
     };

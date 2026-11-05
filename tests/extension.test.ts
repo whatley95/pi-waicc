@@ -385,6 +385,9 @@ test("planning saves the user's request before prompting; chats keep separate se
   )) as { message: { content: string } };
   assert.ok(turn.message.content.includes("account-scoped"));
   assert.ok(!turn.message.content.includes("Billing"));
+  // The main agent knows the human's agent profiles on every turn (none here), and when continuing.
+  assert.match(turn.message.content, /WAICC agent profiles: none yet, so \/waicc-dispatch needs --via/);
+  assert.match(sent.at(-1)!, /WAICC agent profiles: none yet/);
 });
 
 test("tools accept nested arguments sent as JSON text, which some models do", async (t) => {

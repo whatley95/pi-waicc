@@ -13,7 +13,7 @@ import { json, listSessions, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
 import type { CheckRunner } from "../checks.ts";
 import type { AgentRunner } from "../dispatch.ts";
-import { alertSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance } from "../profiles.ts";
+import { alertSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance, profilesBrief } from "../profiles.ts";
 import { statusTable } from "./status-table.ts";
 import { buildOutdated, loadedBuild } from "../build.ts";
 import { newNeeds, projectStatus, publish, recordChat, trackerEnabled, type LiveRun, type Notice, type ProjectStatus } from "../tracker.ts";
@@ -629,7 +629,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     const query = `${requirementsText(saved)}\n${focus}`;
     const recovery = checkpointView(projectRoot(ctx.cwd), saved, snapshot(ctx.cwd).fingerprint, false);
     await pi.sendUserMessage(
-      `${guidance}${policiesFor(ctx)}\n\n${instruction}\n\nSession recovery (index, not a substitute for the exact contract/reply; use waicc_status when assessing):\n${json({ ...recovery, requirementsPreview: requirementsText(saved).slice(0, 2400), advisor: saved.rounds.at(-1)?.advisor })}\n\nRelevant confirmed project memory:\n${json(recall(ctx.cwd, query))}`,
+      `${guidance}${policiesFor(ctx)}\n\n${profilesBrief(ctx.cwd)}\n\n${instruction}\n\nSession recovery (index, not a substitute for the exact contract/reply; use waicc_status when assessing):\n${json({ ...recovery, requirementsPreview: requirementsText(saved).slice(0, 2400), advisor: saved.rounds.at(-1)?.advisor })}\n\nRelevant confirmed project memory:\n${json(recall(ctx.cwd, query))}`,
       { deliverAs: "followUp" },
     );
   }
