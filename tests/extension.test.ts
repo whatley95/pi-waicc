@@ -419,6 +419,10 @@ test("tools accept nested arguments sent as JSON text, which some models do", as
   assert.deepEqual(decodeJsonArguments({ focus: "{not decoded}", contract: "{\"a\":1}", note: "plain" },
     { properties: { focus: { type: "string" }, contract: {}, note: {} } }), { focus: "{not decoded}", contract: { a: 1 }, note: "plain" });
   assert.equal(decodeJsonArguments({ contract: "{broken" }, { properties: { contract: {} } }).contract, "{broken");
+  // JSON text that does not parse says so, with the parser's reason, not only that an object was expected.
+  await assert.rejects(() => tools.get("waicc_prepare").execute("x", {
+    sessionId: session.id, expectedVersion: 1, mode: "planning", focus: "Plan search", contract: `${JSON.stringify(contract)},`,
+  }, undefined, undefined, ctx), /Contract is JSON text that does not parse \(.+\); send it as an object, not text/);
   // A review kind sent with a planning handoff is named.
   await assert.rejects(() => tools.get("waicc_prepare").execute("x", {
     sessionId: session.id, expectedVersion: 1, mode: "planning", reviewKind: "code", focus: "Plan search", contract,
