@@ -33,6 +33,13 @@ export function decodeJsonArguments<T>(params: T, schema: unknown): T {
 }
 
 export function record(value: unknown, name: string): Record<string, unknown> {
+  // JSON text that reached here did not parse (decodeJsonText keeps it as text): say why.
+  if (typeof value === "string" && /^\s*[{[]/.test(value))
+    try {
+      JSON.parse(value);
+    } catch (error) {
+      throw new Error(`${name} is JSON text that does not parse (${(error as Error).message}); send it as an object, not text`);
+    }
   ensure(
     value !== null && typeof value === "object" && !Array.isArray(value),
     `${name} must be an object`,
