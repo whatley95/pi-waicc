@@ -2170,7 +2170,12 @@ than expanding scope.
 Limits: 10,000 files read one by one, though an unchanged file is not read again within the
 same Pi session (a Git project above that uses Git's blob IDs, up to
 100,000 files), 128 MB of source content read (for such a Git project, of changed and untracked
-files only), 128,000-character contracts and 256 KB replies. Per-subtree fingerprint
+files only), 128,000-character contracts and 256 KB replies. A contract stays small as it is
+revised: a decision already resolved in the previous version keeps its question, answer, who
+recorded it and a short recommendation, and its investigation evidence stays in the version it
+was resolved in (the first evidence entry names it). Past 80% of the limit, `waicc_prepare` and
+`waicc_assess` tell the main agent the contract's size and largest parts, so it tightens the next
+revision before one is refused. Per-subtree fingerprint
 configuration and cross-repository scheduling are future work. There is no automatic
 parallel implementation scheduler or task-completion certification in this release.
 

@@ -13,7 +13,7 @@ import { checkpointView, frozenCheckpointView } from "../checkpoint.ts";
 import { propose, proposeDecision, recall } from "../memory.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { assess, decisionsView, resolveDecision, readContract, createAutoPlanningSession, issue, prepare, requirementsText, status, saveContext } from "../workflow.ts";
-import { ensure, tidyIds } from "../validation.ts";
+import { contractSizeNote, ensure, tidyIds } from "../validation.ts";
 import type { Assessment } from "../workflow.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
 import { modeSchema, sessionSchema, guidance } from "./shared.ts";
@@ -219,9 +219,11 @@ export function registerTools(app: App): void {
         params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
       );
       const view = budgetNotice(ctx, status(ctx.cwd, params.sessionId)) as object;
-      return result(tidy.renamed.length
-        ? { idsTidied: idsTidied(tidy.renamed), ...view }
-        : view, ctx, true);
+      const contractSize = contractSizeNote(readContract(ctx.cwd, params.sessionId).contract);
+      return result({
+        ...(tidy.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}),
+        ...(contractSize ? { contractSize } : {}), ...view,
+      }, ctx, true);
     },
   });
   registerTool({
@@ -270,9 +272,10 @@ export function registerTools(app: App): void {
       try {
         recurring = recurringFindings(ctx.cwd, params.sessionId, params.requestId);
       } catch { /* learning is a bonus; the assessment stands */ }
+      const contractSize = params.contract === undefined ? null : contractSizeNote(readContract(ctx.cwd, params.sessionId).contract);
       return result({
         ...(tidy?.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}),
-        ...(dispositionsIgnored ? { dispositionsIgnored } : {}),
+        ...(dispositionsIgnored ? { dispositionsIgnored } : {}), ...(contractSize ? { contractSize } : {}),
         ...(autoDecided.length ? { autoDecided } : {}), ...(recurring ? { recurringFindings: recurring } : {}), ...(status(ctx.cwd, params.sessionId) as object),
       }, ctx, true);
     },

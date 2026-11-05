@@ -51,6 +51,8 @@ import {
 } from "../src/workflow.ts";
 import {
   advisorInput,
+  contractLimit,
+  contractSizeNote,
   readyContract,
   readyPlan,
   tidyIds,
@@ -60,7 +62,7 @@ import {
 import type { Contract, Reply, Session } from "../src/types.ts";
 import { pathToFileURL } from "node:url";
 import { decisionGates } from "../src/decisions.ts";
-import { stableIds } from "../src/workflow/shared.ts";
+import { slimDecisions, stableIds } from "../src/workflow/shared.ts";
 
 function fixture(t: TestContext, git = false): string {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
@@ -384,6 +386,44 @@ test("review and human closure can accept documented future gates without author
     readContract(root, s.id).contract.decisions![0].status,
     "deferred",
   );
+});
+
+test("a decision resolved in an earlier version is slimmed in later ones; its evidence stays in that version", (t) => {
+  const root = fixture(t),
+    initial = createSession(root, requirements);
+  const research = Array.from({ length: 4 }, (_, i) => `Investigation ${i}: ${"x".repeat(30_000)}`);
+  const record = "Human-recorded answer; exact text and provenance retained in decisions/0b6f0e7a-2d7c-4c1e-9a3b-5d8f1e2a3b4c.json";
+  const plan = () => {
+    const c = gatedPlan();
+    Object.assign(c.decisions![0], { status: "resolved", answer: "Keep the current presentation", evidence: [...research, record], recommendation: "r".repeat(500) });
+    return c;
+  };
+  let s = prepare(root, initial.id, plan(), "planning", "Plan", 0);
+  assert.equal(readContract(root, s.id).contract.decisions![0].evidence.length, 5, "in full where it was resolved");
+  // The next revision is sent in full, and over the limit with a new assumption: slimming brings it under.
+  cancel(root, s.id, "Revise");
+  const larger = { ...plan(), assumptions: ["a".repeat(20_000)] };
+  assert.ok(JSON.stringify(larger).length > contractLimit);
+  s = prepare(root, s.id, larger, "planning", "Plan", 1);
+  const slim = readContract(root, s.id).contract.decisions![0];
+  assert.deepEqual(slim.evidence, ["Resolved in contract v1; its investigation evidence is kept in contracts/v001/contract.json", record]);
+  assert.equal(slim.recommendation, `${"r".repeat(199)}…`);
+  assert.deepEqual([slim.question, slim.answer, slim.status], [gatedPlan().decisions![0].question, "Keep the current presentation", "resolved"]);
+  // Later revisions keep pointing at the version that has the evidence.
+  cancel(root, s.id, "Revise");
+  s = prepare(root, s.id, plan(), "planning", "Plan", 2);
+  assert.equal(readContract(root, s.id).contract.decisions![0].evidence[0], slim.evidence[0]);
+  // A decision answered differently is a new answer, kept as sent (and then refused or reviewed as usual).
+  const v3 = readContract(root, s.id);
+  const reanswered = plan();
+  reanswered.decisions![0].answer = "Use the new presentation";
+  assert.equal((slimDecisions(v3, reanswered) as Contract).decisions![0].evidence.length, 5);
+});
+
+test("past 80% of the size limit the main agent is told the contract's size and largest parts", () => {
+  assert.equal(contractSizeNote(example()), null);
+  const big = { ...example(), assumptions: ["a".repeat(31_000), "b".repeat(31_000), "c".repeat(31_000), "d".repeat(10_000)] };
+  assert.match(contractSizeNote(big)!, /^The contract is 10[0-9],[0-9]{3} of 128,000 characters, and a revision past the limit is refused\. Largest parts: assumptions 103,0[0-9]{2}, .*list folders rather than many files in allowedPaths/);
 });
 
 test("a revised decision without its question keeps the question it had", (t) => {

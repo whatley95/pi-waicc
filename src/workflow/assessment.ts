@@ -5,7 +5,7 @@ import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { acceptedPlanCurrent, requirementsText } from "../state.ts";
 import { ensure, identifier, list, record, text, validateContract, readyContract, readyPlan } from "../validation.ts";
 import type { Contract, ContractVersion, Session } from "../types.ts";
-import { requireOpen, resetReview, carryQuestions, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
+import { requireOpen, resetReview, revision, contract, contractFiles, parsedContract, stableIds, nextRound } from "./shared.ts";
 
 /** Assessing a reply: the owner's decision, adopted revisions, dispositions and the next state. */
 
@@ -125,9 +125,9 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     let c = contract(root, s).contract;
     if (a.contract) {
       const keepPlanApproval = r.review?.kind === "code" && acceptedPlanCurrent(root, s);
-      const previous = contract(root, s).contract;
-      c = validateContract(carryQuestions(previous, a.contract), requirementsText(s));
-      stableIds(previous, c);
+      const previous = contract(root, s);
+      c = validateContract(revision(previous, a.contract), requirementsText(s));
+      stableIds(previous.contract, c);
       c.tasks
         .flatMap((t) => t.allowedPaths)
         .forEach((path) => safePath(root, path));
@@ -196,6 +196,8 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     r.dispositions = a.dispositions;
     files[`${roundDirectory(r)}/assessment.json`] = json({
       ...a,
+      // The contract as adopted (tidied and slimmed), which acceptedPlanRequestId compares with.
+      ...(a.contract ? { contract: c } : {}),
       at: assessedAt,
       verified: false,
       deliveryVerified: false,
