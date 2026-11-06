@@ -1,6 +1,6 @@
-import { artifact, digest, json, loadSession, now, safePath, withLock } from "../files.ts";
+import { artifact, digest, json, loadSession, now, safePath, withLock, withSnapshots } from "../files.ts";
 import { roundDirectory, versionDirectory } from "../render.ts";
-import { projectRoot, snapshot } from "../source.ts";
+import { changedFiles, projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { acceptedPlanCurrent, requirementsText } from "../state.ts";
 import { ensure, identifier, list, record, text, validateContract, readyContract, readyPlan } from "../validation.ts";
@@ -79,12 +79,12 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
       "Requirements or contract changed; issue a fresh request",
     );
     const currentSource = snapshot(root);
-    const intakeSource = JSON.parse(
+    const intakeSource = withSnapshots(root, s.id, JSON.parse(
       artifact(root, s, `${roundDirectory(r)}/observed-source.json`),
-    ) as { fingerprint: string };
+    ) as { fingerprint: string; files?: Record<string, string> });
     ensure(
       currentSource.fingerprint === intakeSource.fingerprint,
-      "Source changed after reply intake; issue a fresh request. Files were edited between taking the reply in and assessing it: assess a reply before editing, then fix.",
+      `Source changed after reply intake; issue a fresh request. Files were edited between taking the reply in and assessing it: assess a reply before editing, then fix.${changedFiles(intakeSource.files, currentSource)}`,
     );
     // A reply without findings needs no dispositions: ones sent anyway (often carried over from an
     // earlier review) are left out rather than refusing the assessment. waicc_assess says so.

@@ -441,6 +441,20 @@ test("a revised decision without its question keeps the question it had", (t) =>
   assert.equal(readContract(root, s.id).contract.decisions![0].question, asked);
 });
 
+test("a revision that leaves out decisions keeps them unchanged; an empty list still drops them", (t) => {
+  const root = fixture(t),
+    initial = createSession(root, requirements);
+  const s = prepare(root, initial.id, gatedPlan(), "planning", "Investigate", 0);
+  respond(root, s, (reply) => {
+    reply.outcome = "planned";
+  });
+  const received = ingest(root, s.id);
+  assert.throws(() => assess(root, s.id, { ...assessment(received), decision: "planned", contract: { ...gatedPlan(), decisions: [] } }), /Dropped: DEC-001\.$/);
+  const { decisions: _left, ...revised } = gatedPlan();
+  assess(root, s.id, { ...assessment(received), decision: "planned", contract: revised as never });
+  assert.deepEqual(readContract(root, s.id).contract.decisions, gatedPlan().decisions);
+});
+
 test("planned rejects stale source and decision removal; other modes cannot use planned", (t) => {
   const root = fixture(t),
     initial = createSession(root, requirements);
@@ -461,14 +475,14 @@ test("planned rejects stale source and decision removal; other modes cannot use 
       assess(root, s.id, {
         ...assessment(received),
         decision: "planned",
-        contract: example(),
+        contract: { ...example(), decisions: [] },
       }),
     /Preserve decision IDs\/questions across revisions; carry answers and evidence forward instead of dropping prior decisions\. Dropped: DEC-001\.$/,
   );
   writeFileSync(join(root, "app.txt"), "Source changed");
   assert.throws(
     () => assess(root, s.id, { ...assessment(received), decision: "planned" }),
-    /Source changed/,
+    /Source changed after reply intake[^]*then fix. Changed: app.txt.$/,
   );
   for (const mode of ["review", "advisor", "implementation"]) {
     assert.throws(

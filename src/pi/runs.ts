@@ -228,7 +228,7 @@ export function createRuns(app: Core) {
         const ended = controller.signal.aborted ? `${plan.via} was stopped before it replied.`
           : outcome.limit ? `${plan.via} ${limitText(outcome.limit)} before it replied: ${outcome.limit.text}`
           : outcome.killed ? `${plan.via} reached its ${Math.round(plan.timeoutMs / 60_000)}-minute time limit before it replied. Dispatch again, or give it longer with --timeout <minutes>.`
-          : `${plan.via} finished without a reply; see the log.`;
+          : `${plan.via} finished without a reply${outcome.refused ? ` (${outcome.refused})` : ""}; see the log.`;
         ctx.ui.notify(outcome.replySubmitted
           ? `${plan.via} submitted a reply${usageText(outcome.usage) ? ` (${usageText(outcome.usage)})` : ""}.${continuing ? " Continuing automatically." : " Run /waicc-continue."}`
           : ended, outcome.replySubmitted ? "info" : "warning");

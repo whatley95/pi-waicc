@@ -88,6 +88,9 @@ export function contractFiles(
  */
 export function carryQuestions(previous: Contract, value: unknown): unknown {
   const decisions = (value as { decisions?: unknown } | null)?.decisions;
+  // Left out of a revision, they are unchanged: refusing it as "dropped" only costs a retry.
+  if (decisions === undefined && previous.decisions?.length && value && typeof value === "object" && !Array.isArray(value))
+    return { ...value, decisions: previous.decisions };
   if (!Array.isArray(decisions)) return value;
   const asked = new Map((previous.decisions ?? []).map((d) => [d.id, d.question]));
   const missing = (d: unknown): d is Record<string, unknown> =>

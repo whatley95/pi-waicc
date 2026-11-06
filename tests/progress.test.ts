@@ -124,6 +124,7 @@ test("the dispatch log keeps every step and the agent's last message", async (t)
   const outcome = await runDispatch(prepareDispatch(root, id, { via: "claude" }), streaming(root), undefined, (event) => seen.push(event.text));
   assert.deepEqual(seen, ["Reading source.txt", "The plan needs one task."]);
   assert.equal(outcome.lastMessage, "The plan needs one task.");
+  assert.equal(outcome.refused, null);
   assert.equal(outcome.steps, 2);
   const log = JSON.parse(readFileSync(outcome.log!, "utf8"));
   assert.deepEqual(log.progress.map((event: { text: string }) => event.text), seen);
@@ -213,4 +214,15 @@ test("the working row fits any width, and RPC clients get plain lines instead", 
   assert.deepEqual(set, [["title", "line"], ["title", "line"]]);
   showWorking(ctx("tui"), "k", () => "title");
   assert.equal(typeof set.at(-1), "function");
+});
+
+test("a run whose draft was refused says why it has no reply", async (t) => {
+  const { root, id } = planning(t);
+  const refused: AgentRunner = async (_program, _args, options) => {
+    options.onLine?.(JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call", server: "waicc", tool: "waicc_validate_reply", result: { isError: true, content: [{ type: "text", text: "Source changed during this assignment. Changed: pubspec.lock." }] } } }));
+    return { stdout: "", stderr: "", code: 0, killed: false };
+  };
+  const outcome = await runDispatch(prepareDispatch(root, id, { via: "codex" }), refused);
+  assert.equal(outcome.replySubmitted, false);
+  assert.equal(outcome.refused, "Draft rejected: Source changed during this assignment. Changed: pubspec.lock.");
 });

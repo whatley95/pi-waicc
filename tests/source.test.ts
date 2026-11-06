@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync, rmdirSync, rmSync, symlinkSync, unlinkSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { digest, loadSession } from "../src/files.ts";
-import { normalizeSvnXml, projectRoot } from "../src/source.ts";
+import { changedFiles, normalizeSvnXml, projectRoot } from "../src/source.ts";
 import { createSession } from "../src/workflow.ts";
 
 test("SVN metadata normalizes attribute permutations and start-tag layout before hashing", () => {
@@ -75,4 +75,14 @@ test("a session loads through any spelling of its project directory", (t) => {
   assert.equal(projectRoot(link), root, "one canonical root");
   assert.equal(loadSession(link, s.id).id, s.id);
   if (process.platform === "win32") assert.equal(loadSession(root.toUpperCase(), s.id).id, s.id);
+});
+
+test("a source-change refusal names the files that changed, at most eight", () => {
+  const before = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`f${i}.txt`, "a"]));
+  const after = { vcs: "git" as const, revision: null, fingerprint: "x", files: { ...before, "f1.txt": "b", "new.txt": "a" }, vcsState: "s" };
+  assert.equal(changedFiles(before, after), " Changed: f1.txt, new.txt.");
+  const many = { ...after, files: Object.fromEntries(Object.keys(before).map((path) => [path, "b"])) };
+  assert.equal(changedFiles(before, many), " Changed: f0.txt, f1.txt, f2.txt, f3.txt, f4.txt, f5.txt, f6.txt, f7.txt and 2 more.");
+  assert.equal(changedFiles(before, { ...after, files: before }), " Changed: the version-control state (a commit, checkout or staging), not the files.");
+  assert.equal(changedFiles(undefined, after), "", "without the earlier file list nothing is named");
 });
