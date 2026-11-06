@@ -120,6 +120,18 @@ export async function consultAdvisor(cwd: string, q: ConsultQuestion, options: D
   writeFileSync(briefPath, brief({ ...q, question, tried, evidence: q.evidence === undefined ? undefined : text(q.evidence, "Evidence", 24_000) }));
   // One line: it travels as a command-line argument on every platform.
   const prompt = `You are a senior engineer giving a second opinion to another coding agent that is stuck, for the project at ${JSON.stringify(root)}. First read the advice request at ${JSON.stringify(briefPath)}. Then investigate the source yourself, read-only: never edit, create or delete files, and run nothing that changes state. Find the most likely cause or the best approach and cite file:line evidence for each claim. Answer in plain text with: Diagnosis (what is really going on, with evidence), Recommended next step (small and concrete), If that does not work (the next hypothesis), and How to confirm (the check that proves it). If the evidence is not enough, say exactly what is missing instead of guessing. Do not restate the request. Stay under 500 words.`;
+  const outcome = await askReadOnly(root, prompt, options, run, signal, onProgress);
+  const record = { schemaVersion: 1, consultId: id, via: options.via, model: options.model ?? null, effort: options.effort ?? null, finishedAt: now(), ...outcome };
+  writeFileSync(safePath(root, `${folder}/result.json`), json(record));
+  return { ...record, brief: briefPath, log: safePath(root, `${folder}/result.json`), steps: outcome.progress.length };
+}
+
+/**
+ * Runs the advisor read-only on one prompt and returns its final answer with how the run went:
+ * a consult, or a bug hunt's triage.
+ */
+export async function askReadOnly(root: string, prompt: string, options: DispatchOptions, run: AgentRunner = runAgent,
+  signal?: AbortSignal, onProgress?: (event: ProgressEvent) => void) {
   const { program, args } = invocation(options.via, prompt, options, root);
   const startedAt = Date.now();
   const parse = progressParser(options.via, root, startedAt);
@@ -147,11 +159,8 @@ export async function consultAdvisor(cwd: string, q: ConsultQuestion, options: D
   if (!reader.get()) for (const line of result.stdout.split(/\r?\n/)) reader.read(line);
   if (!meter.get()) for (const line of result.stdout.split(/\r?\n/)) meter.read(line);
   const answer = reader.get();
-  const record = {
-    schemaVersion: 1, consultId: id, via: options.via, model: options.model ?? null, effort: options.effort ?? null,
-    finishedAt: now(), durationMs: Date.now() - startedAt, code: result.code, killed: result.killed, usage: meter.get(),
+  return {
+    durationMs: Date.now() - startedAt, code: result.code, killed: result.killed, usage: meter.get(),
     answer: answer || null, progress, stderr: tail(result.stderr),
   };
-  writeFileSync(safePath(root, `${folder}/result.json`), json(record));
-  return { ...record, brief: briefPath, log: safePath(root, `${folder}/result.json`), steps: progress.length };
 }
