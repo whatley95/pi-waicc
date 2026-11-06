@@ -330,10 +330,13 @@ test("the main agent's summary names each role's agent, every other profile, fal
   assert.match(brief, /planning: claude = claude \(opus\); review: codex = codex \(gpt-5\.5, effort high, 45 min, falls back to claude\); advisor: not set; implementation: not set; testing: not set\./);
   assert.match(brief, /Other profiles: deepseek = pi \(deepseek\/deepseek-v4-pro\); local = pi \(qwen\) \[project file\]\./);
   assert.match(brief, /Settings: autoContinue (on|off), resumeReviews off, autoShip off, autoAdvisor 2 per chat, budget none\./);
-  assert.match(brief, /retries the handoff once with its profile's fallback\.$/);
+  assert.match(brief, /retries the handoff once with its profile's fallback\. No advisor role is set, so waicc_ask_advisor cannot be used/);
 
-  const plain = project(t, { user: { profiles, roles: { planning: "claude" } } });
+  const plain = project(t, { user: { profiles, roles: { planning: "claude", advisor: "codex" } } });
   assert.match(profilesBrief(plain.root), /No profile has a fallback, so an agent that hits a usage limit ends its run/);
+  assert.match(profilesBrief(plain.root), /Advisor: codex\. The human wants you to rely on it: whenever you are stuck or the work is difficult, ask it with waicc_ask_advisor \(up to 3 questions per chat\)/);
+  const off = project(t, { user: { autoAdvisor: false, profiles, roles: { advisor: "codex" } } });
+  assert.match(profilesBrief(off.root), /Advisor: codex, but asking it on your own is off \("autoAdvisor"\): when you are stuck, tell the human, who can ask it with \/waicc-advisor\.$/);
   const none = project(t);
   assert.match(profilesBrief(none.root), /^WAICC agent profiles: none yet, so \/waicc-dispatch needs --via claude\|codex\|pi\|agy\./);
   const broken = project(t, { user: "{not json" });

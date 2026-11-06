@@ -80,7 +80,7 @@ test("GitHub opens a pull request through gh; refusals come before anything chan
   assert.equal(asked, "waicc/search-with-paging");
   assert.equal(shipped.request.url, "https://github.com/team/app/pull/3");
   closeShipped(root, id, shipped);
-  assert.throws(() => planShip(root, id), /Only a change whose whole-change code review passed can be shipped/);
+  assert.throws(() => planShip(root, id), { message: `Already shipped as https://github.com/team/app/pull/3 (commit ${shipped.commit.slice(0, 10)}) and closed; nothing to ship. To change it: /waicc-reopen <reason>.` });
 });
 
 test("a reviewed file changed after the review, or after you confirmed, cannot ship", async (t) => {
@@ -122,6 +122,8 @@ test("/waicc-ship asks first, and --ship is only for runs that end in a code rev
 
   assert.equal(parseDispatchArgs("--auto --ship").options.ship, true);
   assert.equal(parseDispatchArgs("--loop 3 --ship").options.ship, true);
+  assert.throws(() => parseDispatchArgs("--sonnet"), { message: "Unknown dispatch option --sonnet. A profile goes first, without dashes (/waicc-dispatch sonnet); a model goes after --model (--model sonnet)." });
+  assert.throws(() => parseDispatchArgs("--auto --sonnet x"), /Unknown dispatch option --sonnet/);
   assert.throws(() => parseDispatchArgs("--ship"), /--ship ships the change when the run's code review passes/);
   assert.throws(() => parseDispatchArgs("--auto --review-once --ship"), /not --review-once/);
 });

@@ -109,7 +109,7 @@ function harness(root: string, answers: string[]) {
 test("the main agent asks the advisor on its own: answered, announced, and limited per chat", async (t) => {
   const root = project(t, { profiles, roles: { advisor: "sonnet" }, autoAdvisor: { maxPerChat: 2 } });
   const h = harness(root, ["Diagnosis: path separators.", "Diagnosis: still path separators."]);
-  assert.ok(h.tool.promptGuidelines.some((line: string) => /genuinely stuck/.test(line)), "the main agent is told when to ask");
+  assert.ok(h.tool.promptGuidelines.some((line: string) => /whenever you are stuck or the work is difficult, before guessing/.test(line)), "the main agent is told when to ask");
 
   const first = await h.ask();
   assert.match(first.content[0].text, /^Advice from sonnet \(claude sonnet\), question 1 of 2 for this chat/);

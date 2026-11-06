@@ -367,15 +367,17 @@ export function setRoundLimit(cwd: string, id: string, limit: number, phase?: Ro
     if (phase) {
       ensure(Object.hasOwn(defaultRoundLimits, phase), "Unknown round phase");
       const used = s.rounds.filter((r) => (r.phase ?? roundPhase(r.mode, r.review?.kind)) === phase).length;
-      ensure(Number.isInteger(limit) && limit >= Math.max(2, used) && limit <= 20, "Phase limit must be between its used count (at least 2) and 20");
+      const lowest = Math.max(2, used);
+      ensure(Number.isInteger(limit) && limit >= lowest && limit <= 20,
+        `${phase} has used ${used} round${used === 1 ? "" : "s"} (limit ${s.roundLimits?.[phase] ?? defaultRoundLimits[phase]}), so its limit can be ${lowest}–20; 20 is the most.`);
       s.roundLimits = { ...s.roundLimits, [phase]: limit };
       return commit(root, s, "phase-round-limit.changed-by-human");
     }
+    const lowest = Math.max(2, s.rounds.length);
     ensure(
-      Number.isInteger(limit) &&
-        limit >= Math.max(2, s.rounds.length) &&
-        limit <= 20,
-      "Round limit must be between current round count (at least 2) and 20",
+      Number.isInteger(limit) && limit >= lowest && limit <= 20,
+      // Say the numbers, and the way on when the session has nearly used them all.
+      `This session has used ${s.rounds.length} of its ${s.maxRounds} rounds, so its limit can be ${lowest === 20 ? "only 20" : `${lowest}–20`}; 20 is the most a session allows.${lowest >= 19 ? " For more work, ship or close this session and start a new one." : ""} A phase has its own limit: /waicc-limit <phase> <n>.`,
     );
     s.maxRounds = limit;
     return commit(root, s, "round-limit.changed-by-human");
