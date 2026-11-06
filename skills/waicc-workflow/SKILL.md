@@ -28,6 +28,8 @@ The tools reject these, so get them right the first time:
 - When you are stuck or the work is difficult, ask the human's advisor with
   `waicc_ask_advisor` before guessing, going in circles, giving up or asking the human; the
   profiles summary names it and how many questions you have. Verify its answer against the source.
+- In a bug hunt (`/waicc-bug-hunt`), only read: change no file until the human picks. Report
+  each candidate once with `waicc_report_bugs`, then show the triaged table and stop.
 - A closed selected contract is never replaced automatically: offer `/waicc-planning <request>`
   with `waicc_suggest_command`.
 - If the work grows during the turn (merge conflicts, a failing build, more files than

@@ -9,6 +9,7 @@ import { registerMergeRequestCommands } from "./pi/merge-requests.ts";
 import { registerWorktreeCommands } from "./pi/worktrees.ts";
 import { registerShipCommands } from "./pi/ship.ts";
 import { registerQueueCommands } from "./pi/queue.ts";
+import { registerHuntCommands } from "./pi/hunt.ts";
 
 /** The Pi extension: one shared app object, then every command, tool and hook. */
 export default function waicc(pi: ExtensionAPI, services: Services = {}): void {
@@ -20,6 +21,7 @@ export default function waicc(pi: ExtensionAPI, services: Services = {}): void {
   registerWorktreeCommands(app);
   registerShipCommands(app);
   registerQueueCommands(app);
+  registerHuntCommands(app);
   registerTools(app);
   registerHooks(app);
 }
