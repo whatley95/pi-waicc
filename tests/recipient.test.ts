@@ -298,10 +298,10 @@ test("cancelled, amended, replaced and changed-source assignments never retarget
   const other = fixture(t);
   const a = receiveHandoff(other.root, other.id);
   writeFileSync(join(other.root, "source.txt"), "changed source");
-  assert.throws(() => receiveHandoff(other.root, other.id), /Source changed/);
+  assert.throws(() => receiveHandoff(other.root, other.id), /^Error: Source changed since this handoff was issued. Changed: source.txt. Ask the coordinator/);
   assert.throws(
     () => submitRecipientReply(other.root, a.pin, body()),
-    /Source changed/,
+    /^Error: Source changed during this assignment. Changed: source.txt. Do not submit/,
   );
   assert.equal(existsSync(a.replyPath), false);
 });

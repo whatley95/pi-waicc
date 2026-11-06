@@ -122,6 +122,18 @@ function fileDigest(full: string, stat: Stats, startedAt: number): string {
   return value;
 }
 
+/**
+ * " Changed: a, b and 3 more." for a "source changed" refusal, or "" without a file map. Naming
+ * the files shows the human what keeps changing them (a build tool, another SDK, an editor).
+ */
+export function changedFiles(before: Record<string, string> | undefined, after: SourceSnapshot): string {
+  if (!before) return "";
+  const paths = [...new Set([...Object.keys(before), ...Object.keys(after.files)])]
+    .filter((path) => before[path] !== after.files[path]).sort();
+  if (!paths.length) return after.vcsState === undefined ? "" : " Changed: the version-control state (a commit, checkout or staging), not the files.";
+  return ` Changed: ${paths.slice(0, 8).join(", ")}${paths.length > 8 ? ` and ${paths.length - 8} more` : ""}.`;
+}
+
 export function snapshot(root: string): SourceSnapshot {
   // A sub-project of a Git repository is fingerprinted as that subtree only.
   const prefix = existsSync(join(root, ".svn")) && !existsSync(join(root, ".git")) ? null : gitPrefix(root);

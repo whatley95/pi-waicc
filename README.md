@@ -1164,7 +1164,9 @@ What it does and does not do:
   cannot log in. On Windows, npm/Volta `.cmd` shims are supported.
 - **Source must match the handoff.** If source changed since the handoff was issued,
   dispatch refuses and asks for a fresh handoff. A reviewer that edits code anyway
-  cannot submit: its reply fails the source-fingerprint check.
+  cannot submit: its reply fails the source-fingerprint check. Each refusal names the files
+  that changed, and a run that ends without a reply says why, so a tool that keeps rewriting
+  files (a build, a second SDK, an editor's automatic `pub get`) is easy to spot.
 
 Context travels through the saved session files, not chat: every dispatched agent
 reads the same requirements, contract, saved context, complete round history, prior

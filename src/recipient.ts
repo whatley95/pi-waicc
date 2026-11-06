@@ -14,7 +14,7 @@ import {
 import { recall } from "./memory.ts";
 import { normalizeReply } from "./reply.ts";
 import { proposedContractExample, roundDirectory, versionDirectory } from "./render.ts";
-import { canonicalPath, projectRoot, snapshot } from "./source.ts";
+import { canonicalPath, changedFiles, projectRoot, snapshot } from "./source.ts";
 import { ensure, identifier, record, relativePath } from "./validation.ts";
 import { requirementsText, validateRoundReply } from "./workflow.ts";
 import type { ContractVersion, RecipientPin, Round, Session } from "./types.ts";
@@ -173,9 +173,10 @@ export function receiveHandoff(
     mode: r.mode,
   };
   assertRecipientCurrent(root, pin);
+  const source = snapshot(root);
   ensure(
-    snapshot(root).fingerprint === pin.sourceFingerprint,
-    "Source changed since this handoff was issued. Ask the coordinator for a fresh request.",
+    source.fingerprint === pin.sourceFingerprint,
+    `Source changed since this handoff was issued.${changedFiles(r.source.files, source)} Ask the coordinator for a fresh request.`,
   );
   return recipientAssignment(root, pin);
 }
@@ -184,11 +185,13 @@ export function receiveHandoff(
 function checkedReply(root: string, pin: RecipientPin, value: unknown) {
   const { s, r, replyPath } = pinned(root, pin);
   assertRecipientCurrent(root, pin);
-  if (pin.mode !== "implementation")
+  if (pin.mode !== "implementation") {
+    const source = snapshot(root);
     ensure(
-      snapshot(root).fingerprint === pin.sourceFingerprint,
-      "Source changed during this assignment. Do not submit stale advice; return to the coordinator.",
+      source.fingerprint === pin.sourceFingerprint,
+      `Source changed during this assignment.${changedFiles(r.source.files, source)} Do not submit stale advice; return to the coordinator.`,
     );
+  }
   const body = record(value, "Reply");
   const identity = { schemaVersion: 1, ...pin };
   for (const [key, expected] of Object.entries(identity))

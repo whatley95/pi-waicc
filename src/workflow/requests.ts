@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { artifact, digest, json, loadSession, readText, safePath, sessionRelative, storedJson, withLock } from "../files.ts";
+import { artifact, digest, json, loadSession, readText, safePath, sessionRelative, storedJson, withLock, withSnapshots } from "../files.ts";
 import { roundDirectory, proposedContractExample, versionDirectory } from "../render.ts";
-import { projectRoot, snapshot } from "../source.ts";
+import { changedFiles, projectRoot, snapshot } from "../source.ts";
 import { normalizeReply, replyNormalizerVersion } from "../reply.ts";
 import { reviewContext, type ReviewRequest } from "../review.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
@@ -98,13 +98,14 @@ export function ingest(cwd: string, id: string): Session {
         (round) => round.status === "RECEIVED",
       );
       if (received) {
-        const observed = JSON.parse(
+        const observed = withSnapshots(root, s.id, JSON.parse(
           artifact(root, s, `${roundDirectory(received)}/observed-source.json`),
-        ) as { fingerprint: string };
-        if (snapshot(root).fingerprint !== observed.fingerprint) {
+        ) as { fingerprint: string; files?: Record<string, string> });
+        const current = snapshot(root);
+        if (current.fingerprint !== observed.fingerprint) {
           received.status = "STALE";
           received.rationale =
-            "Source changed after reply intake; issue a fresh request.";
+            `Source changed after reply intake; issue a fresh request.${changedFiles(observed.files, current)}`;
           s.status = "STALE";
           if (received.mode === "review") s.contractReview = "STALE";
           return commit(root, s, "reply.became-stale");

@@ -8,7 +8,7 @@ import { artifact, json, loadSession, now, safePath, sessionRelative, withLock }
 import { commitWithCheckpoint as commit } from "./checkpoint.ts";
 import { checkCommand, type CheckCommand } from "./checks.ts";
 import { roundDirectory } from "./render.ts";
-import { projectRoot, snapshot } from "./source.ts";
+import { changedFiles, projectRoot, snapshot } from "./source.ts";
 import { ensure } from "./validation.ts";
 import { applyIsolatedChanges, createIsolation, createReviewCheckout, isolatedChanges, removeIsolation, removeReviewCheckout, type Isolation, type ReviewCheckout } from "./worktree.ts";
 import { progressParser, type ProgressEvent } from "./progress.ts";
@@ -449,9 +449,10 @@ export function prepareDispatch(cwd: string, id: string, options: DispatchOption
     const replyPath = safePath(root, `${sessionRelative(s.id)}/${dir}/reply.json`);
     ensure(!existsSync(replyPath), "A reply already exists. Run /waicc-continue instead.");
     ensure(!unfinished(root, s, dir), "A dispatched recipient is still working on this request. Wait, or stop it first.");
+    const source = snapshot(root);
     ensure(
-      snapshot(root).fingerprint === r.source.fingerprint,
-      "Source changed since this handoff was issued; the recipient would be refused. Prepare a fresh handoff.",
+      source.fingerprint === r.source.fingerprint,
+      `Source changed since this handoff was issued; the recipient would be refused.${changedFiles(r.source.files, source)} Prepare a fresh handoff.`,
     );
     const dispatchId = randomUUID();
     const starter = join(root, sessionRelative(s.id), dir, "STARTER.txt");
@@ -601,6 +602,8 @@ export async function runDispatch(plan: DispatchPlan, run: AgentRunner = runAgen
     replySubmitted, code: result.code, killed: result.killed, durationMs: report.durationMs, usage, limit, resumed,
     ...(plan.fallbackFrom ? { fallbackFrom: plan.fallbackFrom } : {}),
     isolation, lastMessage: report.lastMessage, steps: progress.length,
+    // Its last refused draft or check: why no reply came (a stale source names the files that changed).
+    refused: progress.findLast((event) => event.kind === "rejected")?.text ?? null,
     log: saved ? join(plan.root, sessionRelative(plan.sessionId), logPath) : null,
     nextAction: isolation && !isolation.applied && replySubmitted
       ? `A reply was submitted but its code was NOT applied: ${isolation.reason} The agent's copy is kept at ${isolation.worktree}. Inspect it, then /waicc-cancel this handoff (the reply describes changes that are not in your checkout) or apply in-scope work yourself.`

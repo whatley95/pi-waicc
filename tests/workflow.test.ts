@@ -468,7 +468,7 @@ test("planned rejects stale source and decision removal; other modes cannot use 
   writeFileSync(join(root, "app.txt"), "Source changed");
   assert.throws(
     () => assess(root, s.id, { ...assessment(received), decision: "planned" }),
-    /Source changed/,
+    /Source changed after reply intake[^]*then fix. Changed: app.txt.$/,
   );
   for (const mode of ["review", "advisor", "implementation"]) {
     assert.throws(
