@@ -29,9 +29,16 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     requireOpen(s);
     identifier(a.requestId);
     const r = s.rounds.find((round) => round.id === a.requestId);
+    // Say why not and what to do: agents otherwise retry the same call.
+    const waiting = s.rounds.find((round) => round.status === "RECEIVED" && round.reply);
     ensure(
       r?.status === "RECEIVED" && r.reply,
-      "Only a received, current reply can be assessed",
+      `Only a received, current reply can be assessed. ${
+        !r ? `No request ${a.requestId} in this session.`
+        : r.status === "WAITING" ? `Request ${r.id} has no reply yet: send it (/waicc-dispatch) and wait for its reply, then /waicc-continue.`
+        : r.status === "ASSESSED" ? `Request ${r.id} was already assessed (${r.decision}).`
+        : `Request ${r.id} is ${r.status}.`
+      }${waiting && waiting.id !== a.requestId ? ` The reply waiting to be assessed is ${waiting.id}.` : ""}`,
     );
     text(a.rationale, "Assessment rationale");
     ensure(

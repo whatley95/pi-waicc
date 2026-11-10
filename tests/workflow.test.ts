@@ -277,6 +277,10 @@ test("IDs with characters WAICC does not allow are made valid wherever the contr
   assert.deepEqual(validateContract(tidyIds(slashed).value, requirements).tasks[1].allowedPaths, ["client", "client\\ui"]);
   assert.deepEqual(tidyIds(slashed).renamed, []);
   assert.throws(() => validateContract(slashed, requirements), /Unsafe path component: client\//);
+  for (const whole of [".", "./"]) {
+    slashed.tasks[1].allowedPaths = [whole];
+    assert.throws(() => validateContract(slashed, requirements), /"\." would be the whole project: list the files or folders the task changes/);
+  }
   // Or as everything in it: that folder too. A pattern that is no folder says what to write instead.
   const patterns = example();
   patterns.tasks[1].allowedPaths = ["client/**", "client\\ui\\*", "docs/**/*"];

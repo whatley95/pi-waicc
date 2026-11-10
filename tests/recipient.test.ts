@@ -533,7 +533,7 @@ test("default Pi review waits for whole-work evidence; main-agent fix continuati
   assert.equal(h.prompts.length, 2);
   assert.deepEqual(loadSession(root, id), before); // Command asks main agent to establish completion first.
   assert.equal(h.clipboard.length, 0);
-  await assert.rejects(() => h.call("waicc_request", { sessionId: id, mode: "review", focus: "Too early" }, h.ctx("owner")), /completion report/);
+  await assert.rejects(() => h.call("waicc_request", { sessionId: id, mode: "review", focus: "Too early" }, h.ctx("owner")), /A code review needs completion/);
   assert.deepEqual(loadSession(root, id), before);
   const report = {
     summary: "All search implementation and relevant checks complete",

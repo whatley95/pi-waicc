@@ -141,6 +141,11 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   const { findings: _none, ...firstReport } = completion();
   let s = review(root, initial, firstReport as ReturnType<typeof completion>);
   const first = s.rounds.at(-1)!.id;
+  // Assessing too early says why and what to do.
+  assert.throws(() => assess(root, s.id, { requestId: first, decision: "ready", rationale: "Too early", dispositions: [] }),
+    new RegExp(`Request ${first} has no reply yet: send it \\(/waicc-dispatch\\) and wait for its reply, then /waicc-continue\\.`));
+  assert.throws(() => assess(root, s.id, { requestId: s.rounds[0].id, decision: "ready", rationale: "Old one", dispositions: [] }),
+    new RegExp(`Request ${s.rounds[0].id} was already assessed \\(planned\\)\\.`));
   s = reply(root, s, { outcome: "needs_changes", findings: [
     { id: "F1", severity: "medium", description: "API regression", evidence: "API.txt violates AC0" },
     { id: "F2", severity: "low", description: "Client regression", evidence: "CLIENT.txt violates AC1" },
@@ -162,6 +167,14 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   assert.throws(() => review(root, s, leftOut as typeof report), new RegExp(`Missing: ${first}:F1, ${first}:F2\\.$`), "left out, every prior finding is named");
   assert.throws(() => review(root, s, { ...report, findings: [...report.findings, report.findings[0], { ...report.findings[0], findingId: "F9" }] }),
     new RegExp(`Not a prior actionable finding: ${first}:F9\\. Given more than once: ${first}:F1\\.$`));
+  // A mistyped requestId is matched to the missing finding it was meant to be.
+  assert.throws(() => review(root, s, { ...report, findings: [...report.findings, { ...report.findings[0], requestId: `${first.slice(0, -1)}0`, findingId: "F2" }] }),
+    new RegExp(`Not a prior actionable finding: ${first.slice(0, -1)}0:F2 \\(did you mean ${first}:F2\\?\\)\\.$`));
+  // Without IDs, the prior findings to answer are listed; without a report at all, its shape is.
+  assert.throws(() => review(root, s, { ...report, findings: [{ disposition: "resolved", evidence: "fixed" }] } as unknown as typeof report),
+    new RegExp(`completion\\.findings\\[0\\] needs the requestId and findingId of the prior finding it answers\\. Prior actionable findings: ${first}:F1, ${first}:F2$`));
+  assert.throws(() => issue(root, s.id, "review", "No report", undefined, undefined, { kind: "code" } as any),
+    /A code review needs completion: \{ summary, tasks: every planned task once as \{taskId, evidence\} \(/);
   const plan = s.rounds[0].id;
   assert.throws(() => review(root, s, { ...report, findings: [...report.findings, { ...report.findings[0], requestId: plan }] }),
     new RegExp(`From a planning or specification-review round, settled when it was assessed, so leave them out: ${plan}:F1\\.$`), "a plan round's finding is named as one to leave out");
@@ -186,6 +199,10 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   assert.equal(s.reviewApproval!.kind, "code");
   assert.equal(s.deliveryVerified, false);
   assert.equal((status(root, s.id) as any).reviewKind, "code");
+  // A change after the passing review is named, so you know why it must be reviewed again.
+  writeFileSync(join(root, "API.txt"), "changed after review");
+  assert.throws(() => closeSession(root, s.id, "Too late"), /no longer matches the source: it changed after the review\. Changed: API\.txt\. Request a fresh review/);
+  writeFileSync(join(root, "API.txt"), "fixed API");
   assert.equal(closeSession(root, s.id, "Whole-change review accepted").status, "CLOSED");
 });
 
@@ -332,7 +349,7 @@ test("a follow-up review starts fresh by default; with resumeReviews Claude resu
 
 test("standalone code review captures its scope atomically and records unavailable checks honestly", (t) => {
   const { root, id } = fixture(t), original = loadSession(root, id);
-  assert.throws(() => prepare(root, id, scope, "review", "No completion evidence", 0, { kind: "code" }), /completion report/);
+  assert.throws(() => prepare(root, id, scope, "review", "No completion evidence", 0, { kind: "code" }), /A code review needs completion/);
   assert.deepEqual(loadSession(root, id), original);
   const report = completion();
   report.checks = [{ description: "Device tests", outcome: "not_run", evidence: "No device available; reviewer must assess this required-evidence limit" }];

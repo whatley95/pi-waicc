@@ -153,6 +153,10 @@ export function relativePath(value: unknown): string {
     `Not a path but a pattern: ${path}. List files or folders instead; a folder covers everything in it`,
   );
   ensure(
+    !/^\.\/?$/.test(path),
+    `"." would be the whole project: list the files or folders the task changes`,
+  );
+  ensure(
     !isAbsolute(path) && !/^[A-Za-z]:|[:\x00-\x1f*?]/.test(path),
     `Unsafe relative path: ${path}`,
   );

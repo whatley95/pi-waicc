@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { artifact, json, loadSession, now, withLock } from "../files.ts";
+import { artifact, digest, json, loadSession, now, withLock } from "../files.ts";
 import { roundDirectory } from "../render.ts";
-import { projectRoot, snapshot } from "../source.ts";
+import { changedFiles, projectRoot, snapshot } from "../source.ts";
 import { commitWithCheckpoint as commit } from "../checkpoint.ts";
 import { ensure, text, readyPlan } from "../validation.ts";
-import { acceptedFindings } from "../state.ts";
-import type { Session, Shipped } from "../types.ts";
+import { acceptedFindings, requirementsText } from "../state.ts";
+import type { Session, Shipped, SourceSnapshot } from "../types.ts";
 import { requireOpen, resetReview, approvalIsCurrent, contract } from "./shared.ts";
 
 /** Cancelling, amending, closing, force-closing and reopening a session. */
@@ -135,11 +135,10 @@ export function closeSession(cwd: string, id: string, reason: string, shipped?: 
       !s.rounds.some((r) => r.status === "WAITING" || r.status === "RECEIVED"),
       "Resolve pending replies before closing",
     );
-    ensure(
-      // Shipping committed the reviewed files, which changes Git's state: it checked the source just before.
-      approvalIsCurrent(s, shipped ? shipped.reviewedFingerprint : snapshot(root).fingerprint),
-      "The passing review no longer matches the current contract, requirements or source. Request a fresh review.",
-    );
+    // Shipping committed the reviewed files, which changes Git's state: it checked the source just before.
+    const current = shipped ? null : snapshot(root);
+    if (!approvalIsCurrent(s, shipped ? shipped.reviewedFingerprint : current!.fingerprint))
+      throw new Error(`The passing review no longer matches ${staleApproval(root, s, current)}. Request a fresh review (/waicc-review).`);
     readyPlan(contract(root, s).contract);
     const round = s.rounds.at(-1)!;
     for (const file of [
@@ -207,4 +206,17 @@ export function reopenSession(
       }),
     });
   });
+}
+
+/** What a passing review no longer matches, so the human knows why it must be reviewed again. */
+function staleApproval(root: string, s: Session, current: SourceSnapshot | null): string {
+  const approval = s.reviewApproval;
+  const last = s.rounds.at(-1);
+  if (!approval || s.contractReview !== "PASS") return "the session: it has no passing review";
+  if (last?.id !== approval.requestId) return `the session: request ${last?.id ?? "?"} was made after the passing review`;
+  if (approval.contractVersion !== s.contractVersion) return `the contract: it was reviewed at v${approval.contractVersion} and is now v${s.contractVersion}`;
+  if (approval.requirementsDigest !== digest(requirementsText(s))) return "the requirements: they were amended after the review";
+  if (current && approval.sourceFingerprint !== current.fingerprint)
+    return `the source: it changed after the review.${changedFiles(last.source.files, current)}`.replace(/\.$/, "");
+  return "the review it records";
 }
