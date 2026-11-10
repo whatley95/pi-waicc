@@ -168,8 +168,9 @@ test("failed code review goes to main agent; ALL fixes precede ONE full re-revie
   assert.throws(() => review(root, s, { ...report, findings: [...report.findings, report.findings[0], { ...report.findings[0], findingId: "F9" }] }),
     new RegExp(`Not a prior actionable finding: ${first}:F9\\. Given more than once: ${first}:F1\\.$`));
   // A mistyped requestId is matched to the missing finding it was meant to be.
-  assert.throws(() => review(root, s, { ...report, findings: [...report.findings, { ...report.findings[0], requestId: `${first.slice(0, -1)}0`, findingId: "F2" }] }),
-    new RegExp(`Not a prior actionable finding: ${first.slice(0, -1)}0:F2 \\(did you mean ${first}:F2\\?\\)\\.$`));
+  const typo = `${first.slice(0, -1)}${first.endsWith("0") ? "1" : "0"}`;
+  assert.throws(() => review(root, s, { ...report, findings: [...report.findings, { ...report.findings[0], requestId: typo, findingId: "F2" }] }),
+    new RegExp(`Not a prior actionable finding: ${typo}:F2 \\(did you mean ${first}:F2\\?\\)\\.$`));
   // Without IDs, the prior findings to answer are listed; without a report at all, its shape is.
   assert.throws(() => review(root, s, { ...report, findings: [{ disposition: "resolved", evidence: "fixed" }] } as unknown as typeof report),
     new RegExp(`completion\\.findings\\[0\\] needs the requestId and findingId of the prior finding it answers\\. Prior actionable findings: ${first}:F1, ${first}:F2$`));
