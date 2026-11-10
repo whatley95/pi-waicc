@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { loadSession, readText } from "../files.ts";
+import { loadSession, readText, sessionRelative } from "../files.ts";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { configureSvnIgnore } from "../ignore.ts";
 import { commandText } from "../dispatch.ts";
@@ -198,6 +199,17 @@ export function registerDispatchCommands(app: App): void {
     "Cancel a pending handoff: [session-id] [reason]; defaults to the selected session and a recorded user-cancellation reason",
     async (args, ctx) => {
       const input = sessionCommandInput(args);
+      // A request's ID is often given instead: it names a round of the selected session.
+      if (input.id && !existsSync(join(projectRoot(ctx.cwd), sessionRelative(input.id)))) {
+        let s;
+        try { s = loadSession(projectRoot(ctx.cwd), selected(ctx)); } catch { /* none selected: the session error below */ }
+        const round = s?.rounds.find((r) => r.id === input.id);
+        if (s && round) {
+          ensure(round.status === "WAITING" || round.status === "RECEIVED",
+            `${input.id} is a request of session ${s.id}, and it is ${round.status}, so there is nothing to cancel. /waicc-cancel takes a session ID, or none for the selected session.`);
+          input.id = s.id;
+        }
+      }
       const id = selected(ctx, input.id);
       cancel(ctx.cwd, id, input.remainder || undefined);
       show(ctx, status(ctx.cwd, id));

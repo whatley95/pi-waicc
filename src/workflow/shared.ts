@@ -87,6 +87,9 @@ export function contractFiles(
  * and forget it) gets the question that decision already had: it may not change anyway.
  */
 export function carryQuestions(previous: Contract, value: unknown): unknown {
+  // Tasks left out of a revision are unchanged too: its decisions still name them.
+  if (value && typeof value === "object" && !Array.isArray(value) && (value as { tasks?: unknown }).tasks === undefined && previous.tasks.length)
+    value = { ...value, tasks: previous.tasks };
   const decisions = (value as { decisions?: unknown } | null)?.decisions;
   // Left out of a revision, they are unchanged: refusing it as "dropped" only costs a retry.
   if (decisions === undefined && previous.decisions?.length && value && typeof value === "object" && !Array.isArray(value))

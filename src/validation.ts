@@ -175,10 +175,12 @@ export function relativePath(value: unknown): string {
   );
   ensure(
     !/^(\.git|\.svn)(\/|$)|^\.pi\/pi-waicc(\/|$)/i.test(path),
-    `Reserved path: ${path} (.git, .svn and .pi/pi-waicc are never task paths; list the files the task changes)`,
+    `Reserved path: ${path} (.git, .svn and .pi/pi-waicc are never task paths; list the files the task changes). ${noFileStep}`,
   );
   return path;
 }
+/** Agents give a build, Git or check step its own task, then have no path to list for it. */
+const noFileStep = "A step that changes no tracked file (a build, a Git step, a verification run) is not a task of its own: fold it into the acceptance criteria of the task it proves, as a check.";
 function unique(values: string[], name: string): void {
   ensure(new Set(values).size === values.length, `Duplicate ${name}`);
 }
@@ -469,7 +471,7 @@ export function readyPlan(contract: Contract): void {
   const noPaths = contract.tasks.filter((t) => t.allowedPaths.length === 0);
   ensure(
     noPaths.length === 0,
-    `Every implementation task needs explicit allowed paths: ${ids(noPaths)}`,
+    `Every implementation task needs explicit allowed paths: ${ids(noPaths)}. ${noFileStep}`,
   );
   const covered = new Set(
     contract.tasks.flatMap((t) =>

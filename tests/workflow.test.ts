@@ -454,9 +454,11 @@ test("a revision that leaves out decisions keeps them unchanged; an empty list s
   });
   const received = ingest(root, s.id);
   assert.throws(() => assess(root, s.id, { ...assessment(received), decision: "planned", contract: { ...gatedPlan(), decisions: [] } }), /Dropped: DEC-001\.$/);
-  const { decisions: _left, ...revised } = gatedPlan();
+  // Tasks left out are kept the same way: the decisions still name them.
+  const { decisions: _left, tasks: _tasks, ...revised } = gatedPlan();
   assess(root, s.id, { ...assessment(received), decision: "planned", contract: revised as never });
   assert.deepEqual(readContract(root, s.id).contract.decisions, gatedPlan().decisions);
+  assert.deepEqual(readContract(root, s.id).contract.tasks, gatedPlan().tasks);
 });
 
 test("planned rejects stale source and decision removal; other modes cannot use planned", (t) => {
