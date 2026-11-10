@@ -103,7 +103,8 @@ function harness(root: string, answers: string[]) {
   } as unknown as ExtensionToolContext;
   const ask = (question = "Why does the build fail on Windows only?") =>
     tools.get("waicc_ask_advisor").execute("call", { question, tried: "Re-ran it; same error." }, undefined, undefined, ctx);
-  return { tool: tools.get("waicc_ask_advisor"), ask, asked, notices, widgets, entries };
+  const call = (name: string, params: object = {}) => tools.get(name).execute("call", params, undefined, undefined, ctx);
+  return { tool: tools.get("waicc_ask_advisor"), ask, call, asked, notices, widgets, entries };
 }
 
 test("the main agent asks the advisor on its own: answered, announced, and limited per chat", async (t) => {
@@ -133,4 +134,23 @@ test("a consult that fails still counts, and asking is refused when off or witho
   const unset = harness(project(t, { profiles }), []);
   await assert.rejects(unset.ask(), /No advisor role is set/);
   assert.deepEqual(unset.asked, []);
+});
+
+test("from the second refused WAICC call in a row, the error tells the agent to ask the advisor", async (t) => {
+  const h = harness(project(t, { profiles, roles: { advisor: "sonnet" }, autoAdvisor: { maxPerChat: 2 } }), ["Diagnosis: no session is selected."]);
+  const refused = async () => {
+    try { await h.call("waicc_status"); } catch (error) { return (error as Error).message; }
+    throw new Error("expected a refusal");
+  };
+  assert.doesNotMatch(await refused(), /waicc_ask_advisor/, "one refusal is only the error");
+  assert.match(await refused(), /This is your 2nd refused WAICC call in a row\. Do not guess again: ask the advisor now with waicc_ask_advisor\..*\(2 questions left in this chat\)\.$/s);
+  assert.match(await refused(), /your 3rd refused WAICC call/);
+  await h.ask();
+  assert.doesNotMatch(await refused(), /waicc_ask_advisor/, "a call that works starts the count again");
+  assert.match(await refused(), /your 2nd refused.*\(1 question left in this chat\)/s);
+
+  // No advisor to ask: the human is.
+  const alone = harness(project(t, { profiles }), []);
+  await assert.rejects(alone.call("waicc_status"));
+  await assert.rejects(alone.call("waicc_status"), /2nd refused WAICC call in a row\. Do not guess again: if the error does not say exactly what to change, stop and ask the human\.$/);
 });

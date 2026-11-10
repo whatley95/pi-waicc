@@ -1823,6 +1823,9 @@ work is difficult, it asks before guessing, going in circles, giving up or askin
 example, a check still fails after a real fix attempt, it cannot find a bug's cause, a WAICC
 tool keeps rejecting its input, it doubts a reviewer's finding, or it must choose between
 risky designs it cannot settle from the code. You can also just tell it "ask the advisor".
+From the second refused WAICC call in a row, the error itself tells it to ask the advisor
+now (or you, with no advisor or no questions left) instead of guessing again; a call that
+works starts the count again.
 To let it ask more often, raise `"autoAdvisor": { "maxPerChat": n }` (up to 20) in your user file.
 
 - The advisor reads the project **read-only**: Claude gets only Read/Grep/Glob, Codex runs

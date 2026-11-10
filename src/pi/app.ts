@@ -13,7 +13,7 @@ import { json, listSessions, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
 import type { CheckRunner } from "../checks.ts";
 import type { AgentRunner } from "../dispatch.ts";
-import { alertSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance, profilesBrief } from "../profiles.ts";
+import { alertSettings, consultSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance, profilesBrief } from "../profiles.ts";
 import { statusTable } from "./status-table.ts";
 import { buildOutdated, loadedBuild } from "../build.ts";
 import { newNeeds, projectStatus, publish, recordChat, trackerEnabled, type LiveRun, type Notice, type ProjectStatus } from "../tracker.ts";
@@ -152,6 +152,23 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   // A tool error is logged like a command's. The same one 3 times in a chat means the agent may be
   // stuck: you are told once, since only the agent sees tool errors.
   const toolErrors = new Map<string, number>();
+  // Refused WAICC calls in a row, by chat. From the second, the error itself tells the agent to
+  // ask the advisor: guidelines alone left agents retrying the same call many times.
+  const refusals = new Map<string, number>();
+  const nth = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+  const advisorNudge = (ctx: ExtensionContext, streak: number, tool: string): string => {
+    if (streak < 2 || tool === "waicc_ask_advisor") return "";
+    try {
+      const settings = consultSettings(ctx.cwd);
+      const used = ctx.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "waicc-advisor-consult").length;
+      const left = settings.options ? settings.limit - used : 0;
+      return left > 0
+        ? `\n\nThis is your ${nth(streak)} refused WAICC call in a row. Do not guess again: ask the advisor now with waicc_ask_advisor. Give it this error, what you sent and what you already tried, then verify its answer against the source (${left} question${left > 1 ? "s" : ""} left in this chat).`
+        : `\n\nThis is your ${nth(streak)} refused WAICC call in a row. Do not guess again: if the error does not say exactly what to change, stop and ask the human.`;
+    } catch {
+      return "";
+    }
+  };
   const registerTool: ExtensionAPI["registerTool"] = (tool) =>
     pi.registerTool({ ...tool, execute: async (id, params, signal, update, ctx) => {
       const decoded = decodeJsonArguments(params, tool.parameters);
@@ -161,10 +178,18 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       const sessionOf = () => typeof sent.sessionId === "string" ? sent.sessionId : bindings.get(key(ctx))?.sessionId;
       let outcome = "ok";
       try {
-        return await tool.execute(id, decoded, signal, update, ctx);
+        const done = await tool.execute(id, decoded, signal, update, ctx);
+        refusals.delete(key(ctx));
+        return done;
       } catch (error) {
         outcome = signal?.aborted ? "stopped" : "error";
         const message = error instanceof Error ? error.message : String(error);
+        let nudge = "";
+        if (!signal?.aborted && tool.name !== "waicc_ask_advisor") {
+          const streak = (refusals.get(key(ctx)) ?? 0) + 1;
+          refusals.set(key(ctx), streak);
+          nudge = advisorNudge(ctx, streak, tool.name);
+        }
         if (!signal?.aborted)
           try {
             // What the agent sent, as names and types: enough to see the mistake, none of its text.
@@ -178,6 +203,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
             if (count === 3 && ctx.hasUI)
               ctx.ui.notify(`The agent has hit the same WAICC error 3 times in this chat (${tool.name}): ${message.slice(0, 200)}${message.length > 200 ? "…" : ""} It may be stuck: Esc stops it, then tell it what to do.`, "warning");
           } catch { /* the log and the hint never stand in the way of the error */ }
+        if (nudge) throw new Error(`${message}${nudge}`, { cause: error });
         throw error;
       } finally {
         try {
