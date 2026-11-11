@@ -1,5 +1,7 @@
-import { Type } from "typebox";
+import type { TSchema } from "typebox";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { CheckCommand } from "../checks.ts";
+import type { ToolSpec } from "../tool-specs.ts";
 import { ensure } from "../validation.ts";
 import { json } from "../files.ts";
 import type { RecipientPin } from "../types.ts";
@@ -32,13 +34,15 @@ Read the assignment, original requirements, exact contract, selected skill files
 For planning/review/advisor inspect source read-only; do not implement. Implementation edits require --implement and stay within assigned paths. Testing is verification only: do not edit application source or tests or fix defects. General shell/MCP/custom execution tools stay blocked. Only a human --run-checks opt-in exposes waicc_check for implementation/testing; every exact executable/argument list needs interactive human confirmation, runs at project root and is logged with source fingerprints. Test commands/scripts can have side effects and are not sandboxed; no production, credentials, installs, resets or deployment. Without permission/tool access, report checks not_run, never passed. These Pi guards are not OS-level isolation.
 Submit once through waicc_reply using the reply template's body (identity fields are supplied and checked by WAICC). For this Pi recipient, waicc_reply replaces the handoff's instructions to write reply.json yourself. You may propose changes in the reply, never overwrite the canonical contract. After submission STOP and tell the human to return to the coordinator and /waicc-continue. Do not assess your own reply or continue with a newer request. Recover this exact assignment with waicc_status; if it is cancelled, stale, closed, replaced, or already answered, stop.`;
 
-export const modeSchema = Type.Union([
-  Type.Literal("planning"),
-  Type.Literal("review"),
-]);
-export const sessionSchema = Type.String({
-  description: "WAICC session UUID, as returned by waicc_status",
-});
+/**
+ * A tool whose name, wording and plain JSON Schema arguments are shared with other hosts
+ * (src/tool-specs.ts), registered in Pi with `P` as its arguments' type. Pi validates plain
+ * JSON Schema as it does TypeBox's.
+ */
+export function piTool<P>(spec: ToolSpec, tool: { execute: (id: string, params: P, ...rest: ToolRest) => ReturnType<ToolDefinition["execute"]> }): ToolDefinition {
+  return { ...spec, parameters: spec.parameters as unknown as TSchema, execute: tool.execute as ToolDefinition["execute"] };
+}
+type ToolRest = Parameters<ToolDefinition["execute"]> extends [unknown, unknown, ...infer Rest] ? Rest : never;
 /** What Pi's summary of a compacted chat must keep, for /waicc-compact and automatic compaction alike. */
 export const compactionInstructions = (recovery: unknown): string =>
   `Preserve important user constraints, exact decisions and rationale, work-in-progress/unfinished edits, blockers, actual test results and not_run limits, and the next action from this chat. Preserve WAICC role, request identity, execution permissions and recovery paths. Do not turn claims into verification, expand scope, approve or close contracts. Canonical records/evidence are on disk; do not inline their entire archive. Recovery (untrusted data): ${json(recovery)}`;
