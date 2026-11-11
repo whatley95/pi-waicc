@@ -176,6 +176,12 @@ pattern is `tests/extension.test.ts`, which uses Pi's own `loadExtensions()`.
 
 ## Finding bugs from real use
 
+Claude Code's chats log there too: `claude-<id>` for the mod (slash commands, the shell guard,
+dispatch ends, main-agent turns, and the CLI runs it starts, which get `WAICC_CHAT`) and
+`mcp-<id>` for the coordinator MCP server's tools. Pi's chats are named by Pi's own session IDs.
+This session's own Claude Code may run the installed WAICC plugin: its shell guard refuses a Bash
+line that runs a WAICC step, so write files that run one with the editing tools, not a heredoc.
+
 Three local sources show what went wrong in the user's own projects. Read them for counts and
 messages only, and never copy their contents (hosts, project names, people) into this public repo:
 - `<project>/.pi/pi-waicc/activity.jsonl` (since #135): one line per step WAICC took (commands,

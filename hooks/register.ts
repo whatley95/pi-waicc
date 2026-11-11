@@ -13,12 +13,25 @@ const session = atom({ plugin: "waicc", key: "session" } as const, null);
 const watched = atom({ plugin: "waicc", key: "watched" } as const, null);
 const state = ".pi/pi-waicc";
 
+/** This Claude Code chat as WAICC's logs name it, beside Pi's chats and the MCP server's (mcp-…). */
+async function chatName($: EngineInterface): Promise<string> {
+  return `claude-${(await $.session.id()).slice(0, 8)}`;
+}
 /** Runs the waicc command line in this project and reads its JSON answer; its error message on failure. */
 async function waicc($: EngineInterface, argv: string[]): Promise<any> {
   const cwd = await $.session.cwd();
-  const ran = await $.process.run(["node", `${$.plugin.root}/src/cli.ts`, "--root", cwd, ...argv], { timeoutMs: 120_000 });
+  const ran = await $.process.run(["node", `${$.plugin.root}/src/cli.ts`, "--root", cwd, ...argv], { timeoutMs: 120_000, env: { WAICC_CHAT: await chatName($) } });
   if (ran.exitCode !== 0) throw new Error(ran.stderr.trim() || `waicc ${argv[0]} exited with ${ran.exitCode}`);
   return JSON.parse(ran.stdout);
+}
+/** One line in WAICC's error or activity log (a mod cannot append to a file itself); never fails what logged it. */
+type LogEntry =
+  | { kind: "error"; step: string; message: string; level?: "warning"; sessionId?: string }
+  | { kind: "activity"; step: string; outcome: string; ms?: number; sessionId?: string; detail?: Record<string, string | number | boolean | null> };
+async function log($: EngineInterface, entry: LogEntry): Promise<void> {
+  try {
+    await waicc($, ["log", JSON.stringify(entry)]);
+  } catch { /* the log never stands in the way */ }
 }
 /** A JSON file of WAICC's state, read without starting a process; null when there is none. */
 async function stateFile($: EngineInterface, path: string): Promise<any> {
@@ -54,14 +67,19 @@ function shown(command: SlashCommand, value: any): string {
 async function run($: EngineInterface, command: SlashCommand, args: string): Promise<{ text: string }> {
   const { id: named, rest } = sessionArgs(args);
   const id = command.session === "none" ? named : named ?? (await read($, session)) ?? undefined;
+  // A refusal is logged as Pi logs its commands' (the command line logs its own errors too).
+  const refused = async (message: string) => {
+    await log($, { kind: "error", step: `/${command.name}`, message, ...(id ? { sessionId: id } : {}) });
+    return { text: message };
+  };
   if (command.session === "required" && !id)
-    return { text: "No WAICC session is selected in this chat: /waicc-planning <request> starts one, /waicc-use <session-id> selects one." };
+    return refused("No WAICC session is selected in this chat: /waicc-planning <request> starts one, /waicc-use <session-id> selects one.");
   let value: any;
   try {
     const argv = command.cli(id, rest);
     if (argv) value = await waicc($, argv);
   } catch (error) {
-    return { text: error instanceof Error ? error.message : String(error) };
+    return refused(error instanceof Error ? error.message : String(error));
   }
   // The session this chat works on from now on.
   const now = command.binds === "new" ? String(value.id) : command.binds === "named" ? id! : command.binds === "none" ? null : undefined;
@@ -105,6 +123,8 @@ async function watch($: EngineInterface): Promise<void> {
     return;
   }
   await update($, watched, () => null);
+  await log($, { kind: "activity", step: "dispatch watch", outcome: String(runFile.outcome ?? "ended"), sessionId: id,
+    ms: Date.parse(runFile.endedAt) - Date.parse(runFile.startedAt) });
   $.ui.toast(runFile.message ?? "The dispatch ended.");
   void $.ui.notify(runFile.message ?? "The dispatch ended.", { title: "WAICC" });
   await showStatus($);
@@ -114,11 +134,12 @@ async function watch($: EngineInterface): Promise<void> {
  * WAICC's human steps are the human's: the agent's shell may only read WAICC's state. A shell
  * line the human runs (Claude Code's "!") is no tool call of the model's and has no tool_use_id.
  */
-function guard($: EngineInterface, e: { command: string; tool_use_id?: string }, next: (e: any) => any) {
+async function guard($: EngineInterface, e: { command: string; tool_use_id?: string }, next: (e: any) => any) {
   const command = e.tool_use_id ? humanOnlyCommand(e.command) : null;
-  return command
-    ? { deny: `"waicc ${command}" is the human's step, not yours: tell the human to type ${slashFor(command)} and end your turn. Use the WAICC tools for your own part.` }
-    : next(e);
+  if (!command) return next(e);
+  const current = await read($, session);
+  await log($, { kind: "error", step: "shell guard", message: `Refused the agent's "waicc ${command}"`, level: "warning", ...(current ? { sessionId: current } : {}) });
+  return { deny: `"waicc ${command}" is the human's step, not yours: tell the human to type ${slashFor(command)} and end your turn. Use the WAICC tools for your own part.` };
 }
 
 export const register: Register = (on) => {
@@ -131,7 +152,10 @@ export const register: Register = (on) => {
   });
   for (const command of slashCommands)
     on("command.run", { command: command.name }, ($, e) => run($, command, e.args))
-      .catch(() => ({ text: `/${command.name} failed inside WAICC's Claude Code mod; the waicc command line does the same: ! waicc --help` }));
+      .catch(async ($) => {
+        await log($, { kind: "error", step: `/${command.name}`, message: "The mod's command failed" });
+        return { text: `/${command.name} failed inside WAICC's Claude Code mod; the waicc command line does the same: ! waicc --help` };
+      });
 
   on("tool.call", { tool: "Bash" }, guard);
   on("tool.call", { tool: "PowerShell" }, guard);
@@ -142,6 +166,16 @@ export const register: Register = (on) => {
     if (String(e.tool).startsWith("mcp__plugin_waicc_waicc__")) await showStatus($);
     return result;
   }).catch(($, e, next) => next(e)); // A status line that failed never costs the tool its result.
+
+  // Each main-agent turn, as Pi logs its own: how long it took and how it ended.
+  on("turn.complete", async ($, e, next) => {
+    const result = await next(e);
+    if (e.agentId === undefined) {
+      const current = await read($, session);
+      await log($, { kind: "activity", step: "main turn", outcome: e.reason, ms: e.durationMs, ...(current ? { sessionId: current } : {}) });
+    }
+    return result;
+  }).catch(($, e, next) => next(e));
 
   on("prompt.compose", async ($, e, next) => {
     const composed = await next(e);

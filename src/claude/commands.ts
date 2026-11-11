@@ -142,20 +142,28 @@ export const slashCommands: SlashCommand[] = [
 export const slashFor = (cli: string): string =>
   ({ start: "/waicc-planning", export: "/waicc-handoff", "help-develop": "/waicc-develop --delegate", implement: "/waicc-develop --delegate" } as Record<string, string>)[cli] ?? `/waicc-${cli}`;
 
-/** What the agent may run itself through a shell: reading only. */
-const readOnly = new Set(["status", "list", "checkpoint", "decisions", "errors", "activity", "help", "--help"]);
+/**
+ * The waicc commands that change WAICC's state, which only the human runs; reading (status,
+ * list, checkpoint, decisions, errors, activity, help) stays the agent's.
+ */
+const humanSteps = new Set([
+  "start", "develop", "decide", "close", "reopen", "cancel", "amend", "limit", "dispatch", "continue", "ship", "delete", "restore",
+  "help-develop", "implement", "test", "prepare", "assess", "request", "advisor", "context", "compact", "memory", "learn", "init",
+  "recover-lock", "mcp", "log",
+]);
 /**
  * The waicc command a shell line runs that only the human may (a decision, an approval, a
- * handoff), or null. Matches `waicc …` and `node …/cli.ts …`, after any --root.
+ * handoff), or null. Only a real run counts: `waicc …`, `npx waicc …` or `node …/cli.ts …` where a
+ * command starts (the line's start, or after ; & | ( or `$(`), then a real waicc command, after any
+ * --root. The words in a message, a heredoc or a string ("the waicc command line") are not a run.
  */
 export function humanOnlyCommand(line: string): string | null {
-  const pattern = /(?:^|[\s;&|(`'"])(?:waicc|[^\s;&|'"`]*cli\.ts["']?)(?:\s+--root\s+(?:"[^"]*"|'[^']*'|\S+))?\s+(--?[a-z][a-z-]*|[a-z][a-z-]*)/g;
+  const pattern = /(?:^|[;&|(`\n]|\$\()\s*(?:npx\s+)?(?:waicc|node\s+(?:"[^"]*cli\.ts"|'[^']*cli\.ts'|\S*cli\.ts))(?:\s+--root\s+(?:"[^"]*"|'[^']*'|\S+))?\s+([a-z][a-z-]*)(?=\s|$|[;&|)`])/g;
   for (const match of line.matchAll(pattern)) {
     const command = match[1] ?? "";
-    if (readOnly.has(command)) continue;
+    if (humanSteps.has(command)) return command;
     // Listing the profiles reads; "profiles init" writes the human's file.
-    if (command === "profiles" && !/^\s+init\b/.test(line.slice(match.index + match[0].length))) continue;
-    return command;
+    if (command === "profiles" && /^\s+init\b/.test(line.slice((match.index ?? 0) + match[0].length))) return command;
   }
   return null;
 }
