@@ -1469,6 +1469,8 @@ Answer `y` to add the marketplace, then pick a scope. It needs Node.js 22.19 or 
 
 A status line under the prompt shows this chat's session and where it stands. The agent's system prompt names the session and tells it to leave your steps to you. When it needs one of your commands, it offers them in a picker that opens as its turn ends; what you pick runs as your own command.
 
+With `"autoContinue": true` in your user file, a reply comes in by itself, as in Pi. That covers a dispatch's reply, and a `reply.json` written by an agent you handed off to by hand once it has stopped changing. It is taken in between the main agent's turns, and the agent assesses it. When Claude Code compacts the chat, the summary keeps WAICC's recovery notes (the session's checkpoint), as Pi's does.
+
 The agent's shell may read WAICC's state (`waicc status`) but not take your steps: a `waicc develop`, `close`, `decide` or any other step in its Bash or PowerShell calls is refused, and the agent is told which slash command you type. The guard looks only at the agent's own tool calls, so a line you run yourself with `!` (for example `! waicc errors --since 6h`) should pass; if one is ever refused, the slash command does the same.
 
 Sessions live in the project's `.pi/pi-waicc/` as with Pi, so one session can move between Pi and Claude Code. Let one main agent work on a session at a time.

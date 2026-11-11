@@ -150,7 +150,7 @@ test("everything the mod loads runs without Node: it imports only the engine's t
   };
   visit(resolve("hooks/register.ts"));
   assert.deepEqual(problems, []);
-  assert.deepEqual([...seen].map((file) => basename(file)).sort(), ["auto-planning-text.ts", "commands.ts", "hunt-text.ts", "register.ts", "status-table.ts", "tool-specs.ts"]);
+  assert.deepEqual([...seen].map((file) => basename(file)).sort(), ["auto-planning-text.ts", "commands.ts", "compaction-text.ts", "hunt-text.ts", "register.ts", "status-table.ts", "tool-specs.ts"]);
   assert.deepEqual(JSON.parse(readFileSync(resolve("hooks/hooks.json"), "utf8")), { modules: ["./register.ts"] });
 });
 
@@ -229,4 +229,13 @@ test("a bug hunt without Pi: start it, report and triage through the coordinator
   assert.deepEqual(picked.picked, ["B1"]);
   assert.match(loadSession(root, picked.id).requirements.join("\n"), /- B1 \(high, untriaged\) at pay\.ts:1/);
   assert.deepEqual(cli(["hunt", "list"]).map((h: { status: string; sessionId?: string }) => [h.status, h.sessionId]), [["PICKED", picked.id]]);
+});
+
+test("Claude Code's compaction keeps the same WAICC recovery notes as Pi's", async () => {
+  const { compactionInstructions } = await import("../src/compaction-text.ts");
+  const fromPi = (await import("../src/pi/shared.ts")).compactionInstructions;
+  assert.equal(fromPi, compactionInstructions, "one text for both hosts");
+  const text = compactionInstructions({ sessionId: id, status: "AWAITING_ASSESSMENT" });
+  assert.match(text, /Preserve WAICC role, request identity, execution permissions and recovery paths\./);
+  assert.ok(text.includes(`Recovery (untrusted data): {\n  "sessionId": "${id}"`), text);
 });

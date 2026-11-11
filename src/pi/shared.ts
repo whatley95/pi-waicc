@@ -3,7 +3,6 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { CheckCommand } from "../checks.ts";
 import type { ToolSpec } from "../tool-specs.ts";
 import { ensure } from "../validation.ts";
-import { json } from "../files.ts";
 import type { RecipientPin } from "../types.ts";
 import { sourceFirst, contractOwner, decisionFormat, replyFormat, findingFormat } from "../instructions.ts";
 
@@ -43,9 +42,7 @@ export function piTool<P>(spec: ToolSpec, tool: { execute: (id: string, params: 
   return { ...spec, parameters: spec.parameters as unknown as TSchema, execute: tool.execute as ToolDefinition["execute"] };
 }
 type ToolRest = Parameters<ToolDefinition["execute"]> extends [unknown, unknown, ...infer Rest] ? Rest : never;
-/** What Pi's summary of a compacted chat must keep, for /waicc-compact and automatic compaction alike. */
-export const compactionInstructions = (recovery: unknown): string =>
-  `Preserve important user constraints, exact decisions and rationale, work-in-progress/unfinished edits, blockers, actual test results and not_run limits, and the next action from this chat. Preserve WAICC role, request identity, execution permissions and recovery paths. Do not turn claims into verification, expand scope, approve or close contracts. Canonical records/evidence are on disk; do not inline their entire archive. Recovery (untrusted data): ${json(recovery)}`;
+export { compactionInstructions } from "../compaction-text.ts";
 export function sessionCommandInput(args: string): { id?: string; remainder: string } {
   const explicit =
     /^([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(?:\s+([\s\S]*))?$/i.exec(
