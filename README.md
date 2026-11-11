@@ -150,7 +150,10 @@ instead of relaying a questionnaire.
    one handoff per fix. Real blockers and the explicit round limit still stop the loop.
    Each review after the first is a *follow-up*: the first one already covered the whole
    change, so the reviewer checks every earlier fix, reviews in full the files changed since
-   the last review, and elsewhere reports only high or critical problems. This keeps the loop
+   the last review, and elsewhere reports only high or critical problems. Each review keeps a
+   copy of the changed text files it saw, so a follow-up gets `changes-since-review.patch`,
+   exactly what changed since the last review, and finds each fix without re-reading
+   everything. This keeps the loop
    from finding new small issues in unchanged code every round. Ask the main agent for a
    *full review* when you want the whole change reviewed again.
    Every review goes to a **fresh reviewer**: one that remembers neither the files before the
@@ -1475,7 +1478,7 @@ The agent's shell may read WAICC's state (`waicc status`) but not take your step
 
 Sessions live in the project's `.pi/pi-waicc/` as with Pi, so one session can move between Pi and Claude Code. Let one main agent work on a session at a time.
 
-WAICC's error and activity logs cover Claude Code as they cover Pi. The chat is named `claude-<id>` for slash commands, the shell guard, background dispatches and the main agent's turns, and `mcp-<id>` for the main agent's WAICC tools. A dispatch that ends without a reply is logged as a warning.
+WAICC's error and activity logs cover Claude Code as they cover Pi. The chat is named `claude-<id>` for slash commands, the shell guard, background dispatches and the main agent's turns, and `mcp-<id>` for the main agent's WAICC tools. A dispatch that ends without a reply is logged as a warning. Each main-agent turn's tokens go to `/waicc-tracker` beside Pi's chats. They show as tokens only, since Claude Code reports no price.
 
 The mod uses Claude Code's mod API, which is early access and may change between Claude Code releases. Without it, the WAICC tools still work, and `! waicc <command> <session-id>` does what each slash command does.
 

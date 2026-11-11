@@ -8,7 +8,7 @@ import { auditMemory, curate, propose, recall } from "./memory.ts";
 import { initProject, projectRoot } from "./source.ts";
 import { readErrors, recordError, sinceTime } from "./error-log.ts";
 import { newFlow, readActivity, recordActivity, summarizeActivity } from "./activity-log.ts";
-import { trackedProjects } from "./tracker.ts";
+import { projectStatus, publish, recordTurn, trackedProjects, trackerEnabled } from "./tracker.ts";
 import { checkpointView, refreshCheckpoint } from "./checkpoint.ts";
 import {
   assess,
@@ -140,6 +140,28 @@ try {
         if (background) finishBackgroundRun(cwd, id, { outcome: "error", message: error instanceof Error ? error.message : String(error) });
         throw error;
       }
+      break;
+    }
+    case "turn": {
+      // One main-agent turn from a host that reports usage per turn (Claude Code's mod): the activity
+      // log's line, the chat's spend for the tracker page, and the page itself, refreshed.
+      const turn = JSON.parse(id ?? "null") as { chatId?: string; model?: string; ms?: number; outcome?: string; sessionId?: string;
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } } | null;
+      ensure(turn && typeof turn.chatId === "string" && turn.chatId.trim() && typeof turn.model === "string" && turn.model.trim(),
+        'Usage: waicc turn \'{"chatId":"…","model":"…","ms":1200,"outcome":"answer","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}\'');
+      const root = projectRoot(cwd);
+      const sessionId = typeof turn.sessionId === "string" && /^[0-9a-f-]{36}$/.test(turn.sessionId) ? { sessionId: turn.sessionId } : {};
+      recordActivity(root, { flow, step: "main turn", phase: "end", outcome: String(turn.outcome ?? "answer"), ...(typeof turn.ms === "number" ? { ms: turn.ms } : {}), ...chat, ...sessionId,
+        detail: { model: turn.model.slice(0, 120) } });
+      const n = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0);
+      const u = turn.usage ?? {};
+      if (u && (n(u.input) || n(u.output) || n(u.cacheRead) || n(u.cacheWrite)))
+        recordTurn(root, turn.chatId, turn.model, new Date(), { inputTokens: n(u.input) + n(u.cacheRead) + n(u.cacheWrite), cachedTokens: n(u.cacheRead), outputTokens: n(u.output) });
+      if (trackerEnabled())
+        try {
+          publish(projectStatus(root));
+        } catch { /* the page is a convenience */ }
+      output = { recorded: true };
       break;
     }
     case "hunt": {
@@ -422,7 +444,7 @@ try {
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 }
-if (command && known && !["activity", "errors", "mcp", "log"].includes(command))
+if (command && known && !["activity", "errors", "mcp", "log", "turn"].includes(command))
   try {
     // Which options were used and which session, never what was typed with them.
     const flags = [...new Set(args.filter((word) => /^--[a-z][a-z-]*$/.test(word)))].join(" ");

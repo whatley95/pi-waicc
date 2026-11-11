@@ -89,6 +89,7 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
       conversation: join(root, sessionRelative(s.id), dir, "conversation.json"),
       memory: r.contextVersion || r.mode === "advisor" ? join(root, sessionRelative(s.id), dir, "memory.json") : null,
       handoff: join(root, sessionRelative(s.id), dir, "HANDOFF.md"),
+      changesSinceReview: r.review?.kind === "code" && r.review.followUp?.patch?.paths ? join(root, sessionRelative(s.id), dir, "changes-since-review.patch") : null,
       replyTemplate: join(root, sessionRelative(s.id), dir, "reply.example.json"),
     },
     focus: request.focus,
@@ -167,6 +168,10 @@ export function assignmentText(assignment: ReturnType<typeof recipientAssignment
     { title: "Instructions", body: a.handoff.trim(), path: a.inputs.handoff },
     { title: "Original request and amendments", body: a.requirements.trim(), path: null },
     ...(a.codeReview ? [{ title: "Code review: baseline, changed paths, the main agent's completion claims and earlier findings to verify", body: `\`\`\`json\n${JSON.stringify(a.codeReview)}\n\`\`\``, path: a.inputs.request.replace(/request\.json$/, "code-review.json"), drop: 6 }] : []),
+    ...(a.inputs.changesSinceReview ? [{
+      title: "Changes since the last review (changes-since-review.patch)", body: fileText(a.inputs.changesSinceReview) && `\`\`\`diff\n${fileText(a.inputs.changesSinceReview)}\n\`\`\``,
+      path: a.inputs.changesSinceReview, drop: 7,
+    }] : []),
     ...(latest ? [{
       title: `Latest assessment (request ${String(latest.requestId)}, ${String(latest.mode)})`,
       body: `\`\`\`json\n${JSON.stringify({ decision: latest.decision, rationale: latest.rationale, dispositions: latest.dispositions,
@@ -192,7 +197,10 @@ export function assignmentText(assignment: ReturnType<typeof recipientAssignment
   // Past the limit, sections give way in their drop order (the contract first: largest, and one file),
   // each to its file; the instructions, the request and the reply template always stay.
   const shown = sections.filter((s) => s.body !== null || s.path);
-  for (const rank of [1, 2, 3, 4, 5, 6]) {
+  // A section too big to fit beside the rest goes first, rather than every smaller one before it.
+  if (render(shown).length > briefLimit)
+    for (const [i, s] of shown.entries()) if (s.drop && s.path && (s.body?.length ?? 0) > briefLimit / 2) shown[i] = { ...s, body: null };
+  for (const rank of [1, 2, 3, 4, 5, 6, 7]) {
     if (render(shown).length <= briefLimit) break;
     const at = shown.findIndex((s) => s.drop === rank && s.body !== null && s.path);
     if (at >= 0) shown[at] = { ...shown[at]!, body: null };

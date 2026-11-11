@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path";
 import { artifact, json, loadSession, sessionRelative, withoutSnapshotFiles } from "../src/files.ts";
 import { roundDirectory } from "../src/render.ts";
 import { dispatch, prepareDispatch, runDispatch, type AgentRunner } from "../src/dispatch.ts";
-import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
+import { assignmentText, receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { snapshot } from "../src/source.ts";
 import { amend, assess, cancel, closeSession, createSession, exportHandoff, ingest, issue, prepare, status } from "../src/workflow.ts";
 import type { Contract, Reply, Session, WorkCompletion } from "../src/types.ts";
@@ -262,9 +262,19 @@ test("a later code review is a follow-up: it starts from what changed since the 
   report.findings = [{ requestId: first.id, findingId: "F1", disposition: "resolved", evidence: "API.txt now checks; regression added" }];
   s = review(root, s, report);
   const second = s.rounds.at(-1)!;
-  assert.deepEqual(second.review?.kind === "code" && second.review.followUp, { previousRequestId: first.id, cycle: 2, changedSinceReview: ["API.txt"] });
+  assert.deepEqual(second.review?.kind === "code" && second.review.followUp, {
+    previousRequestId: first.id, cycle: 2, changedSinceReview: ["API.txt"], patch: { paths: 1, unavailable: [], truncated: false },
+  });
   assert.match(handoff(second), new RegExp(`FOLLOW-UP code review cycle 2: review ${first.id} already covered the whole change[\\s\\S]*followUp\\.changedSinceReview \\(1 path\\)[\\s\\S]*report only critical or high findings`));
   assert.deepEqual(JSON.parse(artifact(root, s, `${roundDirectory(second)}/code-review.json`)).followUp.changedSinceReview, ["API.txt"]);
+  // The exact fix, from the copy the first review kept: the reviewer need not hunt for it.
+  assert.equal(artifact(root, s, `${roundDirectory(first)}/reviewed/API.txt`), "implemented API");
+  const patch = artifact(root, s, `${roundDirectory(second)}/changes-since-review.patch`);
+  assert.match(patch, /^--- a\/API\.txt\n\+\+\+ b\/API\.txt\n@@ [^\n]+@@\n-implemented API\n(\\ No newline at end of file\n)?\+implemented API with the check\n/);
+  assert.doesNotMatch(patch, /CLIENT\.txt/, "only what changed since the review");
+  assert.match(handoff(second), /What changed in them since that review is exactly in [^\n]*changes-since-review\.patch \(1 path\): start from it to find each fix/);
+  const brief = assignmentText(receiveHandoff(root, s.id));
+  assert.match(brief, /## Changes since the last review \(changes-since-review\.patch\)\n\n```diff\n--- a\/API\.txt/);
 
   // Asked for a full review: the whole change again, as the first time.
   cancel(root, s.id, "The human wants a full review");

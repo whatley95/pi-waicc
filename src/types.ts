@@ -168,7 +168,11 @@ export interface Round {
          * so this one verifies its fixes, reviews what changed since in full, and elsewhere reports
          * only high/critical problems. Absent on the first review and on a requested full review.
          */
-        followUp?: { previousRequestId: string; cycle: number; changedSinceReview: string[] };
+        followUp?: {
+          previousRequestId: string; cycle: number; changedSinceReview: string[];
+          /** changes-since-review.patch: how many changed paths it shows, and which the reviewer reads whole instead. */
+          patch?: { paths: number; unavailable: string[]; truncated: boolean };
+        };
         /** A review of an existing change: its range, and the patch and commits beside the handoff. */
         revision?: RevisionReview & {
           changedPaths: string[]; truncated: boolean; patchBytes: number; checkout: string | null;
