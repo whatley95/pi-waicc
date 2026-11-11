@@ -6,7 +6,8 @@ export type WaiccRequest = { id: string; text: string } | null;
 /** Commands the main agent offered the human, shown in a picker once its turn ends. */
 export type WaiccOffers = { question: string; lines: string[] } | null;
 /** A review loop the human started with /waicc-dispatch --loop: what it waits for next. */
-export type WaiccLoop = { sessionId: string; cycle: number; max: number; args: string[]; waiting: "dispatch" | "turn" } | null;
+/** nudged: the cycle in which the main agent was told once to go on after a turn that requested nothing. */
+export type WaiccLoop = { sessionId: string; cycle: number; max: number; args: string[]; waiting: "dispatch" | "turn"; nudged?: number } | null;
 
 declare module "claude-code" {
   interface PluginState {

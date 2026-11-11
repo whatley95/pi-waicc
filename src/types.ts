@@ -219,6 +219,16 @@ export interface RecipientPin {
   sourceFingerprint: string;
   mode: Mode;
 }
+/** Paths the main agent asked to add to authorized tasks, in the version that added them. */
+export interface PathRequest {
+  id: string;
+  contractVersion: number;
+  additions: { taskId: string; paths: string[] }[];
+  reason: string;
+  findingIds: string[];
+  requestedAt: string;
+  artifactPath: string;
+}
 export interface Session {
   schemaVersion: 1;
   id: string;
@@ -238,6 +248,8 @@ export interface Session {
   contractReview: ContractReview;
   implementationOwner?: "main" | "delegate";
   planApproval?: { contractVersion: number; requirementsDigest: string; requestId: string } | null;
+  /** Files the main agent asked to add to authorized tasks, waiting for the human's /waicc-develop. */
+  pathRequest?: PathRequest | null;
   testingOwner?: "main" | "delegate";
   implementationAuthorization?: {
     id: string; contractVersion: number; requirementsDigest: string; allowedPathsDigest: string;

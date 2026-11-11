@@ -161,6 +161,24 @@ export const applyPolicySpec: ToolSpec = {
 };
 export interface ApplyPolicyParams { sessionId: string; decisionId: string; policy: number; answer: string; rationale: string }
 
+export const requestPathsSpec: ToolSpec = {
+  name: "waicc_request_paths",
+  label: "Ask the human to let a task change more files",
+  description:
+    "Coordinator only, while coding or fixing review findings in an authorized plan: when the work needs files outside its tasks' allowedPaths, ask here instead of revising the contract. WAICC adds only these paths to the named tasks in a new contract version that keeps the accepted plan, so no planning round is needed and the contract is not resent. The human approves with /waicc-develop, which authorizes development again; until then development is paused, so edit nothing: offer /waicc-develop and end your turn. Ask for every file you need at once. New requirements, tasks or acceptance criteria still need a contract revision.",
+  promptSnippet: "Ask the human to let authorized tasks change more files, without a contract revision",
+  parameters: object({
+    sessionId,
+    additions: list(object({
+      taskId: text(),
+      paths: list({ type: "string" }, { minItems: 1, maxItems: 20, description: "Repository-relative files or folders, as in allowedPaths" }),
+    }), { minItems: 1, maxItems: 10 }),
+    reason: text("Why the work needs these files, for the human"),
+    findingIds: list({ type: "string" }, { maxItems: 20, description: "The review findings these paths are for, if any" }),
+  }, ["findingIds"]),
+};
+export interface RequestPathsParams { sessionId: string; additions: { taskId: string; paths: string[] }[]; reason: string; findingIds?: string[] }
+
 export const requestSpec: ToolSpec = {
   name: "waicc_request",
   label: "WAICC follow-up",
@@ -225,5 +243,5 @@ export interface ReportBugsParams {
 /** Every main-agent tool any host offers, in the order Pi registers them. */
 export const coordinatorToolSpecs: ToolSpec[] = [
   askAdvisorSpec, checkpointSpec, contextSpec, statusSpec, startPlanningSpec, prepareSpec, assessSpec,
-  learnPatternSpec, applyPolicySpec, requestSpec, memorySpec, reportBugsSpec,
+  learnPatternSpec, applyPolicySpec, requestPathsSpec, requestSpec, memorySpec, reportBugsSpec,
 ];

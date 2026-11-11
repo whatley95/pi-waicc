@@ -13,11 +13,11 @@ import { recall } from "../memory.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { createAutoPlanningSession, decisionsView, status, saveContext } from "../workflow.ts";
 import { ensure } from "../validation.ts";
-import { adviceText, advisorContext, advisorTurn, applyPolicy, assessReply, prepareHandoff, proposeLesson, proposeMemory, requestHandoff, stepView, type Outcome } from "../coordinator.ts";
+import { adviceText, advisorContext, advisorTurn, applyPolicy, askForPaths, assessReply, prepareHandoff, proposeLesson, proposeMemory, requestHandoff, stepView, type Outcome } from "../coordinator.ts";
 import {
-  applyPolicySpec, askAdvisorSpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, requestSpec, startPlanningSpec, statusSpec,
+  applyPolicySpec, askAdvisorSpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, requestPathsSpec, requestSpec, startPlanningSpec, statusSpec,
   type ApplyPolicyParams, type AskAdvisorParams, type AssessParams, type ContextParams, type LearnPatternParams, type MemoryParams,
-  type PrepareParams, type RequestParams, type SessionParams, type StartPlanningParams,
+  type PrepareParams, type RequestParams, type RequestPathsParams, type SessionParams, type StartPlanningParams,
 } from "../tool-specs.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
 import { guidance, piTool } from "./shared.ts";
@@ -165,6 +165,14 @@ export function registerTools(app: App): void {
       coordinator(ctx);
       signal?.throwIfAborted();
       return result(shown(ctx, applyPolicy(ctx.cwd, params)));
+    },
+  }));
+  registerTool(piTool<RequestPathsParams>(requestPathsSpec, {
+    async execute(_id, params, signal, _update, ctx) {
+      trusted(ctx);
+      coordinator(ctx);
+      signal?.throwIfAborted();
+      return result(shown(ctx, askForPaths(ctx.cwd, params)));
     },
   }));
   registerTool(piTool<RequestParams>(requestSpec, {

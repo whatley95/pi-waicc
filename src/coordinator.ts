@@ -7,10 +7,10 @@ import { propose, proposeDecision } from "./memory.ts";
 import { elapsed } from "./progress.ts";
 import { projectRoot } from "./source.ts";
 import { versionDirectory, type manualHandoff } from "./render.ts";
-import { assess, decisionsView, issue, prepare, readContract, requirementsText, resolveDecision, status, type Assessment } from "./workflow.ts";
+import { assess, decisionsView, issue, pathRequestText, prepare, readContract, requestPaths, requirementsText, resolveDecision, status, type Assessment } from "./workflow.ts";
 import { contractSizeNote, contractTidyNote, ensure, tidyIds } from "./validation.ts";
 import type { ContractDecision } from "./types.ts";
-import type { ApplyPolicyParams, AssessParams, LearnPatternParams, MemoryParams, PrepareParams, RequestParams } from "./tool-specs.ts";
+import type { ApplyPolicyParams, AssessParams, LearnPatternParams, MemoryParams, PrepareParams, RequestParams, RequestPathsParams } from "./tool-specs.ts";
 
 /**
  * What the main agent's WAICC tools do, whatever the host: Pi (src/pi) or another. Each returns
@@ -146,6 +146,21 @@ export function applyPolicy(cwd: string, params: ApplyPolicyParams): Outcome {
     result: { ...decisionsView(cwd, params.sessionId), session: stepView(status(cwd, params.sessionId)) },
     notices: [{ level: "info", text: `${decision.id} answered by your standing policy ${params.policy}.` }],
     messages: [`${decision.id} answered by your policy ${params.policy} ("${policy}"): ${params.answer.trim()}\nWhy: ${params.rationale.trim()}\nReview with /waicc-decisions.`],
+  };
+}
+
+/** waicc_request_paths: more files for authorized tasks, for the human to approve with /waicc-develop. */
+export function askForPaths(cwd: string, params: RequestPathsParams): Outcome {
+  const s = requestPaths(cwd, params.sessionId, params.additions, params.reason, params.findingIds ?? []);
+  const asked = pathRequestText(s.pathRequest!);
+  return {
+    result: {
+      pathRequest: s.pathRequest,
+      nextAction: "Development is paused until the human approves: edit nothing now. Tell the human in one or two lines which files and why, offer /waicc-develop (it approves them and authorizes development again), and end your turn. Then finish ALL fixes and request ONE fresh review.",
+      session: stepView(status(cwd, params.sessionId)),
+    },
+    notices: [{ level: "warning", text: "The main agent asks to change more files: /waicc-develop approves them." }],
+    messages: [`The main agent asks to change files outside the plan's allowed paths. ${asked}\nThe plan is otherwise unchanged. /waicc-develop approves these paths and lets it go on; /waicc-status shows the request.`],
   };
 }
 

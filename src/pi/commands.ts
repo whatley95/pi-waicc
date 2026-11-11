@@ -8,7 +8,7 @@ import { deleteSession, restoreSession } from "../lifecycle.ts";
 import { initProject, projectRoot } from "../source.ts";
 import { manualHandoffMessage } from "../render.ts";
 import type { manualHandoff } from "../render.ts";
-import { beginDevelopment, decisionsView, openDecisionsText, resolveDecision, readContract, createSession, createRevisionReview, refreshRevisionReview, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
+import { beginDevelopment, decisionsView, pathRequestText, openDecisionsText, resolveDecision, readContract, createSession, createRevisionReview, refreshRevisionReview, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
 import { advisorInput, ensure } from "../validation.ts";
 import type { SessionListFilter } from "../workflow.ts";
 import type { Contract, IssueLink } from "../types.ts";
@@ -152,7 +152,10 @@ export function registerCommands(app: App): void {
   command("waicc-develop", "Accept the current plan and explicitly authorize development in this session: [--main|--delegate]", async (args, ctx) => {
     ensure(["", "--main", "--delegate"].includes(args), "Usage: /waicc-develop [--main|--delegate]");
     const id = selected(ctx);
+    const before = loadSession(projectRoot(ctx.cwd), id);
+    const asked = before.pathRequest?.contractVersion === before.contractVersion ? before.pathRequest : null;
     beginDevelopment(ctx.cwd, id, args === "--main" ? "main" : args === "--delegate" ? "delegate" : undefined);
+    if (asked) ctx.ui.notify(`Approved the files the main agent asked for: ${pathRequestText(asked)}`, "info");
     autoResolve(ctx, id);
     await prompt(ctx, developInstruction);
   });
