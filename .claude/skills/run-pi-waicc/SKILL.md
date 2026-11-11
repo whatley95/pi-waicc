@@ -21,6 +21,16 @@ their names, wording and plain JSON Schema arguments in `src/tool-specs.ts`, wha
 only adds Pi's checks and drawing. Keep both shared files free of Pi and TypeBox imports
 (`tests/coordinator.test.ts` checks it), so a second host can run them with Node alone.
 
+Claude Code is that second host (preview). The repository root is also a Claude Code plugin:
+`.claude-plugin/plugin.json` starts `waicc mcp --coordinator` (`src/mcp-coordinator.ts`) in the
+user's project, `bin/waicc` puts the CLI on Claude Code's Bash PATH, and `skills/` loads as its
+skills. After changing any of them, check with Claude Code itself; neither calls a model:
+
+```sh
+claude plugin validate .                     # "passed with warnings": only the missing store icon
+claude --plugin-dir . mcp list               # plugin:waicc:waicc … ✔ Connected
+```
+
 ## Prerequisites / build
 
 Node ≥ 22.19 runs the `.ts` sources directly (type stripping), so there is no build step.

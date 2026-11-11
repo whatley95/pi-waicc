@@ -9,7 +9,8 @@ import {
 } from "./recipient.ts";
 import { runRecipientCheck, type CheckCommand } from "./checks.ts";
 import { sandboxSettings } from "./profiles.ts";
-import { commandText, maxCheckMs, runAgent } from "./dispatch.ts";
+import { commandText, maxCheckMs, runAgent, type AgentRunner } from "./dispatch.ts";
+import { coordinatorToolset } from "./mcp-coordinator.ts";
 import { projectRoot, snapshot } from "./source.ts";
 import { decodeJsonText, ensure, identifier } from "./validation.ts";
 import type { RecipientPin } from "./types.ts";
@@ -28,6 +29,10 @@ export interface McpOptions {
   checks?: CheckCommand[];
   /** Where checks run: the isolated worktree of an isolated implementation. */
   checkCwd?: string;
+  /** The main agent's tools for a host other than Pi, instead of a recipient's (src/mcp-coordinator.ts). */
+  coordinator?: boolean;
+  /** Tests: what the advisor tool runs. */
+  runAgent?: AgentRunner;
 }
 
 const replySchema = {
@@ -101,6 +106,7 @@ const tools = [
 type Message = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 
 export function mcpServer(cwd: string, options: McpOptions = {}) {
+  const coordinating = options.coordinator ? coordinatorToolset(cwd, { runAgent: options.runAgent }) : null;
   let pin: RecipientPin | undefined;
   const pinned = (): RecipientPin => {
     ensure(pin, "Call waicc_receive with the handoff's sessionId and requestId first");
@@ -177,17 +183,22 @@ export function mcpServer(cwd: string, options: McpOptions = {}) {
           protocolVersion: protocolVersions.includes(requested) ? requested : protocolVersions[0],
           capabilities: { tools: {} },
           serverInfo: { name: "waicc", version: serverVersion },
-          instructions:
+          instructions: coordinating?.instructions ??
             "WAICC recipient tools. Call waicc_receive with the sessionId and requestId from your handoff prompt, do only that assignment, check your draft with waicc_validate_reply, submit once with waicc_submit_reply, then stop. Never write reply.json with generic file tools when these tools are available.",
         });
       }
       case "ping":
         return respond({});
       case "tools/list":
-        return respond({ tools });
+        return respond({ tools: coordinating?.tools ?? tools });
       case "tools/call": {
         const name = String(message.params?.name ?? "");
         const args = (message.params?.arguments ?? {}) as Record<string, unknown>;
+        if (coordinating) {
+          if (!coordinating.tools.some((tool) => tool.name === name)) return fail(-32602, `Unknown tool ${name}`);
+          const { text, isError } = await coordinating.call(name, args);
+          return respond({ content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) });
+        }
         if (!tools.some((tool) => tool.name === name)) return fail(-32602, `Unknown tool ${name}`);
         // Tool failures are results the model can read and correct, not protocol errors.
         try {

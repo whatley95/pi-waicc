@@ -1,0 +1,16 @@
+{
+  "name": "waicc",
+  "displayName": "WAICC",
+  "description": "Contracts, agent handoffs, independent reviews and an advisor for multi-agent coding: the main agent's WAICC tools, the waicc command line and WAICC's skills",
+  "author": { "name": "Whatley" },
+  "homepage": "https://github.com/whatley95/pi-waicc#claude-code-preview",
+  "repository": "https://github.com/whatley95/pi-waicc",
+  "license": "MIT",
+  "keywords": ["contracts", "handoff", "review", "multi-agent"],
+  "mcpServers": {
+    "waicc": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "--root", "${CLAUDE_PROJECT_DIR}", "mcp", "--coordinator"]
+    }
+  }
+}

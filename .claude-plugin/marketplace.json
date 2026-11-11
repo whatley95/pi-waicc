@@ -1,0 +1,11 @@
+{
+  "name": "pi-waicc",
+  "owner": { "name": "Whatley" },
+  "plugins": [
+    {
+      "name": "waicc",
+      "source": "./",
+      "description": "WAICC for Claude Code (preview): the main agent's contract, handoff and review tools, and the waicc command line"
+    }
+  ]
+}
