@@ -43,6 +43,7 @@ import { canonicalProject, gitlabClient, gitlabProject } from "./gitlab.ts";
 import { chooseRemote } from "./revision.ts";
 import { serveMcp } from "./mcp.ts";
 import { finishBackgroundRun, startBackgroundDispatch } from "./background.ts";
+import { huntRequirements, listHunts, markPicked, pickBugs, pickSplitAt, startHunt } from "./hunt.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
 import type { ReviewRequest } from "./review.ts";
@@ -138,6 +139,26 @@ try {
       } catch (error) {
         if (background) finishBackgroundRun(cwd, id, { outcome: "error", message: error instanceof Error ? error.message : String(error) });
         throw error;
+      }
+      break;
+    }
+    case "hunt": {
+      // A bug hunt where the human has no Pi: start one, list them, or pick from the triaged one.
+      const words = rest.join(" ").trim();
+      if (id === "start") output = startHunt(cwd, words);
+      else if (id === "pick") {
+        const hunts = listHunts(cwd);
+        const hunt = hunts.find((h) => h.status === "TRIAGED");
+        ensure(hunt, hunts.some((h) => h.status === "SCANNING")
+          ? "The bug hunt has not been reported yet: wait for the main agent's waicc_report_bugs and the advisor's check."
+          : "No bug hunt is waiting to be picked from. Start one with /waicc-bug-hunt <scope>.");
+        const bugs = pickBugs(hunt, words);
+        const s = createSession(cwd, huntRequirements(hunt, bugs), undefined, "planning");
+        markPicked(cwd, hunt.id, s.id);
+        output = { ...s, picked: bugs.map((b) => b.id), ...(bugs.length > pickSplitAt ? { note: `${bugs.length} bugs make one contract large: a session allows at most 20 rounds.` } : {}) };
+      } else {
+        ensure(!id || id === "list", "Usage: waicc hunt start <scope> | hunt pick all|all+plausible|<bug IDs> | hunt list");
+        output = listHunts(cwd).map((h) => ({ id: h.id, scope: h.scope, status: h.status, bugs: h.bugs.length, startedAt: h.startedAt, ...(h.sessionId ? { sessionId: h.sessionId } : {}) }));
       }
       break;
     }

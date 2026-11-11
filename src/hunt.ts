@@ -37,10 +37,8 @@ export interface Hunt {
   triage?: { by: string | null; answer: string | null; durationMs: number; note?: string };
   sessionId?: string;
 }
-/** Candidates per report: more makes triage slow and the pick hard to read. */
-export const huntLimit = 15;
-/** Above this many picked bugs, one session is suggested to be split. */
-export const pickSplitAt = 10;
+import { huntLimit, pickSplitAt } from "./hunt-text.ts";
+export { huntLimit, pickSplitAt };
 const severities: Severity[] = ["high", "medium", "low"];
 
 const huntPath = (id: string) => `${runtimePath}/hunts/${id}/hunt.json`;

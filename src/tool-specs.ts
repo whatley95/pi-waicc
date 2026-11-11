@@ -1,4 +1,4 @@
-import { huntLimit } from "./hunt.ts";
+import { huntLimit } from "./hunt-text.ts";
 
 /**
  * The main agent's WAICC tools as any host offers them: name, what the model reads, and the

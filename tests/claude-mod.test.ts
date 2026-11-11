@@ -4,7 +4,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { humanOnlyCommand, sessionArgs, slashCommands, slashFor, splitArgs, statusLine, waiccSection } from "../src/claude/commands.ts";
+import { dispatchArgs, humanOnlyCommand, loopPrompt, offeredCommand, sessionArgs, slashCommands, slashFor, splitArgs, statusLine, suggestSpec, waiccSection } from "../src/claude/commands.ts";
+import { mcpServer } from "../src/mcp.ts";
+import { loadSession } from "../src/files.ts";
 import { backgroundRun, stillRunning } from "../src/background.ts";
 import { createSession, prepare } from "../src/workflow.ts";
 
@@ -148,7 +150,7 @@ test("everything the mod loads runs without Node: it imports only the engine's t
   };
   visit(resolve("hooks/register.ts"));
   assert.deepEqual(problems, []);
-  assert.deepEqual([...seen].map((file) => basename(file)).sort(), ["commands.ts", "register.ts", "status-table.ts"]);
+  assert.deepEqual([...seen].map((file) => basename(file)).sort(), ["auto-planning-text.ts", "commands.ts", "hunt-text.ts", "register.ts", "status-table.ts", "tool-specs.ts"]);
   assert.deepEqual(JSON.parse(readFileSync(resolve("hooks/hooks.json"), "utf8")), { modules: ["./register.ts"] });
 });
 
@@ -168,4 +170,63 @@ test("the mod's log lines and every command it runs are named for its chat", (t)
   const steps = readFileSync(join(root, ".pi", "pi-waicc", "activity.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
   assert.deepEqual(steps.map((e) => [e.step, e.outcome, e.chat]), [["main turn", "answer", "claude-1a2b3c4d"], ["waicc decide", "error", "claude-1a2b3c4d"]],
     "the log command itself is no step");
+});
+
+test("/waicc-dispatch --loop [n] is the mod's; the rest goes to the command line", () => {
+  assert.deepEqual(dispatchArgs("sonnet --loop"), { args: ["sonnet"], loop: 3 });
+  assert.deepEqual(dispatchArgs("--loop 5 --via codex"), { args: ["--via", "codex"], loop: 5 });
+  assert.deepEqual(dispatchArgs('--check "npm test"'), { args: ["--check", "npm test"], loop: null });
+  assert.throws(() => dispatchArgs("--loop 11"), /--loop takes 1 to 10 cycles/);
+  assert.deepEqual(command("waicc-dispatch").cli(id, "--loop 2 sonnet"), ["dispatch", id, "sonnet", "--detach"]);
+  const prompt = loopPrompt(id, 2, 3);
+  assert.match(prompt, new RegExp(`AUTOMATIC REVIEW LOOP in WAICC session ${id}, cycle 2 of 3`));
+  assert.match(prompt, /assess it with waicc_assess first/);
+  assert.match(prompt, /Never close the contract, commit, push or deploy\.$/);
+});
+
+test("the picker takes only real WAICC commands, and fills the box for one that needs the human's words", () => {
+  assert.deepEqual(offeredCommand("/waicc-dispatch  sonnet"), { name: "waicc-dispatch", args: "sonnet", needsText: false });
+  assert.deepEqual(offeredCommand("/waicc-close"), { name: "waicc-close", args: "", needsText: true });
+  assert.deepEqual(offeredCommand("/waicc-close Shipped"), { name: "waicc-close", args: "Shipped", needsText: false });
+  assert.throws(() => offeredCommand("/waicc-ship"), /is not a WAICC command\. Only these can be offered: .*\/waicc-dispatch/);
+  assert.throws(() => offeredCommand("rm -rf /"), /is not a WAICC command/);
+  assert.equal((suggestSpec.parameters.properties.commands as { maxItems: number }).maxItems, 4);
+  assert.match(waiccSection(null), /offer it with waicc_suggest_command/);
+});
+
+test("the commands that came with phase 3b map to the command line", () => {
+  assert.deepEqual(command("waicc-list").cli(undefined, "closed"), ["list", "closed"]);
+  assert.deepEqual(command("waicc-advisor").cli(id, "--requirements R1,R2 Which cache?"), ["advisor", id, "--requirements R1,R2 Which cache?"]);
+  assert.deepEqual(command("waicc-force-close").cli(id, ""), ["close", id, "--force"]);
+  assert.deepEqual(command("waicc-delete").cli(id, ""), ["delete", id]);
+  assert.throws(() => command("waicc-restore").cli(undefined, ""), /Usage: \/waicc-restore <session-id>/);
+  assert.equal(command("waicc-auto-planning").cli(undefined, "off"), null, "the mod keeps that setting itself");
+  assert.deepEqual(command("waicc-bug-hunt").cli(undefined, "src/payments"), ["hunt", "start", "src/payments"]);
+  assert.match(command("waicc-bug-hunt").agent!("", "src/payments", { id: "h1", scope: "src/payments" }), /^Bug hunt h1 over \(data\): "src\/payments"/);
+  assert.deepEqual(command("waicc-bug-pick").cli(undefined, "B1 B3"), ["hunt", "pick", "B1", "B3"]);
+  assert.match(command("waicc-bug-pick").agent!(id, "", { picked: ["B1", "B3"] }), /^The human picked B1, B3 from a bug hunt/);
+});
+
+test("a bug hunt without Pi: start it, report and triage through the coordinator server, pick from the command line", async (t) => {
+  const root = project(t);
+  writeFileSync(join(root, "pay.ts"), "export const total = (a: number[]) => a.reduce((s, x) => s + x);\n");
+  const cli = (args: string[]) => {
+    const ran = spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, ...args], { encoding: "utf8", windowsHide: true });
+    assert.equal(ran.status, 0, ran.stderr);
+    return JSON.parse(ran.stdout);
+  };
+  const hunt = cli(["hunt", "start", "pay.ts"]);
+  assert.equal(hunt.status, "SCANNING");
+  // No advisor role is set: the bugs stay untriaged, and the human picks alone.
+  const handle = mcpServer(root, { coordinator: true });
+  const reported = await handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "waicc_report_bugs", arguments: {
+    huntId: hunt.id, bugs: [{ file: "pay.ts", line: 1, trigger: "an empty list", wrong: "reduce without a start value throws", severity: "high" }],
+  } } }) as { result: { content: { text: string }[]; isError?: boolean } };
+  assert.equal(reported.result.isError, undefined, reported.result.content[0].text);
+  assert.match(reported.result.content[0].text, /\| B1 \| untriaged \| high \| pay\.ts:1 \|/);
+  assert.match(reported.result.content[0].text, /the human picks with \/waicc-bug-pick/);
+  const picked = cli(["hunt", "pick", "all"]);
+  assert.deepEqual(picked.picked, ["B1"]);
+  assert.match(loadSession(root, picked.id).requirements.join("\n"), /- B1 \(high, untriaged\) at pay\.ts:1/);
+  assert.deepEqual(cli(["hunt", "list"]).map((h: { status: string; sessionId?: string }) => [h.status, h.sessionId]), [["PICKED", picked.id]]);
 });
