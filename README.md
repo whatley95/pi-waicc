@@ -1531,6 +1531,8 @@ model assessment is not proof of tested delivery.
 | `/waicc-mr-merge`                                | Approve or merge the reviewed GitLab merge request once its review passed, only at the reviewed commit |
 | `/waicc-review --contract <focus>`               | Explicit specification-only review, not code-change approval |
 | `/waicc-advisor [--requirements IDs] <question>` | Ask for focused advice on the saved contract; no automatic revision or readiness                      |
+| `/waicc-bug-hunt <scope>`                        | The main agent reads the scope read-only and lists possible bugs; your advisor checks each one |
+| `/waicc-bug-pick all\|all+plausible\|B1 B3`      | Plan fixes for the picked bugs from the last hunt in a new planning session |
 | `/waicc-continue`                                | Import/validate the waiting reply, assess it, or resume an unfinished draft                           |
 | `/waicc-compact [additional notes]`              | Validate recovery evidence and ask Pi to compact chat; optional owner notes require no pending handoff |
 | `/waicc-handoff [session-id]`                    | Show a copy-only manual recipient prompt, access requirements and separate human return steps         |
@@ -1849,6 +1851,36 @@ Use `"autoAdvisor": false` to turn it off.
 
 This is separate from `/waicc-advisor` below, which asks a formal question about the
 saved contract and goes through a handoff.
+
+## Hunt for bugs: the main agent scans, the advisor checks, you pick
+
+```text
+/waicc-bug-hunt src/payments        # a folder, a module, or . for the whole project
+/waicc-bug-pick all                  # after the triaged list appears
+```
+
+1. **The main agent reads the scope in detail, read-only.** WAICC records the source when the
+   hunt starts and refuses the report if it changed, naming the files, so the scan cannot
+   quietly turn into fixes.
+2. **It reports up to 15 candidates** with `waicc_report_bugs`, most severe first. Each needs
+   the file and line, the exact trigger, what goes wrong and a severity; a candidate without
+   them is refused.
+3. **Your advisor checks the whole list in one run**, read-only, and marks each bug
+   confirmed, plausible or not a bug, with a reason citing the code. You asked for the hunt,
+   so this uses your advisor role even with `"autoAdvisor": false`, and it does not count
+   against the per-chat questions. With no advisor role, the bugs stay untriaged and you
+   judge them alone.
+4. **You pick** with `/waicc-bug-pick`:
+   - `all`: the confirmed bugs, plus any nobody could check
+   - `all+plausible`: the plausible ones too
+   - `B1 B3`: exactly those, even one the advisor ruled out
+
+   Above 10 bugs it asks first and suggests splitting by severity or area: a large contract
+   makes review rounds long, and a session allows at most 20 rounds.
+5. **The picked bugs become a planning session.** Each bug is a requirement, to be shown by a
+   failing test or repro where practical, then planned, built, reviewed and shipped as usual.
+
+Hunts are kept in `.pi/pi-waicc/hunts/`.
 
 ## Ask a contract advisor
 
