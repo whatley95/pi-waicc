@@ -27,7 +27,7 @@ import { requirementsText, status } from "../workflow.ts";
 import { acceptLowRisk, agentText, refusalNudge, rereadTools, type Outcome } from "../coordinator.ts";
 import { decodeJsonArguments, ensure } from "../validation.ts";
 import { AutoPlanningRequests } from "../auto-planning.ts";
-import { type ChatBinding, briefKey, compactionInstructions, recipientReads, guidance } from "./shared.ts";
+import { type ChatBinding, briefKey, briefShown, compactionInstructions, recipientReads, guidance } from "./shared.ts";
 import type { Runs } from "./runs.ts";
 
 /**
@@ -619,12 +619,12 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
     const chat = key(ctx);
     // The run's system prompt has the instructions already (see before_agent_start).
     const instructions = guidedRuns.has(chat) ? "" : `${guidance}${policiesFor(ctx)}\n\n${profilesBrief(ctx.cwd)}\n\n`;
-    // This prompt carries the brief: the run it starts need not send it again.
+    // This prompt carries the brief (or names it, when the chat has it): the run it starts need not send it again.
     const before = briefsSent.get(chat);
     briefsSent.set(chat, briefKey(recovery));
     try {
       await pi.sendUserMessage(
-        `${instructions}${instruction}\n\nSession recovery (index, not a substitute for the exact contract/reply; use waicc_status when assessing):\n${json({ ...recovery, requirementsPreview: requirementsText(saved).slice(0, 2400), advisor: saved.rounds.at(-1)?.advisor })}\n\nRelevant confirmed project memory:\n${json(recall(ctx.cwd, query))}`,
+        `${instructions}${instruction}\n\nSession recovery (index, not a substitute for the exact contract/reply; use waicc_status when assessing):\n${json({ ...briefShown(recovery, before), requirementsPreview: requirementsText(saved).slice(0, 2400), advisor: saved.rounds.at(-1)?.advisor })}\n\nRelevant confirmed project memory:\n${json(recall(ctx.cwd, query))}`,
         { deliverAs: "followUp" },
       );
     } catch (error) {

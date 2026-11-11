@@ -408,6 +408,8 @@ test("planning saves the user's request before prompting; chats keep separate se
   await commands.get("waicc-continue")!.handler("", context("chat-d"));
   assert.ok(!sent.at(-1)!.includes("contract OWNER/coordinator") && !sent.at(-1)!.includes("WAICC agent profiles"));
   assert.ok(sent.at(-1)!.includes("Session recovery"));
+  // Nothing changed since that run: the prompt names the brief instead of sending it again.
+  assert.match(sent.at(-1)!, /"brief": "unchanged since the last WAICC message in this chat/);
   // A compaction (or a move in the chat's tree) forgets what was sent: the brief comes whole.
   await hooks.get("session_compact")!({}, context("chat-d"));
   const whole = await run("chat-d");
