@@ -2,6 +2,7 @@ import { atom, read, update } from "claude-code";
 import type { EngineInterface, Register } from "claude-code";
 import { statusTable } from "../src/status-table.ts";
 import { autoPlanningInstructions } from "../src/auto-planning-text.ts";
+import { compactionInstructions } from "../src/compaction-text.ts";
 import { startPlanningSpec } from "../src/tool-specs.ts";
 import {
   dispatchArgs, humanOnlyCommand, loopPrompt, offeredCommand, sessionArgs, slashCommands, slashFor, statusLine, suggestSpec, waiccSection,
@@ -148,10 +149,61 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
   return { text };
 }
 
+/** Whether the main agent's turn is running: a reply is taken in only between turns, as Pi waits for idle. */
+let busy = false;
+/** The human's autoContinue setting, read from the command line at most every 30 s. */
+let autoContinueSetting: { on: boolean; at: number } | null = null;
+async function autoContinue($: EngineInterface): Promise<boolean> {
+  if (autoContinueSetting && Date.now() - autoContinueSetting.at < 30_000) return autoContinueSetting.on;
+  let on = false;
+  try {
+    on = (await waicc($, ["profiles"]))?.autoContinue === true;
+  } catch { /* a broken settings file: nothing continues by itself */ }
+  autoContinueSetting = { on, at: Date.now() };
+  return on;
+}
+/** A reply's file and time already tried, so a reply that could not be taken in is not tried again until it changes. */
+let tried: string | undefined;
+/** autoContinue: take the reply in and have the main agent assess it, as /waicc-continue does. */
+async function continueReply($: EngineInterface, id: string, from: string): Promise<void> {
+  try {
+    await waicc($, ["continue", id]);
+  } catch (error) {
+    const message = `A reply arrived but could not be taken in: ${error instanceof Error ? error.message : String(error)}. Fix reply.json, or run /waicc-continue.`;
+    await log($, { kind: "error", step: "auto continue", message, sessionId: id });
+    $.ui.toast(message);
+    return;
+  }
+  await log($, { kind: "activity", step: "auto continue", outcome: from, sessionId: id });
+  $.ui.toast("A reply arrived; continuing automatically (autoContinue): the main agent assesses it.");
+  await showStatus($);
+  const prompt = slashCommands.find((c) => c.name === "waicc-continue")?.agent?.(id, "");
+  if (prompt) await $.prompt.submit({ text: prompt });
+}
+/** A reply to a handoff given out by hand: with autoContinue on, taken in once it has stopped changing. */
+async function watchReply($: EngineInterface): Promise<void> {
+  if (busy || !(await autoContinue($))) return;
+  const id = await read($, session);
+  if (!id) return;
+  const handoff = (await stateFile($, `sessions/${id}/session.json`))?.rounds?.findLast((r: any) => r.status === "WAITING");
+  if (!handoff) return;
+  const path = `${await $.session.cwd()}/${state}/sessions/${id}/rounds/${handoff.id}/reply.json`;
+  let changed: number;
+  try {
+    changed = (await $.fs.stat(path)).mtimeMs;
+  } catch {
+    return; // No reply yet.
+  }
+  // Still being written, or this version already tried: wait.
+  if (Date.now() - changed < 3_000 || tried === `${path}:${changed}`) return;
+  tried = `${path}:${changed}`;
+  await continueReply($, id, "handoff");
+}
+
 /** Every few seconds: whether the watched background dispatch has ended, and its time while it runs. */
 async function watch($: EngineInterface): Promise<void> {
   const id = await read($, watched);
-  if (!id) return;
+  if (!id) return watchReply($);
   const runFile = await stateFile($, `runs/${id}.json`);
   if (!runFile) return;
   if (!runFile.endedAt) {
@@ -159,10 +211,17 @@ async function watch($: EngineInterface): Promise<void> {
     $.ui.status(`WAICC ${id.slice(0, 8)} · dispatching${minutes ? ` · ${minutes} min` : ""}`);
     return;
   }
+  const looping = await read($, loop);
+  const continuing = runFile.outcome === "reply" && (looping?.sessionId === id || (await autoContinue($)));
+  // Taken in between the main agent's turns, never during one: the next tick tries again.
+  if (continuing && busy) return;
   await update($, watched, () => null);
   await log($, { kind: "activity", step: "dispatch watch", outcome: String(runFile.outcome ?? "ended"), sessionId: id,
     ms: Date.parse(runFile.endedAt) - Date.parse(runFile.startedAt) });
-  const looping = await read($, loop);
+  if (continuing && looping?.sessionId !== id) {
+    void $.ui.notify(runFile.message ?? "The dispatch replied.", { title: "WAICC" });
+    return continueReply($, id, "dispatch");
+  }
   if (looping?.sessionId === id && looping.waiting === "dispatch") {
     if (runFile.outcome === "reply") {
       // The reply goes to the main agent at once: assess, fix, and ask for the next review.
@@ -328,8 +387,26 @@ export const register: Register = (on) => {
   }).catch(($, e, next) => next(e));
 
   // Each main-agent turn, as Pi logs its own; then the picker and the review loop's next step.
+  on("turn.start", ($, e, next) => {
+    if (e.agentId === undefined) busy = true;
+    return next(e);
+  });
+  // WAICC's recovery notes in the summary of a compacted chat, as Pi asks of its own compaction.
+  on("session.compact", async ($, e, next) => {
+    const id = e.agentId === undefined ? await read($, session) : null;
+    if (!id) return next(e);
+    let recovery: unknown;
+    try {
+      recovery = await waicc($, ["checkpoint", id]);
+    } catch {
+      return next(e); // No checkpoint to keep: the session line is added back on every request anyway.
+    }
+    return next({ ...e, instructions: [e.instructions, compactionInstructions(recovery)].filter(Boolean).join("\n\n") });
+  }).catch(($, e, next) => next(e));
+
   on("turn.complete", async ($, e, next) => {
     const result = await next(e);
+    if (e.agentId === undefined) busy = false;
     if (e.agentId === undefined) {
       const current = await read($, session);
       await log($, { kind: "activity", step: "main turn", outcome: e.reason, ms: e.durationMs, ...(current ? { sessionId: current } : {}) });
