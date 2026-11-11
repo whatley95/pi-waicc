@@ -1470,6 +1470,8 @@ The agent's shell may read WAICC's state (`waicc status`) but not take your step
 
 Sessions live in the project's `.pi/pi-waicc/` as with Pi, so one session can move between Pi and Claude Code. Let one main agent work on a session at a time.
 
+WAICC's error and activity logs cover Claude Code as they cover Pi. The chat is named `claude-<id>` for slash commands, the shell guard, background dispatches and the main agent's turns, and `mcp-<id>` for the main agent's WAICC tools. A dispatch that ends without a reply is logged as a warning.
+
 The mod uses Claude Code's mod API, which is early access and may change between Claude Code releases. Without it, the WAICC tools still work, and `! waicc <command> <session-id>` does what each slash command does.
 
 **Not yet:**

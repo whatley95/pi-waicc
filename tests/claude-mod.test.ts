@@ -52,6 +52,12 @@ test("a session ID may come first; quoted words stay whole", () => {
 test("the agent's shell may read WAICC's state but not take the human's steps", () => {
   for (const line of ["waicc status", "waicc status all", "node C:/x/pi-waicc/src/cli.ts --root . list", "waicc decisions 1f0c", "waicc errors --since 6h", "waicc profiles", "git status && echo waicc"])
     assert.equal(humanOnlyCommand(line), null, line);
+  // Words are not a run: a message, a string or a heredoc that mentions waicc (the guard once refused such a line).
+  for (const line of [
+    "echo 'the waicc command line does the same'", "git commit -m \"waicc develop is the human's step\"",
+    "cat > x.mjs <<'EOF'\nconst text = `the waicc command line does the same: waicc --help`;\nEOF", "grep -n 'waicc close' README.md",
+  ])
+    assert.equal(humanOnlyCommand(line), null, line);
   for (const [line, step] of [
     ["waicc develop 1f0c", "develop"], ["cd app && waicc close 1f0c done", "close"], ['node "C:/x/src/cli.ts" decide 1f0c D1 yes', "decide"],
     ["waicc --root C:/p start Add search", "start"], ["waicc profiles init", "profiles"], ["npx waicc continue 1f0c", "continue"],
@@ -144,4 +150,22 @@ test("everything the mod loads runs without Node: it imports only the engine's t
   assert.deepEqual(problems, []);
   assert.deepEqual([...seen].map((file) => basename(file)).sort(), ["commands.ts", "register.ts", "status-table.ts"]);
   assert.deepEqual(JSON.parse(readFileSync(resolve("hooks/hooks.json"), "utf8")), { modules: ["./register.ts"] });
+});
+
+test("the mod's log lines and every command it runs are named for its chat", (t) => {
+  const root = project(t);
+  const s = createSession(root, "Add search");
+  const cli = (args: string[]) => spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, ...args], { encoding: "utf8", windowsHide: true, env: { ...process.env, WAICC_CHAT: "claude-1a2b3c4d" } });
+  assert.equal(cli(["log", JSON.stringify({ kind: "error", step: "shell guard", message: "Refused the agent's step", level: "warning", sessionId: s.id })]).status, 0);
+  assert.equal(cli(["log", JSON.stringify({ kind: "activity", step: "main turn", outcome: "answer", ms: 1200, sessionId: s.id })]).status, 0);
+  assert.equal(cli(["log", JSON.stringify({ kind: "nonsense", step: "x" })]).status, 1);
+  assert.equal(cli(["decide", s.id, "D1", "yes"]).status, 1, "no contract yet: a command's own error");
+  const errors = readFileSync(join(root, ".pi", "pi-waicc", "errors.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(errors.map((e) => [e.source, e.level ?? "error", e.chat]), [
+    ["shell guard", "warning", "claude-1a2b3c4d"], ["waicc log", "error", "claude-1a2b3c4d"], ["waicc decide", "error", "claude-1a2b3c4d"],
+  ]);
+  assert.equal(errors[0].sessionId, s.id);
+  const steps = readFileSync(join(root, ".pi", "pi-waicc", "activity.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(steps.map((e) => [e.step, e.outcome, e.chat]), [["main turn", "answer", "claude-1a2b3c4d"], ["waicc decide", "error", "claude-1a2b3c4d"]],
+    "the log command itself is no step");
 });

@@ -78,6 +78,8 @@ function flag(input: string[], name: string): string | undefined {
 }
 // Each command is one line in the activity log, written when it ends; reading the logs is not.
 const flow = newFlow(), startedAt = Date.now();
+// The host chat that ran it, when one did: Claude Code's mod sets it, as Pi's chats are named in Pi's logs.
+const chat = process.env.WAICC_CHAT ? { chat: process.env.WAICC_CHAT.slice(0, 80) } : {};
 let outcome = "ok", known = true;
 try {
   let output: unknown;
@@ -126,6 +128,9 @@ try {
           process.stderr.write(`[${elapsed(event.at)}] ${event.kind === "rejected" ? "✗ " : event.kind === "note" ? "says: " : ""}${event.text}\n`));
         // Without a main agent, continuing means validating the reply into AWAITING_ASSESSMENT.
         output = resolved.options.continue && outcome.replySubmitted ? { ...outcome, continued: ingest(cwd, id).status } : outcome;
+        // Logged as Pi logs it: a run without a reply is what a review of the logs looks for.
+        if (!outcome.replySubmitted)
+          recordError(projectRoot(cwd), "waicc dispatch", `${resolved.options.via} finished without a reply${outcome.limit ? ` (${outcome.limit.text})` : ""}; see ${outcome.log}.`, { level: "warning", sessionId: id, flow, ...chat });
         if (background)
           finishBackgroundRun(cwd, id, outcome.replySubmitted
             ? { outcome: "reply", message: `${resolved.options.via} replied. /waicc-continue takes the reply in for the main agent to assess.` }
@@ -134,6 +139,22 @@ try {
         if (background) finishBackgroundRun(cwd, id, { outcome: "error", message: error instanceof Error ? error.message : String(error) });
         throw error;
       }
+      break;
+    }
+    case "log": {
+      // For a host that cannot append to WAICC's logs itself (Claude Code's mod): one entry, as JSON.
+      const entry = JSON.parse(id ?? "null") as { kind?: string; step?: string; message?: string; level?: string; outcome?: string; ms?: number; sessionId?: string; detail?: Record<string, string | number | boolean | null> } | null;
+      ensure(entry && typeof entry.step === "string" && entry.step.trim() && (entry.kind === "error" ? typeof entry.message === "string" : entry.kind === "activity"),
+        'Usage: waicc log \'{"kind":"error","step":"/waicc-status","message":"…"}\' | \'{"kind":"activity","step":"main turn","outcome":"ok"}\'');
+      const sessionId = typeof entry.sessionId === "string" && /^[0-9a-f-]{36}$/.test(entry.sessionId) ? { sessionId: entry.sessionId } : {};
+      if (entry.kind === "error")
+        recordError(projectRoot(cwd), entry.step!, entry.message!, { level: entry.level === "warning" ? "warning" : "error", flow, ...chat, ...sessionId });
+      else
+        recordActivity(projectRoot(cwd), {
+          flow, step: entry.step!, phase: "end", outcome: String(entry.outcome ?? "ok"), ...(typeof entry.ms === "number" ? { ms: entry.ms } : {}),
+          ...chat, ...sessionId, ...(entry.detail && typeof entry.detail === "object" ? { detail: entry.detail } : {}),
+        });
+      output = { logged: entry.kind };
       break;
     }
     case "init":
@@ -375,17 +396,17 @@ try {
   const message = error instanceof Error ? error.message : String(error);
   outcome = "error";
   try {
-    recordError(projectRoot(cwd), `waicc ${command ?? ""}`.trim(), message, { flow });
+    recordError(projectRoot(cwd), `waicc ${command ?? ""}`.trim(), message, { flow, ...chat });
   } catch { /* no project here: nothing to log into */ }
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 }
-if (command && known && !["activity", "errors", "mcp"].includes(command))
+if (command && known && !["activity", "errors", "mcp", "log"].includes(command))
   try {
     // Which options were used and which session, never what was typed with them.
     const flags = [...new Set(args.filter((word) => /^--[a-z][a-z-]*$/.test(word)))].join(" ");
     recordActivity(projectRoot(cwd), {
-      flow, step: `waicc ${command}`.slice(0, 40), phase: "end", ms: Date.now() - startedAt, outcome,
+      flow, step: `waicc ${command}`.slice(0, 40), phase: "end", ms: Date.now() - startedAt, outcome, ...chat,
       ...(id && /^[a-f0-9-]{36}$/.test(id) ? { sessionId: id } : {}), ...(flags ? { detail: { flags } } : {}),
     });
   } catch { /* no project here: nothing to log into */ }
