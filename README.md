@@ -1434,6 +1434,46 @@ reviewers read-only (for example Claude's `--permission-mode plan` or Codex's
 request, which is how dispatch starts it. Dispatch adds `--implement` only for an agent
 coding in an isolated worktree, whose changes WAICC checks before applying them.
 
+## Claude Code (preview)
+
+Claude Code can be WAICC's main agent too. This repository is also a Claude Code plugin; install it at Claude Code's prompt:
+
+```
+/plugin install waicc --marketplace whatley95/pi-waicc
+```
+
+Answer `y` to add the marketplace, then pick a scope. It needs Node.js 22.19 or later on your PATH.
+
+**What you get:**
+
+- **The main agent's WAICC tools:** `waicc_status`, `waicc_prepare`, `waicc_assess`, `waicc_request`, `waicc_ask_advisor` and the rest, with the same wording and checks as in Pi. They come from `waicc mcp --coordinator`, which the plugin starts in your project.
+- **The `waicc` command line** on Claude Code's Bash PATH.
+- **WAICC's skills.**
+
+**Your commands:** Claude Code has no `/waicc-*` slash commands yet, so you run WAICC's human commands with `!` at the prompt. That runs them directly, without the agent:
+
+```
+! waicc start "Add customer search with pagination"     # what /waicc-planning does; prints the session ID
+! waicc dispatch <session-id>                            # send the waiting handoff to its role's agent
+! waicc continue <session-id>                            # take the reply in; then ask the agent to assess it
+! waicc develop <session-id>                             # authorize coding the accepted plan
+! waicc decide <session-id> D2 <answer>
+! waicc close <session-id> "Shipped in !42"
+```
+
+The agent tells you each line to type, with the real session ID. It can't run them itself.
+
+Sessions live in the project's `.pi/pi-waicc/` as with Pi, so one session can move between Pi and Claude Code. Let one main agent work on a session at a time.
+
+**Not yet:**
+
+- automatic planning from your message;
+- the bug hunt;
+- the picker and the live panels;
+- background dispatch: `waicc dispatch` runs in the foreground.
+
+These need Claude Code's mod API and come in a later release; Pi has all of them today.
+
 ## Contracts for complicated work
 
 The master contract preserves the overall requirements. Task contracts inside it

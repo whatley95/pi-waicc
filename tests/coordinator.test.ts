@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import waicc from "../src/index.ts";
 import { coordinatorToolSpecs } from "../src/tool-specs.ts";
@@ -35,9 +35,21 @@ test("the shared coordinator code loads without Pi or TypeBox, so another host c
       } else if (!from.startsWith("node:")) foreign.push(`${file.slice(resolve("src").length + 1)} imports ${from}`);
     }
   };
-  for (const entry of ["coordinator.ts", "tool-specs.ts"]) visit(resolve("src", entry));
-  assert.ok(![...seen].some((file) => file.includes(`${join("src", "pi")}`)), "nothing under src/pi");
+  // The CLI, and through it the coordinator MCP server that Claude Code's plugin starts, too.
+  for (const entry of ["coordinator.ts", "tool-specs.ts", "mcp-coordinator.ts", "cli.ts"]) visit(resolve("src", entry));
+  assert.ok(![...seen].some((file) => file.includes(`${join("src", "pi")}${sep}`)), "nothing under src/pi");
   assert.deepEqual(foreign, []);
+});
+
+test("Claude Code's plugin starts the coordinator server from the plugin, in the project, and puts waicc on its Bash PATH", () => {
+  const manifest = JSON.parse(readFileSync(resolve(".claude-plugin/plugin.json"), "utf8"));
+  const server = manifest.mcpServers.waicc;
+  assert.equal(server.command, "node");
+  assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "--root", "${CLAUDE_PROJECT_DIR}", "mcp", "--coordinator"]);
+  const marketplace = JSON.parse(readFileSync(resolve(".claude-plugin/marketplace.json"), "utf8"));
+  assert.deepEqual(marketplace.plugins.map((p: { name: string; source: string }) => [p.name, p.source]), [[manifest.name, "./"]]);
+  // The launcher runs the same CLI; it is a shell script, as Claude Code's Bash tool runs it on every platform.
+  assert.match(readFileSync(resolve("bin/waicc"), "utf8"), /^#!\/bin\/sh\n[^]*exec node "\$here\/src\/cli\.ts" "\$@"\n$/);
 });
 
 test("the agent never reads a handoff prompt, and a long result is bounded", () => {

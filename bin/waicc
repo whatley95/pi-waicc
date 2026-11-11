@@ -1,0 +1,6 @@
+#!/bin/sh
+# The WAICC command line. Claude Code puts this folder on its Bash PATH while the WAICC plugin is
+# enabled, so the human runs WAICC's human commands at Claude Code's prompt as "! waicc ...".
+# It needs Node 22.19 or later, which runs WAICC's TypeScript sources directly.
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec node "$here/src/cli.ts" "$@"
