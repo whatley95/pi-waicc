@@ -53,6 +53,7 @@ import {
   advisorInput,
   contractLimit,
   contractSizeNote,
+  contractTidyNote,
   quoteIn,
   readyContract,
   readyPlan,
@@ -429,6 +430,15 @@ test("past 80% of the size limit the main agent is told the contract's size and 
   assert.equal(contractSizeNote(example()), null);
   const big = { ...example(), assumptions: ["a".repeat(31_000), "b".repeat(31_000), "c".repeat(31_000), "d".repeat(10_000)] };
   assert.match(contractSizeNote(big)!, /^The contract is 10[0-9],[0-9]{3} of 128,000 characters, and a revision past the limit is refused\. Largest parts: assumptions 103,0[0-9]{2}, .*list folders rather than many files in allowedPaths/);
+});
+
+test("assumptions, risks or exclusions past 12 entries bring a note to merge and drop settled ones", () => {
+  // Revisions only add to them: one session had 26 assumptions, a third of its contract.
+  const twelve = Array.from({ length: 12 }, (_, i) => `Assumption ${i}`);
+  assert.equal(contractTidyNote({ ...example(), assumptions: twelve, risks: twelve }), null);
+  const note = contractTidyNote({ ...example(), assumptions: [...twelve, "One more"], exclusions: [...twelve, "x", "y"] })!;
+  assert.match(note, /^assumptions has 13 entries \([\d,]+ characters\); exclusions has 14 entries \([\d,]+ characters\)\. Every handoff carries the contract: in the next revision merge overlapping entries and drop the ones a task, a decision or a check now settles/);
+  assert.ok(!note.includes("risks"));
 });
 
 test("a revised decision without its question keeps the question it had", (t) => {

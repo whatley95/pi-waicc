@@ -3,7 +3,7 @@ import { argumentShape, recordError } from "./error-log.ts";
 import { newFlow, recordActivity } from "./activity-log.ts";
 import { checkpointView } from "./checkpoint.ts";
 import { consultAdvisor } from "./consult.ts";
-import { adviceText, advisorContext, advisorTurn, agentText, applyPolicy, assessReply, prepareHandoff, proposeLesson, proposeMemory, refusalNudge, requestHandoff, rereadTools, type Outcome } from "./coordinator.ts";
+import { adviceText, advisorContext, advisorTurn, agentText, applyPolicy, assessReply, prepareHandoff, proposeLesson, proposeMemory, refusalNudge, requestHandoff, rereadTools, stepView, type Outcome } from "./coordinator.ts";
 import { runAgent, type AgentRunner } from "./dispatch.ts";
 import { listSessions, loadSession } from "./files.ts";
 import { contractOwner, decisionFormat, sourceFirst } from "./instructions.ts";
@@ -83,7 +83,7 @@ export function coordinatorToolset(cwd: string, services: { runAgent?: AgentRunn
         const params = args as unknown as ContextParams;
         const id = session(params.sessionId);
         saveContext(cwd, id, params.summary);
-        return agentText(status(cwd, id));
+        return agentText(stepView(status(cwd, id)));
       }
       case "waicc_prepare": {
         const params = args as unknown as PrepareParams;

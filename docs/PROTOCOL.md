@@ -103,6 +103,12 @@ session_compact also marks an ongoing run for request-local context recovery,
 covering threshold/overflow retries before another before_agent_start occurs.
 The context hook inserts/replaces only WAICC's own recovery message, does not persist
 or rewrite the transcript and never starts a turn. Normal per-run recovery resets it.
+before_agent_start puts the fixed coordinator or recipient instructions in the system
+prompt's `waicc` section (set each run, so unchanged text sends nothing); the run's
+message holds the session's state, memory and checkpoint. A brief already sent in the
+chat is named instead of sent again, until session_compact, session_tree or
+session_start forgets what was sent. A Pi without sections gets the instructions in the
+message, as before.
 
 /waicc-compact [notes] requires an idle trusted chat, validates evidence and requests ctx.compact with
 instructions to preserve chat-only constraints/decisions/rationale, unfinished work,

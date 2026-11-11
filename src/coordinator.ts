@@ -1,4 +1,4 @@
-import { json, loadSession } from "./files.ts";
+import { json, loadSession, sessionRelative } from "./files.ts";
 import { consultSettings, decisionSettings } from "./profiles.ts";
 import type { DispatchOptions } from "./dispatch.ts";
 import { autoDecidable } from "./decisions.ts";
@@ -6,9 +6,9 @@ import { learnPattern, recurringFindings } from "./learning.ts";
 import { propose, proposeDecision } from "./memory.ts";
 import { elapsed } from "./progress.ts";
 import { projectRoot } from "./source.ts";
-import type { manualHandoff } from "./render.ts";
+import { versionDirectory, type manualHandoff } from "./render.ts";
 import { assess, decisionsView, issue, prepare, readContract, requirementsText, resolveDecision, status, type Assessment } from "./workflow.ts";
-import { contractSizeNote, ensure, tidyIds } from "./validation.ts";
+import { contractSizeNote, contractTidyNote, ensure, tidyIds } from "./validation.ts";
 import type { ContractDecision } from "./types.ts";
 import type { ApplyPolicyParams, AssessParams, LearnPatternParams, MemoryParams, PrepareParams, RequestParams } from "./tool-specs.ts";
 
@@ -51,10 +51,12 @@ export function prepareHandoff(cwd: string, params: PrepareParams): Outcome {
   reviewOnly(params);
   const tidy = tidyIds(params.contract);
   prepare(cwd, params.sessionId, tidy.value, params.mode, params.focus, params.expectedVersion, review(params));
-  const view = status(cwd, params.sessionId) as object;
-  const contractSize = contractSizeNote(readContract(cwd, params.sessionId).contract);
+  const view = stepView(status(cwd, params.sessionId)) as object;
+  const saved = readContract(cwd, params.sessionId).contract;
+  const contractSize = contractSizeNote(saved);
+  const contractTidy = contractTidyNote(saved);
   return {
-    result: { ...(tidy.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}), ...(contractSize ? { contractSize } : {}), ...view },
+    result: { ...(tidy.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}), ...(contractSize ? { contractSize } : {}), ...(contractTidy ? { contractTidy } : {}), ...view },
     notices: budgetNotices(view), messages: [],
   };
 }
@@ -63,7 +65,7 @@ export function prepareHandoff(cwd: string, params: PrepareParams): Outcome {
 export function requestHandoff(cwd: string, params: RequestParams): Outcome {
   reviewOnly(params);
   issue(cwd, params.sessionId, params.mode, params.focus, params.taskId, params.requirementIds, review(params));
-  const view = status(cwd, params.sessionId);
+  const view = stepView(status(cwd, params.sessionId));
   return { result: view, notices: budgetNotices(view), messages: [] };
 }
 
@@ -81,13 +83,15 @@ export function assessReply(cwd: string, params: AssessParams): Outcome {
   try {
     recurring = recurringFindings(cwd, params.sessionId, params.requestId);
   } catch { /* learning is a bonus; the assessment stands */ }
-  const contractSize = params.contract === undefined ? null : contractSizeNote(readContract(cwd, params.sessionId).contract);
+  const saved = params.contract === undefined ? null : readContract(cwd, params.sessionId).contract;
+  const contractSize = saved && contractSizeNote(saved);
+  const contractTidy = saved && contractTidyNote(saved);
   return {
     result: {
       ...(tidy?.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}),
-      ...(dispositionsIgnored ? { dispositionsIgnored } : {}), ...(contractSize ? { contractSize } : {}),
+      ...(dispositionsIgnored ? { dispositionsIgnored } : {}), ...(contractSize ? { contractSize } : {}), ...(contractTidy ? { contractTidy } : {}),
       ...(decided.accepted.length ? { autoDecided: decided.accepted } : {}), ...(recurring ? { recurringFindings: recurring } : {}),
-      ...(status(cwd, params.sessionId) as object),
+      ...(stepView(status(cwd, params.sessionId)) as object),
     },
     notices: decided.notices, messages: decided.messages,
   };
@@ -139,7 +143,7 @@ export function applyPolicy(cwd: string, params: ApplyPolicyParams): Outcome {
   ensure(params.answer.trim() && params.rationale.trim(), "Give the answer and why the policy applies");
   resolveDecision(cwd, params.sessionId, decision.id, params.answer.trim(), { kind: "policy", policy, rationale: params.rationale.trim() });
   return {
-    result: { ...decisionsView(cwd, params.sessionId), session: status(cwd, params.sessionId) },
+    result: { ...decisionsView(cwd, params.sessionId), session: stepView(status(cwd, params.sessionId)) },
     notices: [{ level: "info", text: `${decision.id} answered by your standing policy ${params.policy}.` }],
     messages: [`${decision.id} answered by your policy ${params.policy} ("${policy}"): ${params.answer.trim()}\nWhy: ${params.rationale.trim()}\nReview with /waicc-decisions.`],
   };
@@ -237,8 +241,88 @@ export function agentText(content: unknown, first?: object): string {
         afterReply: delivery.afterReply, resumeCoordinatorCommand: delivery.resumeCoordinatorCommand, continueCommand: delivery.continueCommand,
       } }
     : content;
-  const serialized = json(first ? { ...first, ...(shown as object) } : shown);
-  return serialized.length <= 32_000
+  const whole = first ? { ...first, ...(shown as object) } : shown;
+  if (!whole || typeof whole !== "object" || Array.isArray(whole)) {
+    const serialized = json(whole);
+    return serialized.length <= resultLimit ? serialized : `${serialized.slice(0, resultLimit)}\n[Preview bounded; inspect the session files for the full artifact.]`;
+  }
+  // What to do next comes first: a result cut at its end once lost exactly that.
+  const { nextAction, ...rest } = whole as Record<string, unknown>;
+  let view: Record<string, unknown> = "nextAction" in whole ? { nextAction, ...rest } : rest;
+  let serialized = json(view);
+  // Too long: the largest fields give way to where they are, instead of the end being cut off.
+  if (serialized.length > resultLimit) {
+    let folder: string | undefined;
+    try {
+      if (typeof view.projectRoot === "string" && typeof view.sessionId === "string") folder = `${view.projectRoot}/${sessionRelative(view.sessionId)}`;
+    } catch { /* not a session ID: no folder to name */ }
+    const where = folder ?? "the session's files";
+    const largest = Object.entries(view).filter(([name]) => !kept.has(name)).map(([name, value]) => [name, JSON.stringify(value ?? null).length] as const)
+      .sort((a, b) => b[1] - a[1]);
+    for (const [name, size] of largest) {
+      if (serialized.length <= resultLimit) break;
+      const left = `${size.toLocaleString("en")} characters left out to keep this result whole: in ${where}`;
+      const ids = itemIds(view[name]);
+      // A list of findings or tasks keeps its IDs: a completion report answers each one by ID.
+      view = { ...view, [name]: name === "contract" ? contractSummary(view.contract, folder) : ids ? { left, ids } : `(${left})` };
+      serialized = json(view);
+    }
+  }
+  return serialized.length <= resultLimit
     ? serialized
-    : `${serialized.slice(0, 32_000)}\n[Preview bounded; inspect the session files for the full artifact.]`;
+    : `${serialized.slice(0, resultLimit)}\n[Preview bounded; inspect the session files for the full artifact.]`;
+}
+/** A list of items with IDs as "r3/F2 (high)" lines, or null for anything else. */
+function itemIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || !value.length) return null;
+  const items = value as { id?: unknown; requestId?: unknown; severity?: unknown }[];
+  if (!items.every((item) => item && typeof item === "object" && typeof item.id === "string")) return null;
+  return items.map((item) => `${typeof item.requestId === "string" ? `${item.requestId}/` : ""}${item.id}${typeof item.severity === "string" ? ` (${item.severity})` : ""}`);
+}
+/** At most this many characters of a tool result. */
+const resultLimit = 32_000;
+/** Fields a result never gives way: what to do next, and what the human is waiting on. */
+const kept = new Set(["nextAction", "sessionId", "projectRoot", "status", "phase", "pending", "nextSteps", "manualHandoff", "budgetWarning",
+  "handoffClipboard", "idsTidied", "contractSize", "contractTidy", "dispositionsIgnored", "autoDecided", "decisionGates", "openGates"]);
+
+/**
+ * A contract version in a few numbers, with where it is whole: what a step's result needs of it.
+ * Given the session's folder, it names the version's file there (for a waicc_status too long to show).
+ */
+export function contractSummary(contract: unknown, sessionFolder?: string): unknown {
+  const v = contract as { version?: number; sessionId?: string; contract?: { title?: string; requirements?: unknown[]; tasks?: { acceptance?: unknown[] }[]; decisions?: { status?: string }[] } } | null;
+  if (!v?.contract) return contract;
+  const c = v.contract;
+  return {
+    version: v.version, title: c.title, requirements: c.requirements?.length ?? 0, tasks: c.tasks?.length ?? 0,
+    acceptanceCriteria: (c.tasks ?? []).reduce((n, t) => n + (t.acceptance?.length ?? 0), 0),
+    openDecisions: (c.decisions ?? []).filter((d) => d.status !== "resolved").length, decisions: (c.decisions ?? []).length,
+    characters: JSON.stringify(c).length,
+    whole: sessionFolder && typeof v.version === "number" ? `in ${sessionFolder}/${versionDirectory(v.version)}/contract.json` : "waicc_status shows the whole contract",
+  };
+}
+/**
+ * The session's status as the result of a step that changed it (prepare, request, assess, context),
+ * with what the agent wrote or just read named instead of shown again: the contract as a summary, the
+ * request's text and the saved context by size, the last assessment and reply by ID and decision.
+ * Every such result carried all of it (one session: 365,000 characters, cut to 32,000 at its end).
+ * waicc_status still shows everything. The open code-review findings (codeReviewFindings, which a
+ * completion report must answer), decisions, next steps and the handoff stay as they are.
+ */
+export function stepView(view: unknown): unknown {
+  const v = view as { contract?: unknown; requirements?: unknown; coordinatorContext?: { summary?: string } | null;
+    lastAssessment?: Record<string, unknown> | null; lastReply?: Record<string, unknown> | null } | null;
+  if (!v || typeof v !== "object" || !v.contract) return view;
+  const shows = "waicc_status shows";
+  const a = v.lastAssessment;
+  const findings = Array.isArray(a?.findings) ? (a.findings as { id?: string; severity?: string }[]).map((f) => `${f.id} (${f.severity})`) : [];
+  return {
+    ...v,
+    contract: contractSummary(v.contract),
+    ...(typeof v.requirements === "string" ? { requirements: `the request and amendments: ${v.requirements.length.toLocaleString("en")} characters; ${shows} them` } : {}),
+    ...(v.coordinatorContext ? { coordinatorContext: `saved (${(v.coordinatorContext.summary ?? "").length.toLocaleString("en")} characters); ${shows} it` } : {}),
+    ...(a ? { lastAssessment: { requestId: a.requestId, mode: a.mode, reviewKind: a.reviewKind, decision: a.decision, findings, checkLogs: a.checkLogs, advisor: a.advisor,
+      whole: `${shows} its rationale, dispositions, findings and the reply's report` } } : {}),
+    ...(v.lastReply ? { lastReply: { requestId: v.lastReply.requestId, mode: v.lastReply.mode, status: v.lastReply.status, artifactPath: v.lastReply.artifactPath } } : {}),
+  };
 }

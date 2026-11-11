@@ -2,6 +2,7 @@ import type { TSchema } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { CheckCommand } from "../checks.ts";
 import type { ToolSpec } from "../tool-specs.ts";
+import { digest } from "../files.ts";
 import { ensure } from "../validation.ts";
 import type { RecipientPin } from "../types.ts";
 import { sourceFirst, contractOwner, decisionFormat, replyFormat, findingFormat } from "../instructions.ts";
@@ -70,3 +71,18 @@ For useful discoveries, waicc_memory propose saves candidates; quote the exact s
 When status.budgetWarning is set, tell the human in one line and offer the /waicc-limit command it names (with a limit you recommend) through waicc_suggest_command; never treat a near limit as permission to skip work or checks.
 You cannot run slash commands. Whenever the human must run a /waicc-* command, offer it with waicc_suggest_command (exact command and why) instead of asking them to type it, then end your turn; what they pick runs as their own command.
 /waicc-list defaults to open sessions; all includes CLOSED and deleted reads recovery storage. /waicc-delete <session-id> and /waicc-restore <session-id> are explicit human coordinator actions, never actions to invoke yourself via commands, shell or file edits. They move only CLOSED sessions without altering their history or reopening them. A missing/deleted selection must never automatically retarget another contract.`;
+
+/** The coordinator's standing rules, beside the session's state in every run. */
+export const coordinatorRules = `If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-ship, /waicc-mr-merge, /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened.`;
+
+/** What a checkpoint brief already sent in a chat is known by: its session, sequence and text. */
+export const briefKey = (view: { sessionId: string; sequence: number; brief: string }): string =>
+  `${view.sessionId}:${view.sequence}:${digest(view.brief)}`;
+/**
+ * The checkpoint view for a run's message: whole, or without the brief this chat was last sent.
+ * The flags that follow the source (it changes while the agent edits) are always current.
+ */
+export function briefShown<T extends { sessionId: string; sequence: number; brief: string }>(view: T, sent: string | undefined): Omit<T, "brief"> & { brief: string } {
+  if (sent !== briefKey(view)) return view;
+  return { ...view, brief: `unchanged since the last WAICC message in this chat (sequence ${view.sequence}); waicc_checkpoint shows it` };
+}

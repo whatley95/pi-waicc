@@ -13,7 +13,7 @@ import { recall } from "../memory.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { createAutoPlanningSession, decisionsView, status, saveContext } from "../workflow.ts";
 import { ensure } from "../validation.ts";
-import { adviceText, advisorContext, advisorTurn, applyPolicy, assessReply, prepareHandoff, proposeLesson, proposeMemory, requestHandoff, type Outcome } from "../coordinator.ts";
+import { adviceText, advisorContext, advisorTurn, applyPolicy, assessReply, prepareHandoff, proposeLesson, proposeMemory, requestHandoff, stepView, type Outcome } from "../coordinator.ts";
 import {
   applyPolicySpec, askAdvisorSpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, requestSpec, startPlanningSpec, statusSpec,
   type ApplyPolicyParams, type AskAdvisorParams, type AssessParams, type ContextParams, type LearnPatternParams, type MemoryParams,
@@ -99,7 +99,7 @@ export function registerTools(app: App): void {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx); coordinator(ctx); signal?.throwIfAborted();
       saveContext(ctx.cwd, params.sessionId, params.summary);
-      return result(status(ctx.cwd, params.sessionId));
+      return result(stepView(status(ctx.cwd, params.sessionId)));
     },
   }));
   registerTool(piTool<SessionParams>(statusSpec, {

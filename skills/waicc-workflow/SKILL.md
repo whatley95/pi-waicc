@@ -22,6 +22,8 @@ The tools reject these, so get them right the first time:
 - A requirement's `sourceQuote` is copied from the saved request or an amendment, not from the
   chat. If the human added requirements in the chat, offer `/waicc-amend <their text>` first.
 - `questions`, `exclusions`, `assumptions` and `risks` are lists of plain text, not objects.
+  Every handoff carries them, so a revision merges overlapping entries and drops the ones a task,
+  a decision or a check now settles; a `contractTidy` note in a result names a list that grew.
 - A revised contract keeps every requirement's ID and quote and every decision's ID and question
   word for word (leaving `requirements` or `decisions` out keeps them all unchanged); only a
   decision's answer, status and evidence change.

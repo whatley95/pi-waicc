@@ -245,6 +245,17 @@ export function contractSizeNote(c: Contract): string | null {
     ? `The contract is ${size.toLocaleString("en")} of ${contractLimit.toLocaleString("en")} characters, and a revision past the limit is refused. Largest parts: ${largest}. In the next revision shorten wording, list folders rather than many files in allowedPaths, and keep acceptance criteria brief; keep every ID.`
     : null;
 }
+/** Lists revisions tend only to add to: past this many entries, the main agent is told to merge and drop. */
+export const listWarnAt = 12;
+/**
+ * The note for a contract whose assumptions, risks or exclusions have piled up, or null. One
+ * session's 26 assumptions were a third of a 35,000-character contract, carried by every handoff.
+ */
+export function contractTidyNote(c: Contract): string | null {
+  const grown = (["assumptions", "risks", "exclusions"] as const).map((name) => [name, c[name] ?? []] as const).filter(([, list]) => list.length > listWarnAt);
+  if (!grown.length) return null;
+  return `${grown.map(([name, list]) => `${name} has ${list.length} entries (${JSON.stringify(list).length.toLocaleString("en")} characters)`).join("; ")}. Every handoff carries the contract: in the next revision merge overlapping entries and drop the ones a task, a decision or a check now settles, keeping what still bears on the work.`;
+}
 export function validateContract(
   value: unknown,
   requirements: string,

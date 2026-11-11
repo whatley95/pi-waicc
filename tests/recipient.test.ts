@@ -1097,7 +1097,11 @@ test("the agent never gets the handoff prompt to paste, even for a large contrac
   };
   const text = (await h.call("waicc_status", { sessionId: id })).content[0]
     .text;
-  assert.ok(text.includes("[Preview bounded;"));
+  // Too long to show whole: the contract gives way to a summary naming its file, and the result
+  // stays JSON with nextAction kept.
+  const shown = JSON.parse(text);
+  assert.ok(shown.contract.whole.endsWith("contract.json") && !text.includes("x".repeat(100)));
+  assert.equal(typeof shown.nextAction, "string");
   // /waicc-handoff and the clipboard still have it; the agent gets a pointer.
   assert.ok(view.manualHandoff.copyPastePrompt.includes("You are the WAICC planning recipient"));
   assert.ok(!text.includes("copyPastePrompt") && !text.includes("You are the WAICC planning recipient"));
