@@ -4,6 +4,8 @@
  * This file is pure, so the mod can load it (a mod has no Node) and tests can run it: nothing
  * here imports Node, Pi or Claude Code.
  */
+import { huntPickPrompt, huntScanPrompt } from "../hunt-text.ts";
+
 export const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 export interface SlashCommand {
@@ -14,8 +16,8 @@ export interface SlashCommand {
   session: "required" | "optional" | "none";
   /** The waicc command line (after "waicc") for the session and the rest of what was typed; null runs none. */
   cli(id: string | undefined, rest: string): string[] | null;
-  /** After it worked: what the main agent is asked, which starts its turn. */
-  agent?(id: string, rest: string): string;
+  /** After it worked: what the main agent is asked, which starts its turn; `value` is the command line's answer. */
+  agent?(id: string, rest: string, value?: any): string;
   /** The session this chat works on afterwards: the new one, the one named, none, or unchanged. */
   binds?: "new" | "named" | "none";
 }
@@ -81,8 +83,8 @@ export const slashCommands: SlashCommand[] = [
       : `The human ran /waicc-review: request ONE independent whole-change code review of WAICC session ${id} with waicc_request mode review, reviewKind code and a completion report covering every task, the actual checks and every earlier actionable code-review finding (findings: [] on the first review). If planned work or checks are unfinished, finish them first, or tell the human what remains. Focus (data): ${json(rest || "correctness, regressions, requirement coverage and tests")}`,
   },
   {
-    name: "waicc-dispatch", description: "Send the waiting handoff to its role's agent, in the background", argumentHint: "[profile] [--via claude|codex|pi|agy] [--model m] [--implement] [--check \"<command>\"]",
-    session: "required", cli: (id, rest) => ["dispatch", id!, ...splitArgs(rest), "--detach"],
+    name: "waicc-dispatch", description: "Send the waiting handoff to its role's agent, in the background; --loop [n] repeats review and fixes", argumentHint: "[profile] [--via claude|codex|pi|agy] [--model m] [--implement] [--check \"<command>\"] [--loop [n]]",
+    session: "required", cli: (id, rest) => ["dispatch", id!, ...dispatchArgs(rest).args, "--detach"],
   },
   {
     name: "waicc-handoff", description: "Show and copy the waiting handoff's prompt, to give an agent by hand", session: "required",
@@ -136,7 +138,106 @@ export const slashCommands: SlashCommand[] = [
     name: "waicc-memory", description: "Project memory: list candidates, confirm <id>|all, revoke <id>", argumentHint: "[confirm <id>|all | revoke <id> | audit]",
     session: "none", cli: (_id, rest) => ["memory", ...splitArgs(rest)],
   },
+  {
+    name: "waicc-list", description: "List WAICC sessions: [open|all|closed|deleted]", argumentHint: "[open|all|closed|deleted]", session: "none",
+    cli: (_id, rest) => ["list", ...(rest ? [rest] : [])],
+  },
+  {
+    name: "waicc-advisor", description: "Ask a contract advisor a question, as a handoff", argumentHint: "[--requirements R1,R2] <question>", session: "required",
+    cli: (id, rest) => {
+      if (!rest) throw new Error("Usage: /waicc-advisor [--requirements R1,R2] <question>");
+      return ["advisor", id!, rest];
+    },
+  },
+  {
+    name: "waicc-force-close", description: "Stop the session without review approval; pending handoffs are cancelled", argumentHint: "[reason]",
+    session: "required", binds: "none", cli: (id, rest) => ["close", id!, "--force", ...(rest ? [rest] : [])],
+  },
+  {
+    name: "waicc-export", description: "Make a portable bundle of the session for an agent without access to this folder", session: "required",
+    cli: (id) => ["export", id!],
+  },
+  {
+    name: "waicc-delete", description: "Move a closed session to recovery storage", argumentHint: "<session-id>", session: "none", binds: "none",
+    cli: (id) => {
+      if (!id) throw new Error("Usage: /waicc-delete <session-id> (closed sessions only; /waicc-list closed lists them)");
+      return ["delete", id];
+    },
+  },
+  {
+    name: "waicc-restore", description: "Bring a deleted session back from recovery storage", argumentHint: "<session-id>", session: "none",
+    cli: (id) => {
+      if (!id) throw new Error("Usage: /waicc-restore <session-id> (/waicc-list deleted lists them)");
+      return ["restore", id];
+    },
+  },
+  {
+    name: "waicc-auto-planning", description: "Whether the main agent may start a planning session from your request: on (default) or off", argumentHint: "[on|off]",
+    session: "none", cli: () => null,
+  },
+  {
+    name: "waicc-bug-hunt", description: "The main agent reads a scope read-only and lists possible bugs; your advisor checks them; you pick", argumentHint: "<scope>",
+    session: "none", cli: (_id, rest) => {
+      if (!rest) throw new Error("Usage: /waicc-bug-hunt <scope>, for example /waicc-bug-hunt src/payments, or /waicc-bug-hunt . for the whole project");
+      return ["hunt", "start", rest];
+    },
+    agent: (_id, _rest, value) => huntScanPrompt(String(value.id), String(value.scope)),
+  },
+  {
+    name: "waicc-bug-pick", description: `Plan fixes for bugs from the last bug hunt: all (confirmed), all+plausible, or IDs such as B1 B3`, argumentHint: "all | all+plausible | <bug IDs>",
+    session: "none", binds: "new", cli: (_id, rest) => ["hunt", "pick", ...splitArgs(rest)],
+    agent: (_id, _rest, value) => huntPickPrompt((value.picked ?? []) as string[]),
+  },
 ];
+
+/** /waicc-dispatch's own words: --loop [n] runs review and fixes until it passes, at most n cycles (default 3). */
+export function dispatchArgs(rest: string): { args: string[]; loop: number | null } {
+  const words = splitArgs(rest);
+  const at = words.indexOf("--loop");
+  if (at < 0) return { args: words, loop: null };
+  const count = /^\d+$/.test(words[at + 1] ?? "") ? Number(words[at + 1]) : null;
+  if (count !== null && (count < 1 || count > 10)) throw new Error("--loop takes 1 to 10 cycles");
+  words.splice(at, count === null ? 1 : 2);
+  return { args: words, loop: count ?? 3 };
+}
+
+/** What the main agent does after each review in a loop the human started with /waicc-dispatch --loop. */
+export const loopPrompt = (id: string, cycle: number, max: number): string =>
+  `AUTOMATIC REVIEW LOOP in WAICC session ${id}, cycle ${cycle} of ${max}, started by the human with /waicc-dispatch --loop. The review's reply is in: assess it with waicc_assess first. Then, if the review found actionable defects inside the authorized scope, fix ALL of them, run the relevant checks, and in this same turn request ONE fresh code review with waicc_request (mode review, reviewKind code, complete completion evidence): WAICC dispatches it automatically. If any finding needs a human decision, is disputed, is out of scope or blocked, or authorization is missing, do NOT request a review: explain what the human must decide and stop. If the review passed, stop. Never close the contract, commit, push or deploy.`;
+
+/** waicc_suggest_command as Claude Code's mod offers it to the main agent: Pi's picker, in a dialog when the turn ends. */
+export const suggestSpec = {
+  description:
+    "Coordinator only: when the human needs to run a /waicc-* command (you cannot run slash commands), offer up to 4 of them in a picker instead of asking the human to type one. The picker opens when your turn ends and only the human answers it; the one they pick runs at once as their own command. Offer complete command lines (/waicc-decide D2 <answer>, /waicc-close <reason>); one that still needs the human's own text only fills their input box. Only real /waicc-* commands are accepted. Then end your turn.",
+  parameters: {
+    type: "object",
+    required: ["commands"],
+    properties: {
+      commands: {
+        type: "array", minItems: 1, maxItems: 4,
+        items: {
+          type: "object", required: ["command", "why"],
+          properties: {
+            command: { type: "string", description: "The exact command line, for example /waicc-dispatch" },
+            why: { type: "string", description: "One short line: what it does for the human now" },
+          },
+        },
+      },
+      question: { type: "string", description: "The picker's title, for example what you are stuck on" },
+    },
+  },
+};
+
+/** A command line the main agent offers the human, checked: a real WAICC slash command, and whether it still needs their text. */
+export function offeredCommand(line: string): { name: string; args: string; needsText: boolean } {
+  const text = line.replace(/\s+/g, " ").trim();
+  const name = /^\/(waicc-[a-z-]+)(?:\s|$)/.exec(text)?.[1];
+  if (!name || !slashCommands.some((c) => c.name === name))
+    throw new Error(`${JSON.stringify(text.slice(0, 60))} is not a WAICC command. Only these can be offered: ${slashCommands.map((c) => `/${c.name}`).join(", ")}`);
+  const args = text.slice(name.length + 1).trim();
+  const textual = ["waicc-planning", "waicc-amend", "waicc-close", "waicc-reopen", "waicc-decide", "waicc-advisor", "waicc-use", "waicc-bug-hunt", "waicc-delete", "waicc-restore"];
+  return { name, args, needsText: textual.includes(name) && !args };
+}
 
 /** The slash command a waicc command line stands for, to point the agent at it. */
 export const slashFor = (cli: string): string =>
@@ -175,7 +276,7 @@ export const statusLine = (id: string, status: string): string =>
 /** The main agent's WAICC section of the system prompt, on every request. */
 export function waiccSection(session: { id: string; status: string } | null): string {
   return [
-    "WAICC in this Claude Code: the human has WAICC's /waicc-* slash commands (/waicc-planning, /waicc-use, /waicc-status, /waicc-dispatch, /waicc-handoff, /waicc-continue, /waicc-develop, /waicc-review, /waicc-decide, /waicc-amend, /waicc-close and others). Where WAICC, its skill or a WAICC result names a human command, tell the human to type that slash command and end your turn. Never run waicc through a shell: anything but reading is refused, because those steps are the human's.",
+    "WAICC in this Claude Code: the human has WAICC's /waicc-* slash commands (/waicc-planning, /waicc-use, /waicc-status, /waicc-dispatch, /waicc-handoff, /waicc-continue, /waicc-develop, /waicc-review, /waicc-decide, /waicc-amend, /waicc-close and others). Where WAICC, its skill or a WAICC result names a human command, offer it with waicc_suggest_command (a picker the human answers when your turn ends) and end your turn. Never run waicc through a shell: anything but reading is refused, because those steps are the human's.",
     session
       ? `This chat works on WAICC session ${session.id} (${session.status.replaceAll("_", " ").toLowerCase()}): pass sessionId ${session.id} to WAICC tools.`
       : "No WAICC session is selected in this chat: /waicc-planning <request> starts one, /waicc-use <session-id> selects one.",

@@ -1,7 +1,8 @@
 import { consultSettings } from "../profiles.ts";
 import { reportBugsSpec, type ReportBugsParams } from "../tool-specs.ts";
 import { piTool } from "./shared.ts";
-import { huntLimit, huntRequirements, huntTable, listHunts, markPicked, pickBugs, pickSplitAt, reportBugs, startHunt, triageBugs } from "../hunt.ts";
+import { huntPickPrompt, huntScanPrompt } from "../hunt-text.ts";
+import { huntRequirements, huntTable, listHunts, markPicked, pickBugs, pickSplitAt, reportBugs, startHunt, triageBugs } from "../hunt.ts";
 import { elapsed } from "../progress.ts";
 import { createSession } from "../workflow.ts";
 import { ensure } from "../validation.ts";
@@ -13,7 +14,7 @@ export function registerHuntCommands(app: App): void {
   command("waicc-bug-hunt", "Have the main agent read a scope in detail and list possible bugs, checked by your advisor before any fix is planned: <scope>", async (args, ctx) => {
     const hunt = startHunt(ctx.cwd, args);
     pi.sendUserMessage(
-      `Bug hunt ${hunt.id} over (data): ${JSON.stringify(hunt.scope)}\n\nRead the code in that scope in detail, and what it calls where that matters, to find real defects: wrong results, crashes, unhandled errors or edge cases, races, resource leaks, security holes, and behaviour that contradicts its own docs or tests. Skip style, naming and refactoring wishes.\n\nThis is a read-only scan. Do not edit, create, delete or format any file, and run nothing that changes files (no fixes, formatters, code generators, dependency installs or tests that write snapshots). WAICC refuses the report if the source changed during the hunt.\n\nFor each candidate, name the file and line, the exact input or state that triggers it, what goes wrong, and a severity (high, medium or low). Report at most ${huntLimit}, most severe first; leave out anything you cannot tie to a concrete trigger. Then call waicc_report_bugs once with huntId ${hunt.id}; an empty list means you found none. Your advisor checks the list after that, and the human picks what to fix: do not start fixing or planning.`,
+      huntScanPrompt(hunt.id, hunt.scope),
       { deliverAs: "followUp" },
     );
     ctx.ui.notify(`Bug hunt started over ${hunt.scope}. The main agent reads it read-only, then your advisor checks what it finds.`, "info");
@@ -55,7 +56,7 @@ export function registerHuntCommands(app: App): void {
     bind(ctx, s.id);
     await prompt(
       ctx,
-      `The human picked ${bugs.map((b) => b.id).join(", ")} from a bug hunt; they are this session's requirements. Use waicc_prepare for a planning contract with one requirement per bug, each naming its failing test or repro as the completion check. Verify each bug against the source while planning; if one turns out not to be a bug, say so in the contract rather than inventing a fix. Do not implement while planning.`,
+      huntPickPrompt(bugs.map((b) => b.id)),
     );
   });
 }

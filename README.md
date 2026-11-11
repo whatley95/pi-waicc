@@ -1456,15 +1456,18 @@ Answer `y` to add the marketplace, then pick a scope. It needs Node.js 22.19 or 
 |---|---|
 | `/waicc-planning <request>` | Starts a session from your words; the agent prepares the planning handoff |
 | `/waicc-use <session-id>`, `/waicc-status [all]` | Pick this chat's session; see where it stands |
-| `/waicc-dispatch [profile]` | Sends the waiting handoff to its role's agent, in the background; you're told when it ends |
+| `/waicc-dispatch [profile] [--loop [n]]` | Sends the waiting handoff to its role's agent, in the background; you're told when it ends. With `--loop`, a waiting code review repeats review and fixes until it passes, at most n cycles (3 by default) |
 | `/waicc-handoff` | Shows and copies the handoff, to give an agent by hand |
 | `/waicc-continue` | Takes the reply in; the agent assesses it |
 | `/waicc-develop [--delegate]` | Authorizes coding the accepted plan |
 | `/waicc-review [--contract]` | The agent requests one review of all finished work |
 | `/waicc-decisions`, `/waicc-decide <id> <answer>` | The decisions, and your answer to one |
-| `/waicc-amend`, `/waicc-cancel`, `/waicc-limit`, `/waicc-close`, `/waicc-reopen`, `/waicc-memory` | As in Pi |
+| `/waicc-bug-hunt <scope>`, `/waicc-bug-pick all` | The agent reads a scope read-only and lists possible bugs, your advisor checks them, and the ones you pick become a planning session |
+| `/waicc-advisor <question>` | Asks a contract advisor, as a handoff |
+| `/waicc-auto-planning [on\|off]` | Whether the agent may start a planning session from your request (on by default; `[no-plan]` at the start of a message skips it once) |
+| `/waicc-list`, `/waicc-amend`, `/waicc-cancel`, `/waicc-limit`, `/waicc-close`, `/waicc-force-close`, `/waicc-reopen`, `/waicc-delete`, `/waicc-restore`, `/waicc-export`, `/waicc-memory` | As in Pi |
 
-A status line under the prompt shows this chat's session and where it stands. The agent's system prompt names the session and tells it to leave your steps to you.
+A status line under the prompt shows this chat's session and where it stands. The agent's system prompt names the session and tells it to leave your steps to you. When it needs one of your commands, it offers them in a picker that opens as its turn ends; what you pick runs as your own command.
 
 The agent's shell may read WAICC's state (`waicc status`) but not take your steps: a `waicc develop`, `close`, `decide` or any other step in its Bash or PowerShell calls is refused, and the agent is told which slash command you type. The guard looks only at the agent's own tool calls, so a line you run yourself with `!` (for example `! waicc errors --since 6h`) should pass; if one is ever refused, the slash command does the same.
 
@@ -1476,11 +1479,11 @@ The mod uses Claude Code's mod API, which is early access and may change between
 
 **Not yet:**
 
-- automatic planning from your message;
-- the command picker;
-- the bug hunt;
-- the review loop;
-- the live dispatch panel (the status line shows the dispatch's time instead).
+- the live dispatch panel (the status line shows the dispatch's time instead);
+- reviewing commits and merge requests (`--rev`, `--mr`) and the GitLab steps (`/waicc-ship`, `/waicc-mr-comments`, `/waicc-mr-merge`; `! waicc ship` works);
+- the planning loop and `--code-with` runs;
+- receiving a handoff in a Claude Code chat (Claude Code receives through `waicc mcp` instead);
+- the tracker page, inbox, queue, branch folders, handover and `/waicc-compact`.
 
 Pi has all of them today.
 

@@ -1,17 +1,30 @@
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, Register } from "claude-code";
 import { statusTable } from "../src/status-table.ts";
-import { humanOnlyCommand, sessionArgs, slashCommands, slashFor, statusLine, waiccSection, type SlashCommand } from "../src/claude/commands.ts";
+import { autoPlanningInstructions } from "../src/auto-planning-text.ts";
+import { startPlanningSpec } from "../src/tool-specs.ts";
+import {
+  dispatchArgs, humanOnlyCommand, loopPrompt, offeredCommand, sessionArgs, slashCommands, slashFor, statusLine, suggestSpec, waiccSection,
+  type SlashCommand,
+} from "../src/claude/commands.ts";
 
 /**
  * WAICC's Claude Code mod: the /waicc-* commands, the session this chat works on, its status line,
- * the main agent's WAICC section of the system prompt, a guard on the agent's shell, and the
- * background dispatch it watches. A mod has no Node: WAICC itself runs as its command line
- * (src/cli.ts) and the main agent's tools as the plugin's MCP server.
+ * the main agent's WAICC section of the system prompt, auto-planning, the command picker, a guard
+ * on the agent's shell, and the background dispatch (and review loop) it watches. A mod has no
+ * Node: WAICC itself runs as its command line (src/cli.ts) and the main agent's other tools as the
+ * plugin's MCP server.
  */
 const session = atom({ plugin: "waicc", key: "session" } as const, null);
 const watched = atom({ plugin: "waicc", key: "watched" } as const, null);
+const request = atom({ plugin: "waicc", key: "request" } as const, null);
+const autoPlanning = atom({ plugin: "waicc", key: "autoPlanning" } as const, true);
+const offers = atom({ plugin: "waicc", key: "offers" } as const, null);
+const loop = atom({ plugin: "waicc", key: "loop" } as const, null);
 const state = ".pi/pi-waicc";
+/** The mod's own tools, as the model sees them. */
+const startTool = "mcp__waicc__waicc_start_planning";
+const suggestTool = "mcp__waicc__waicc_suggest_command";
 
 /** This Claude Code chat as WAICC's logs name it, beside Pi's chats and the MCP server's (mcp-…). */
 async function chatName($: EngineInterface): Promise<string> {
@@ -24,10 +37,10 @@ async function waicc($: EngineInterface, argv: string[]): Promise<any> {
   if (ran.exitCode !== 0) throw new Error(ran.stderr.trim() || `waicc ${argv[0]} exited with ${ran.exitCode}`);
   return JSON.parse(ran.stdout);
 }
-/** One line in WAICC's error or activity log (a mod cannot append to a file itself); never fails what logged it. */
 type LogEntry =
   | { kind: "error"; step: string; message: string; level?: "warning"; sessionId?: string }
   | { kind: "activity"; step: string; outcome: string; ms?: number; sessionId?: string; detail?: Record<string, string | number | boolean | null> };
+/** One line in WAICC's error or activity log (a mod cannot append to a file itself); never fails what logged it. */
 async function log($: EngineInterface, entry: LogEntry): Promise<void> {
   try {
     await waicc($, ["log", JSON.stringify(entry)]);
@@ -50,6 +63,12 @@ async function bound($: EngineInterface): Promise<{ id: string; status: string }
 async function showStatus($: EngineInterface): Promise<void> {
   const current = await bound($);
   $.ui.status(current ? statusLine(current.id, current.status) : undefined);
+}
+/** The session's waiting handoff, if one waits: its mode and review kind. */
+async function waiting($: EngineInterface, id: string): Promise<{ mode: string; kind?: string } | null> {
+  const saved = await stateFile($, `sessions/${id}/session.json`);
+  const round = (saved?.rounds ?? []).findLast((r: any) => r.status === "WAITING");
+  return round ? { mode: String(round.mode), ...(round.review?.kind ? { kind: String(round.review.kind) } : {}) } : null;
 }
 
 /** What a command shows: its view as WAICC's status tables where it is one, else the essentials. */
@@ -74,6 +93,23 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
   };
   if (command.session === "required" && !id)
     return refused("No WAICC session is selected in this chat: /waicc-planning <request> starts one, /waicc-use <session-id> selects one.");
+  if (command.name === "waicc-auto-planning") {
+    if (rest && !["on", "off"].includes(rest)) return refused("Usage: /waicc-auto-planning [on|off]");
+    if (rest) await update($, autoPlanning, () => rest === "on");
+    return { text: `Automatic planning is ${(await read($, autoPlanning)) ? "on: the main agent may start a planning session from a request that needs tracked steps ([no-plan] at the start of a message skips it once)" : "off: /waicc-planning <request> starts a session"}.` };
+  }
+  // A review loop needs a code review waiting: each cycle the main agent fixes, and WAICC sends the next review.
+  let cycles: number | null = null;
+  if (command.name === "waicc-dispatch") {
+    try {
+      cycles = dispatchArgs(rest).loop;
+    } catch (error) {
+      return refused(error instanceof Error ? error.message : String(error));
+    }
+    const handoff = cycles ? await waiting($, id!) : null;
+    if (cycles && !(handoff?.mode === "review" && handoff.kind === "code"))
+      return refused("--loop runs code reviews and the main agent's fixes; the waiting handoff is not a code review. Dispatch it without --loop.");
+  }
   let value: any;
   try {
     const argv = command.cli(id, rest);
@@ -88,7 +124,8 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
   let text: string;
   if (command.name === "waicc-dispatch") {
     await update($, watched, () => id!);
-    text = `Dispatched in the background (process ${value.pid}). You are told here when it ends; its live steps go to ${value.log}.`;
+    if (cycles) await update($, loop, () => ({ sessionId: id!, cycle: 1, max: cycles!, args: dispatchArgs(rest).args, waiting: "dispatch" as const }));
+    text = `Dispatched in the background (process ${value.pid})${cycles ? `, as cycle 1 of a review loop of at most ${cycles}` : ""}. You are told here when it ends; its live steps go to ${value.log}.`;
   } else if (command.name === "waicc-handoff") {
     const prompt = value?.manualHandoff?.copyPastePrompt;
     if (!prompt) text = "No handoff is waiting in this session.";
@@ -97,7 +134,7 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
       text = `${copied.isCopied ? "Copied. " : ""}Give this to the agent, which needs access to the project, hidden .pi files included; then /waicc-continue:\n\n${prompt}`;
     }
   } else if (value === undefined) text = "Asked the main agent.";
-  else if (["waicc-status", "waicc-use", "waicc-decisions", "waicc-memory"].includes(command.name) || !target) text = shown(command, value);
+  else if (["waicc-status", "waicc-use", "waicc-decisions", "waicc-memory", "waicc-list", "waicc-export"].includes(command.name) || !target) text = shown(command, value);
   else {
     // A step that changed the session: show where it stands now.
     let view: any = value;
@@ -107,7 +144,7 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
     text = shown(command, view);
   }
   await showStatus($);
-  if (command.agent && target) await $.prompt.submit({ text: command.agent(target, rest) });
+  if (command.agent && (target || command.session === "none")) await $.prompt.submit({ text: command.agent(target ?? "", rest, value) });
   return { text };
 }
 
@@ -125,9 +162,76 @@ async function watch($: EngineInterface): Promise<void> {
   await update($, watched, () => null);
   await log($, { kind: "activity", step: "dispatch watch", outcome: String(runFile.outcome ?? "ended"), sessionId: id,
     ms: Date.parse(runFile.endedAt) - Date.parse(runFile.startedAt) });
+  const looping = await read($, loop);
+  if (looping?.sessionId === id && looping.waiting === "dispatch") {
+    if (runFile.outcome === "reply") {
+      // The reply goes to the main agent at once: assess, fix, and ask for the next review.
+      try {
+        await waicc($, ["continue", id]);
+        await update($, loop, () => ({ ...looping, waiting: "turn" as const }));
+        $.ui.toast(`Review loop, cycle ${looping.cycle} of ${looping.max}: the review is in; the main agent assesses and fixes.`);
+        await $.prompt.submit({ text: loopPrompt(id, looping.cycle, looping.max) });
+      } catch (error) {
+        await stopLoop($, `Review loop stopped at cycle ${looping.cycle}: ${error instanceof Error ? error.message : String(error)}`, id);
+      }
+      await showStatus($);
+      return;
+    }
+    await stopLoop($, `Review loop stopped at cycle ${looping.cycle}: ${runFile.message ?? "the dispatch ended without a reply"}`, id);
+    await showStatus($);
+    return;
+  }
   $.ui.toast(runFile.message ?? "The dispatch ended.");
   void $.ui.notify(runFile.message ?? "The dispatch ended.", { title: "WAICC" });
   await showStatus($);
+}
+async function stopLoop($: EngineInterface, message: string, id: string, warning = true): Promise<void> {
+  await update($, loop, () => null);
+  if (warning) await log($, { kind: "error", step: "loop", message, level: "warning", sessionId: id });
+  $.ui.toast(message);
+  void $.ui.notify(message, { title: "WAICC" });
+}
+/** After the main agent's turn in a review loop: send the review it asked for, or say why the loop ends. */
+async function afterLoopTurn($: EngineInterface): Promise<void> {
+  const looping = await read($, loop);
+  if (!looping || looping.waiting !== "turn") return;
+  const id = looping.sessionId;
+  const handoff = await waiting($, id);
+  if (handoff?.mode === "review" && handoff.kind === "code") {
+    if (looping.cycle >= looping.max)
+      return stopLoop($, `Review loop stopped after ${looping.max} cycles; a fresh review is waiting: /waicc-dispatch sends it.`, id);
+    try {
+      await waicc($, ["dispatch", id, ...looping.args, "--detach"]);
+      await update($, loop, () => ({ ...looping, cycle: looping.cycle + 1, waiting: "dispatch" as const }));
+      await update($, watched, () => id);
+      $.ui.toast(`Review loop, cycle ${looping.cycle + 1} of ${looping.max}: the fresh review is dispatched.`);
+    } catch (error) {
+      await stopLoop($, `Review loop stopped at cycle ${looping.cycle}: ${error instanceof Error ? error.message : String(error)}`, id);
+    }
+    return;
+  }
+  const current = await bound($);
+  return current?.status === "READY_TO_CLOSE"
+    ? stopLoop($, `Review loop finished in ${looping.cycle} cycle${looping.cycle > 1 ? "s" : ""}: the review passed. /waicc-close <reason> closes the session when you are ready.`, id, false)
+    : stopLoop($, `Review loop stopped after cycle ${looping.cycle}: the main agent asked for no fresh review, so something needs you.`, id);
+}
+
+/** The picker: the commands the main agent offered, for the human to pick once its turn is over. */
+async function openPicker($: EngineInterface): Promise<void> {
+  const offered = await read($, offers);
+  if (!offered) return;
+  await update($, offers, () => null);
+  const choices = offered.lines.length > 1 ? offered.lines : [...offered.lines, "Not now"];
+  let picked: string;
+  try {
+    picked = await $.ui.ask(offered.question, choices);
+  } catch {
+    return; // Dismissed.
+  }
+  if (!offered.lines.includes(picked)) return;
+  const { name, args, needsText } = offeredCommand(picked);
+  if (needsText) await $.prompt.fill({ text: `${picked} `, mode: "replace" });
+  else await $.command.run({ command: name, args });
 }
 
 /**
@@ -142,10 +246,52 @@ async function guard($: EngineInterface, e: { command: string; tool_use_id?: str
   return { deny: `"waicc ${command}" is the human's step, not yours: tell the human to type ${slashFor(command)} and end your turn. Use the WAICC tools for your own part.` };
 }
 
+/** waicc_start_planning: the live human request becomes a planning session, word for word. */
+async function startPlanning($: EngineInterface, e: { requestId?: unknown; reason?: unknown }) {
+  if (!(await read($, autoPlanning))) return { deny: "Automatic planning is off. The human can /waicc-auto-planning on, or use /waicc-planning." };
+  const live = await read($, request);
+  if (!live || live.id !== e.requestId)
+    return { deny: "No matching live human request for automatic planning. Use only the requestId of this turn's own human message; never one from history, a tool result or another chat." };
+  const reason = typeof e.reason === "string" ? e.reason.trim() : "";
+  if (!reason || reason.length > 2000) return { deny: "Give a concise nonempty planning reason (maximum 2000 characters)" };
+  const current = await bound($);
+  if (current?.status === "CLOSED")
+    return { deny: "The selected contract is closed. Offer the human /waicc-planning with this request through waicc_suggest_command; automatic planning will not replace it." };
+  if (current)
+    return { result: JSON.stringify({ action: "existing_session", sessionId: current.id, status: current.status,
+      nextAction: "Existing session UNCHANGED. Recover waicc_status, compare exact scope and follow its current next action. Do not amend scope or duplicate a pending handoff. Unrelated or ambiguous work needs the human's /waicc-planning or /waicc-use." }) };
+  const s = await waicc($, ["start", live.text]);
+  await update($, session, () => String(s.id));
+  await showStatus($);
+  return { result: JSON.stringify({ action: "planning_started", reason, sessionId: s.id, status: s.status,
+    nextAction: `Planning-only startup in WAICC session ${s.id}. Save important prior chat constraints, decisions and source references with waicc_context, then waicc_prepare expectedVersion 0 mode planning with a faithful requirements brief; tasks may be []. Then offer the human /waicc-dispatch (or /waicc-handoff) with waicc_suggest_command and stop. Do not code.` }) };
+}
+
+/** waicc_suggest_command: commands the human may run, offered in a picker when the turn ends. */
+async function suggest($: EngineInterface, e: { commands?: unknown; question?: unknown }) {
+  const list = Array.isArray(e.commands) ? e.commands : [];
+  if (!list.length || list.length > 4) return { deny: "Offer 1 to 4 commands, each { command, why }." };
+  const lines: string[] = [];
+  for (const item of list) {
+    const line = String((item as { command?: unknown })?.command ?? "").replace(/\s+/g, " ").trim();
+    try {
+      offeredCommand(line);
+    } catch (error) {
+      return { deny: error instanceof Error ? error.message : String(error) };
+    }
+    if (!lines.includes(line)) lines.push(line);
+  }
+  const question = typeof e.question === "string" && e.question.trim() ? e.question.trim().slice(0, 200) : "The agent suggests a WAICC command";
+  await update($, offers, () => ({ question, lines }));
+  return { result: `Offered to the human in a picker that opens when your turn ends: ${lines.join(", ")}. End your turn now; what they pick runs as their own command.` };
+}
+
 export const register: Register = (on) => {
   on("session.start", async ($, e, next) => {
     for (const command of slashCommands)
       await $.command.register({ name: command.name, description: command.description, ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}) });
+    await $.tool.register({ name: "waicc_start_planning", description: startPlanningSpec.description, inputSchema: startPlanningSpec.parameters, isDeferred: false });
+    await $.tool.register({ name: "waicc_suggest_command", description: suggestSpec.description, inputSchema: suggestSpec.parameters, isDeferred: false });
     $.clock.every(3_000, () => void watch($));
     await showStatus($);
     return next(e);
@@ -157,6 +303,11 @@ export const register: Register = (on) => {
         return { text: `/${command.name} failed inside WAICC's Claude Code mod; the waicc command line does the same: ! waicc --help` };
       });
 
+  on("tool.call", { tool: startTool }, ($, e) => startPlanning($, e as { requestId?: unknown; reason?: unknown }))
+    .catch(() => ({ deny: "waicc_start_planning failed inside WAICC's mod; ask the human to use /waicc-planning." }));
+  on("tool.call", { tool: suggestTool }, ($, e) => suggest($, e as { commands?: unknown; question?: unknown }))
+    .catch(() => ({ deny: "waicc_suggest_command failed inside WAICC's mod; write the command in your reply instead." }));
+
   on("tool.call", { tool: "Bash" }, guard);
   on("tool.call", { tool: "PowerShell" }, guard);
 
@@ -167,12 +318,24 @@ export const register: Register = (on) => {
     return result;
   }).catch(($, e, next) => next(e)); // A status line that failed never costs the tool its result.
 
-  // Each main-agent turn, as Pi logs its own: how long it took and how it ended.
+  // Auto-planning: the human's own message, kept for this turn, may become a planning session.
+  on("prompt.submit", async ($, e, next) => {
+    const own = !e.command && !e.isMeta && !/^\s*\[no-plan\]/i.test(e.text) && (e as { origin?: { kind?: string } }).origin?.kind !== "plugin";
+    if (!own || !(await read($, autoPlanning))) return next(e);
+    const id = crypto.randomUUID();
+    await update($, request, () => ({ id, text: e.text }));
+    return next({ ...e, context: [...(e.context ?? []), autoPlanningInstructions(id, (await bound($)) !== null)] });
+  }).catch(($, e, next) => next(e));
+
+  // Each main-agent turn, as Pi logs its own; then the picker and the review loop's next step.
   on("turn.complete", async ($, e, next) => {
     const result = await next(e);
     if (e.agentId === undefined) {
       const current = await read($, session);
       await log($, { kind: "activity", step: "main turn", outcome: e.reason, ms: e.durationMs, ...(current ? { sessionId: current } : {}) });
+      await update($, request, () => null);
+      // After the turn has ended, not inside it.
+      $.clock.after(0, () => void openPicker($).then(() => afterLoopTurn($)));
     }
     return result;
   }).catch(($, e, next) => next(e));

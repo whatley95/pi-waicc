@@ -47,8 +47,12 @@ with `MSYS_NO_PATHCONV=1` it also stops converting `--plugin-dir`, so the plugin
 claude -p "/waicc-status all" --plugin-dir C:\dev\wtly\pi-waicc   # waicc: **1 all session** …
 ```
 
-Never test `/waicc-planning`, `/waicc-continue`, `/waicc-develop` or `/waicc-review` headless:
-they hand the agent a prompt, which calls the model.
+Never test a command with an `agent` prompt in `src/claude/commands.ts` headless (`/waicc-planning`,
+`/waicc-continue`, `/waicc-develop`, `/waicc-review`, `/waicc-decide`, `/waicc-amend`,
+`/waicc-bug-hunt`, `/waicc-bug-pick` with a hunt to pick from), nor `/waicc-dispatch`: they hand the
+agent a prompt or start a real agent, which calls a model. The mod's state (the chat's session,
+auto-planning, the picker's offers, a review loop) is per Claude Code session, so each `claude -p`
+starts without a selected session.
 
 ## Prerequisites / build
 

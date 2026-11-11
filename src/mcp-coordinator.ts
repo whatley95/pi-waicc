@@ -8,12 +8,13 @@ import { runAgent, type AgentRunner } from "./dispatch.ts";
 import { listSessions, loadSession } from "./files.ts";
 import { contractOwner, decisionFormat, sourceFirst } from "./instructions.ts";
 import { recall } from "./memory.ts";
-import { decisionSettings, policyGuidance, profilesBrief } from "./profiles.ts";
+import { consultSettings, decisionSettings, policyGuidance, profilesBrief } from "./profiles.ts";
+import { huntTable, reportBugs, triageBugs } from "./hunt.ts";
 import { projectRoot } from "./source.ts";
 import {
-  askAdvisorSpec, applyPolicySpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, requestSpec, statusSpec,
+  askAdvisorSpec, applyPolicySpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, reportBugsSpec, requestSpec, statusSpec,
   type ApplyPolicyParams, type AskAdvisorParams, type AssessParams, type ContextParams, type LearnPatternParams, type MemoryParams,
-  type PrepareParams, type RequestParams, type SessionParams, type ToolSpec,
+  type PrepareParams, type ReportBugsParams, type RequestParams, type SessionParams, type ToolSpec,
 } from "./tool-specs.ts";
 import { decodeJsonArguments, ensure } from "./validation.ts";
 import { saveContext, status } from "./workflow.ts";
@@ -29,6 +30,7 @@ import { saveContext, status } from "./workflow.ts";
  */
 export const coordinatorSpecs: ToolSpec[] = [
   askAdvisorSpec, checkpointSpec, contextSpec, statusSpec, prepareSpec, assessSpec, learnPatternSpec, applyPolicySpec, requestSpec, memorySpec,
+  reportBugsSpec,
 ];
 
 /** How the agent tells the human to run a WAICC command, in a host without WAICC's slash commands. */
@@ -124,6 +126,15 @@ export function coordinatorToolset(cwd: string, services: { runAgent?: AgentRunn
         } finally {
           consulting = false;
         }
+      }
+      case "waicc_report_bugs": {
+        const params = args as unknown as ReportBugsParams;
+        reportBugs(cwd, params.huntId, params.bugs);
+        // The human asked for this check, so it uses the advisor role even when asking it on its own is off.
+        const settings = consultSettings(cwd);
+        const advisor = settings.profile && settings.options ? { profile: settings.profile, options: settings.options } : null;
+        const hunt = await triageBugs(cwd, params.huntId, advisor, services.runAgent ?? runAgent);
+        return `${huntTable(hunt)}\n\nShow this table to the human as it is and stop. Do not start fixing or planning: the human picks with /waicc-bug-pick, and the picked bugs become a planning session.`;
       }
       default:
         throw new Error(`Unknown tool ${name}`);
