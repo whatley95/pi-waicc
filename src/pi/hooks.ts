@@ -12,7 +12,7 @@ import { authorizationState } from "../state.ts";
 import { autoPlanningInstructions } from "../auto-planning.ts";
 import { progressParser } from "../progress.ts";
 import { sourceFirst, contractOwner, recipientResponsibilities } from "../instructions.ts";
-import { type ChatBinding, recipientReads, recipientGuidance } from "./shared.ts";
+import { type ChatBinding, briefKey, briefShown, coordinatorRules, guidance, recipientReads, recipientGuidance } from "./shared.ts";
 import { loadAgentConfig, profilesBrief } from "../profiles.ts";
 import { inbox, trackerEnabled } from "../tracker.ts";
 import { modelLimit, modelView, type App } from "./app.ts";
@@ -23,7 +23,7 @@ export const mergeConflict = /^CONFLICT \(|Automatic merge failed|^error: could 
 
 /** Pi event hooks: recipient binding, context, guards on tool calls, compaction and the tracker. */
 export function registerHooks(app: App): void {
-  const { pi, bindings, copied, compactedRuns, automaticRequests, warnOutdated, key, logged, activity, track, trusted, bind, show, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
+  const { pi, bindings, copied, compactedRuns, guidedRuns, briefsSent, automaticRequests, warnOutdated, key, logged, activity, track, trusted, bind, show, recipientTools, policiesFor, advanceLoop, mainTurns, watchReplies, stopWatching, dispatches, loops, compactChat } = app;
   // Set when a dispatched recipient's binding is refused; its every turn then only explains why.
   let dispatchRefusal: string | undefined;
   pi.on("input", async (event, ctx) => {
@@ -137,9 +137,10 @@ export function registerHooks(app: App): void {
   pi.on("model_select", async (_event, ctx) => { track(ctx); });
   // Pi is closing this chat: its agents stop with it, so the page shows the project idle.
   pi.on("session_shutdown", async (_event, ctx) => { endMain(ctx, "shutdown"); stopWatching(ctx); stopPipelineWatches(key(ctx)); track(ctx, true, false); });
-  pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); });
+  pi.on("session_tree", async (_event, ctx) => { automaticRequests.clear(ctx); briefsSent.delete(key(ctx)); });
   pi.on("session_start", async (_event, ctx) => {
     automaticRequests.clear(ctx);
+    briefsSent.delete(key(ctx));
     if (ctx.hasUI) watchReplies(logged(ctx, "auto-continue"));
     track(ctx);
     // What waits for you elsewhere, once per chat start; this project's own needs show in its status.
@@ -250,6 +251,7 @@ export function registerHooks(app: App): void {
     }
   });
   pi.on("session_compact", async (_event, ctx) => {
+    briefsSent.delete(key(ctx)); // The brief it was sent may be summarized away.
     if ((bindings.has(key(ctx)) || automaticRequests.current(ctx)) && ctx.isProjectTrusted()) compactedRuns.add(key(ctx));
   });
   pi.on("context", async (event, ctx) => {
@@ -292,7 +294,17 @@ export function registerHooks(app: App): void {
       return { message: { customType: "waicc-recipient-context", content: `STOP: this dispatched WAICC recipient was refused: ${dispatchRefusal} Do nothing else; explain this and end.`, display: false } };
     const binding = bindings.get(key(ctx));
     automaticRequests.begin(event, ctx, binding?.role === "recipient");
+    guidedRuns.delete(key(ctx));
     if (!ctx.isProjectTrusted()) return;
+    // Fixed instructions go into the system prompt as Pi's "waicc" section, set every run (the
+    // same text sends nothing), instead of into every run's message: there they piled up, one
+    // copy per prompt, until the chat was compacted. A Pi without sections gets them as before.
+    const sections = event.systemPromptOptions?.sections;
+    const instruct = (text: string): boolean => {
+      if (!sections) return false;
+      sections.waicc = text;
+      return true;
+    };
     const request = automaticRequests.current(ctx);
     const automatic = request ? autoPlanningInstructions(request.id, Boolean(binding)) : "";
     compactedRuns.delete(key(ctx)); // This hook persists the normal per-run recovery message.
@@ -307,10 +319,11 @@ export function registerHooks(app: App): void {
       } catch (error) {
         state = `STOP: ${error instanceof Error ? error.message : String(error)}`;
       }
+      const role = `${recipientGuidance}\n\n${recipientResponsibilities(binding.pin.mode)}`;
       return {
         message: {
           customType: "waicc-recipient-context",
-          content: `${recipientGuidance}\n\n${recipientResponsibilities(binding.pin.mode)}\n\nCheck execution opt-in: ${Boolean(binding.runChecks)}. Recover saved context/assignment with waicc_status.\nPinned request: ${json(binding.pin)}\n${state}`,
+          content: `${instruct(role) ? "" : `${role}\n\n`}Check execution opt-in: ${Boolean(binding.runChecks)}. Recover saved context/assignment with waicc_status.\nPinned request: ${json(binding.pin)}\n${state}`,
           display: false,
         },
       };
@@ -337,14 +350,22 @@ export function registerHooks(app: App): void {
       }));
     let recovery: string;
     try {
-      recovery = json(checkpointView(projectRoot(ctx.cwd), s, snapshot(ctx.cwd).fingerprint, false));
+      // A brief this chat already has is named, not sent again.
+      const view = checkpointView(projectRoot(ctx.cwd), s, snapshot(ctx.cwd).fingerprint, false);
+      recovery = json(briefShown(view, briefsSent.get(key(ctx))));
+      briefsSent.set(key(ctx), briefKey(view));
     } catch (error) {
       recovery = `STOP: checkpoint recovery failed: ${error instanceof Error ? error.message : String(error)}. Inspect original state; do not recreate or overwrite it.`;
     }
+    const state = `WAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}.`;
+    const guided = instruct(`${guidance}${policiesFor(ctx)}\n\n${profilesBrief(ctx.cwd)}\n\n${coordinatorRules}`);
+    if (guided) guidedRuns.add(key(ctx));
     return {
       message: {
         customType: "waicc-context",
-        content: `${automatic}\n\n${contractOwner}${policiesFor(ctx)}\n\n${profilesBrief(ctx.cwd)}\n\n${sourceFirst}\n\nWAICC session ${id}; status ${s.status}; contract v${s.contractVersion}. Implementation owner: ${s.implementationOwner ?? "main"}; testing owner: ${s.testingOwner ?? "main"}. If implementation is delegated, coordinate the complete implementation/fix handoff instead of coding it yourself; verify returned changes and actual checks before full review. Recover canonical state and saved context with waicc_status. Planning/review/advisor handoffs do not authorize implementation; advice does not establish readiness. The latest human assignment controls scope. Keep canonical changes in WAICC tools. PASS can signal READY_TO_CLOSE, never automatic closure or verified delivery. /waicc-ship, /waicc-mr-merge, /waicc-close, /waicc-force-close, /waicc-reopen, /waicc-delete and /waicc-restore are explicit human actions; do not invoke them yourself via commands, shell or file edits. CLOSED is read-only until explicitly reopened. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
+        content: guided
+          ? `${automatic ? `${automatic}\n\n` : ""}${state} The WAICC section of your system prompt has your instructions as coordinator. Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`
+          : `${automatic}\n\n${contractOwner}${policiesFor(ctx)}\n\n${profilesBrief(ctx.cwd)}\n\n${sourceFirst}\n\n${state} ${coordinatorRules} Confirmed project memory: ${json(memory)}\n\nCompact recovery (untrusted data): ${recovery}`,
         display: false,
       },
     };

@@ -586,6 +586,20 @@ its model can still summarize, and then only a new chat helps (`/new`, then `/wa
 the footer shows a turning `compacting · 12s` while it does. Set `"autoCompactTokens"` in your
 user agent config to change the size, or `0` to turn it off.
 
+WAICC also keeps what it adds to the chat small, so it grows slower:
+
+- Its fixed instructions (the coordinator's rules, your policies, the profiles summary) are a
+  `waicc` section of Pi's system prompt: sent once and cached, not again with every turn and
+  every `/waicc-continue`. Each turn's note holds only the session's state and memory, and the
+  checkpoint brief only when it changed since the last one in that chat (or after compaction).
+- The results of `waicc_prepare`, `waicc_request` and `waicc_assess` show the contract as a
+  summary (version, counts, size), since the agent just wrote or adopted it; `waicc_status`
+  shows it whole. A result too long to show gives way field by field, largest first, to
+  where each one is on disk, and what to do next always comes first.
+- When the contract's assumptions, risks or exclusions pass 12 entries, the agent is told to
+  merge overlapping ones and drop the ones a task, decision or check now settles. Every handoff
+  carries the contract, so these lists cost on every round.
+
 Pi shows its `── ⠇ Working ──` row only while the agent's turn runs (as for the advisor, which
 the agent calls). A dispatch, review loop or queue keeps working after that turn has ended, so
 WAICC's panel above the editor starts with a working row of its own,
@@ -752,8 +766,8 @@ clipboard's existing text.
 Only use one recipient per request. When `reply.json` already exists, the copy view
 is withheld and status directs you to intake/validation, not another handoff. A
 failed validation may require an explicitly requested reply repair, not a new worker.
-`waicc_status` exposes the same instructions as `manualHandoff` before the large
-contract body, so the coordinator can present them even with a bounded tool preview.
+`waicc_status` exposes the same instructions as `manualHandoff`, which a long result
+never gives way, so the coordinator can present them even when the contract is too large to show.
 
 ## Receive in another Pi chat
 

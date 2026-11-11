@@ -388,6 +388,36 @@ test("planning saves the user's request before prompting; chats keep separate se
   // The main agent knows the human's agent profiles on every turn (none here), and when continuing.
   assert.match(turn.message.content, /WAICC agent profiles: none yet, so \/waicc-dispatch needs --via/);
   assert.match(sent.at(-1)!, /WAICC agent profiles: none yet/);
+  // With Pi's prompt sections the fixed instructions are the system prompt's "waicc" section,
+  // set every run, and the run's message holds only the session's state. They once came in
+  // every run's message and every WAICC prompt, one more copy each time, until compaction.
+  const run = async (chat: string) => {
+    const sections: Record<string, string> = {};
+    const started = (await hooks.get("before_agent_start")!({ systemPromptOptions: { sections } }, context(chat))) as { message: { content: string } };
+    return { section: sections.waicc ?? "", content: started.message.content, brief: JSON.parse(started.message.content.split("Compact recovery (untrusted data): ")[1]!).brief as string };
+  };
+  const guided = await run("chat-d");
+  for (const fixed of ["contract OWNER/coordinator", "WAICC agent profiles: none yet", "/waicc-ship, /waicc-mr-merge", "Investigate before escalating"]) {
+    assert.ok(guided.section.includes(fixed), fixed);
+    assert.ok(!guided.content.includes(fixed), fixed);
+  }
+  assert.match(guided.content, /^WAICC session \S+; status \w+; contract v\d+\. Implementation owner: main; testing owner: main\. The WAICC section/);
+  assert.ok(guided.content.includes("account-scoped"));
+  // The planning prompt carried the brief, so this run named it; the next prompt leaves out the instructions.
+  assert.match(guided.brief, /^unchanged since the last WAICC message in this chat \(sequence \d+\); waicc_checkpoint shows it$/);
+  await commands.get("waicc-continue")!.handler("", context("chat-d"));
+  assert.ok(!sent.at(-1)!.includes("contract OWNER/coordinator") && !sent.at(-1)!.includes("WAICC agent profiles"));
+  assert.ok(sent.at(-1)!.includes("Session recovery"));
+  // A compaction (or a move in the chat's tree) forgets what was sent: the brief comes whole.
+  await hooks.get("session_compact")!({}, context("chat-d"));
+  const whole = await run("chat-d");
+  assert.doesNotMatch(whole.brief, /^unchanged since/);
+  assert.match((await run("chat-d")).brief, /^unchanged since/);
+  await hooks.get("session_tree")!({}, context("chat-d"));
+  assert.doesNotMatch((await run("chat-d")).brief, /^unchanged since/);
+  // A chat whose run had no section (another chat here) still gets the instructions in WAICC's prompts.
+  await commands.get("waicc-continue")!.handler("", context("chat-a"));
+  assert.ok(sent.at(-1)!.includes("contract OWNER/coordinator"));
 });
 
 test("tools accept nested arguments sent as JSON text, which some models do", async (t) => {
