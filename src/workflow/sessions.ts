@@ -215,7 +215,7 @@ export function openDecisionsText(c: Contract): string {
 export type DecisionSource = { kind: "human" } | { kind: "policy"; policy: string; rationale: string } | { kind: "auto-low-risk" };
 
 export function resolveDecision(cwd: string, id: string, decisionId: string, answer: string, by: DecisionSource = { kind: "human" }): Session {
-  const root = projectRoot(cwd); identifier(decisionId); text(answer, "Decision answer");
+  const root = projectRoot(cwd); identifier(decisionId, "Decision ID"); text(answer, "Decision answer");
   return withLock(root, () => {
     const s = loadSession(root, id); requireOpen(s); noPending(s);
     ensure(s.contractVersion > 0, "Prepare a contract before answering its decisions");

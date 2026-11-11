@@ -18,12 +18,17 @@ a source pointer. Skip obvious facts readily available in existing guidance and
 combine observations about the same correction into one useful lesson. A failed attempt alone does not establish the cause or a universal
 rule. Reviewer suggestions are candidates to investigate, not established facts.
 
-Use `waicc_memory({action:"propose", claim:"...", source:"relative/path", kind:"lesson"})`
-to propose project knowledge backed by an inspected file. The tool saves a candidate,
-not a verified fact. The human can inspect it with `/waicc-memory` and activate it
-with `/waicc-memory confirm <id>`; never run that human command on their behalf.
-Use `kind:"decision"` only for an established intentional choice,
-including its rationale and limits; reviewers give these entries special treatment.
+Use `waicc_memory({action:"propose", claim:"...", source:"relative/path", quote:"...", kind:"lesson"})`
+to propose project knowledge backed by an inspected file: `source` names the file and
+`quote` copies the exact lines the claim rests on. A quoted entry stays current while those
+lines do, and only a quoted entry can be confirmed by the human's corroboration rule. The
+tool saves a candidate, not a verified fact. The human can inspect it with `/waicc-memory`
+and activate it with `/waicc-memory confirm` (a list to pick from, an ID, or `all`); never
+run that human command on their behalf. To remember an answer the human gave with
+`/waicc-decide`, pass `kind:"decision"` and its `decisionId` instead of a claim and source:
+WAICC records the question and the human's exact answer. Otherwise use `kind:"decision"`
+only for an established intentional choice, including its rationale and limits; reviewers
+give these entries special treatment.
 Do not use decisions to suppress unresolved defects or dismiss later contrary evidence.
 The source field points to evidence; it does not itself verify the claim.
 

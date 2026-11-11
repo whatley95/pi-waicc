@@ -67,11 +67,11 @@ export function reviewContext(
     report.tasks !== undefined,
     `The completion report has no tasks: report every planned task once as {taskId, evidence}: ${c.tasks.map((task) => task.id).join(", ")}`,
   );
-  const tasks = list(report.tasks, "Completed tasks").map((entry) => {
+  const tasks = list(report.tasks, "Completed tasks").map((entry, i) => {
     const task = record(entry, "Completed task");
     supported(task, ["taskId", "evidence"], "A completed task");
     return {
-      taskId: identifier(task.taskId),
+      taskId: identifier(task.taskId, `completion.tasks[${i}].taskId`),
       evidence: text(task.evidence, "Task completion evidence"),
     };
   });

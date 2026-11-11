@@ -53,6 +53,7 @@ import {
   advisorInput,
   contractLimit,
   contractSizeNote,
+  quoteIn,
   readyContract,
   readyPlan,
   tidyIds,
@@ -62,7 +63,7 @@ import {
 import type { Contract, Reply, Session } from "../src/types.ts";
 import { pathToFileURL } from "node:url";
 import { decisionGates } from "../src/decisions.ts";
-import { slimDecisions, stableIds } from "../src/workflow/shared.ts";
+import { carryQuestions, slimDecisions, stableIds } from "../src/workflow/shared.ts";
 
 function fixture(t: TestContext, git = false): string {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "waicc-test-")));
@@ -2379,14 +2380,65 @@ test("CLI can create and recover sessions without a Pi process", (t) => {
   assert.equal(unknown.status, 2);
 });
 
-test("a revision that drops or rewrites a requirement or decision names which", () => {
+test("a revision that drops or rewrites a requirement or decision names which, and what it said", () => {
   const before = { ...example(), decisions: [] } as Contract;
   const after = structuredClone(before);
   after.requirements[0] = { ...after.requirements[0], sourceQuote: "reworded" };
   after.requirements.splice(1, 1);
   assert.throws(() => stableIds(before, after),
-    new RegExp(`as amendments\\. Dropped: ${before.requirements[1].id}\\. Original quote changed: ${before.requirements[0].id}\\.$`));
+    new RegExp(`as amendments\\. Dropped: ${before.requirements[1].id}\\. Original quote changed: ${before.requirements[0].id} \\(was "Add customer search\\."\\)\\.$`));
   assert.doesNotThrow(() => stableIds(before, structuredClone(before)));
+});
+
+test("a revision that leaves out requirements or quotes, or only reflows them, keeps them as they were", (t) => {
+  const root = fixture(t);
+  const s = planned(root);
+  // Requirements left out entirely, as tasks and decisions may be.
+  const { requirements: _left, ...withoutRequirements } = example();
+  cancel(root, s.id, "Revise");
+  prepare(root, s.id, withoutRequirements as Contract, "planning", "Revise", 1);
+  assert.deepEqual(readContract(root, s.id).contract.requirements, example().requirements);
+  // A missing quote, and one with its spacing changed, take the saved quote.
+  const reflowed = example() as unknown as { requirements: Record<string, unknown>[] };
+  delete reflowed.requirements[0].sourceQuote;
+  reflowed.requirements[1].sourceQuote = "Protect  customer\ndata.";
+  cancel(root, s.id, "Revise again");
+  prepare(root, s.id, reflowed as never, "planning", "Revise again", 2);
+  assert.deepEqual(readContract(root, s.id).contract.requirements.map((r) => r.sourceQuote), ["Add customer search.", "Protect customer data."]);
+  // Other words are still refused, with the quote to restore.
+  const reworded = example();
+  reworded.requirements[1].sourceQuote = "Add customer search.";
+  cancel(root, s.id, "Reword");
+  assert.throws(() => prepare(root, s.id, reworded, "planning", "Reword", 3), /Original quote changed: REQ-002 \(was "Protect customer data\."\)\.$/);
+  // A decision's question reflowed or curled is the same question.
+  const asked = gatedPlan();
+  const curled = { ...asked, decisions: asked.decisions!.map((d) => ({ ...d, question: `  ${d.question.replace(/ /g, "\n")} ` })) };
+  assert.deepEqual((carryQuestions(asked, curled) as Contract).decisions!.map((d) => d.question), asked.decisions!.map((d) => d.question));
+});
+
+test("a quote whose line breaks, spacing or quote marks differ is found, and saved as the request has it", () => {
+  const request = "Add \u201Ccustomer\u201D search\r\nwith  pagination. Protect customer data.";
+  assert.equal(quoteIn(request, 'Add "customer" search with pagination.'), "Add \u201Ccustomer\u201D search\r\nwith  pagination.");
+  assert.equal(quoteIn(request, "  Protect customer\n data. "), "Protect customer data.");
+  assert.equal(quoteIn(request, "Add customer lookup"), null);
+  assert.equal(quoteIn(request, " \n "), null);
+  const c = example();
+  c.requirements[0].sourceQuote = 'Add "customer" search with pagination.';
+  c.requirements[1].sourceQuote = "Protect customer data.";
+  const valid = validateContract(c, request);
+  assert.equal(valid.requirements[0].sourceQuote, "Add \u201Ccustomer\u201D search\r\nwith  pagination.");
+  assert.equal(c.requirements[0].sourceQuote, 'Add "customer" search with pagination.', "what the agent sent is not changed in place");
+  c.requirements[0].sourceQuote = "Add customer lookup";
+  assert.throws(() => validateContract(c, request), /Requirement REQ-001 needs an exact quote/);
+});
+
+test("an acceptance criterion citing another task's requirement names it and the task's own", () => {
+  const c = example();
+  c.tasks[1].acceptance[0].requirementIds = ["REQ-001", "REQ-002"];
+  assert.throws(() => validateContract(c, requirements),
+    /tasks\[1\]\.acceptance\[0\]\.requirementIds: Acceptance criterion AC-002 must cite only requirements of its task CLIENT \(REQ-001\), not REQ-002: add it to the task's requirementIds, or move the criterion to the task that covers it$/);
+  c.tasks[1].acceptance[0].requirementIds = [];
+  assert.throws(() => validateContract(c, requirements), /Acceptance criterion AC-002 must cite only requirements of its task CLIENT \(REQ-001\): cite at least one$/);
 });
 
 test("quotes taken from the chat instead of the saved request say so, and how to add the text", () => {

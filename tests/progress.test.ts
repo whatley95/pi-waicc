@@ -164,7 +164,8 @@ test("Pi shows a live dispatch panel and status, lists steps on --progress, and 
   assert.match(panel[0], /^── [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] WAICC · claude sonnet \(low\) planning · \d+s · 1 steps .* ─+$/);
   assert.equal([...panel[0]].length, 120, "a full-width row");
   assert.match(panel[1], /› Reading source\.txt$/);
-  await new Promise((done) => setTimeout(done, 200));
+  // A full test run loads the machine and timers fire late: wait up to 2 s for two turns.
+  for (const deadline = Date.now() + 2000; renders < 2 && Date.now() < deadline;) await new Promise((done) => setTimeout(done, 20));
   assert.ok(renders >= 2, "it turns at Pi's pace");
   component.dispose();
   assert.match(statuses.at(-1)!, /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] claude planning · \d+s$/);

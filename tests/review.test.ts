@@ -117,6 +117,8 @@ test("code review rejects incomplete/ambiguous reports, task batches and failed 
     /The completion report has unsupported fields: title\. Allowed: summary, tasks, checks, findings$/);
   assert.throws(() => review(root, s, { ...completion(), checks: [{ description: "Tests", outcome: "failed", evidence: "Failure is not done" }] }),
     /not_run with limits\. checks\[0\] \(Tests\) has outcome "failed"$/);
+  assert.throws(() => review(root, s, { ...completion(), tasks: [first, { evidence: "Done" } as typeof first] }),
+    /Error: completion\.tasks\[1\]\.taskId must be nonempty text/);
   assert.deepEqual(loadSession(root, s.id), before);
   assert.throws(() => issue(root, s.id, "planning", "Wrong mode", undefined, undefined, { kind: "code", completion: completion() }), /only apply to review/);
 });
@@ -219,6 +221,8 @@ test("low/medium code findings cannot be waved through as fixed without a fresh 
   assert.throws(() => dispose([{ findingId: "F1", disposition: "disputed", evidence: "x" }, { findingId: "F1", disposition: "disputed", evidence: "x" }]), /disposition for F1: it is given more than once/);
   // Knowingly leaving a code finding unfixed is not a way through either.
   assert.throws(() => assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Minor", dispositions: [{ findingId: "F1", disposition: "accepted", evidence: "Low risk" }] }), /F1 is a code-review finding, which cannot be accepted unfixed/);
+  // Which entry lacks its finding ID, by place.
+  assert.throws(() => assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Fixed", dispositions: [{ disposition: "disputed", evidence: "Not a defect" } as never] }), /Error: dispositions\[0\]\.findingId must be nonempty text/);
   current = assess(root, s.id, { requestId: current.rounds.at(-1)!.id, decision: "ready", rationale: "Independent source evidence disproves finding", dispositions: [{ findingId: "F1", disposition: "disputed", evidence: "Exact call path and existing regression show AC0 is met" }] });
   assert.equal(current.status, "READY_TO_CLOSE");
 });

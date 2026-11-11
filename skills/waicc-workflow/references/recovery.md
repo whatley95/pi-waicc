@@ -13,9 +13,10 @@ request, without starting another turn. Read the exact original requirements/ame
 The index retains all requirement/task/criterion IDs, paths, dependencies, decisions,
 findings, check claims, completion report pointers and original evidence references.
 Expand relevant records instead of loading every historical response on every turn.
-For independent full code review, still inspect every requirement/task/criterion,
-all previous actionable findings/fixes, the full change and actual check evidence.
-Do not mistake a checkpoint's short overview for full review coverage.
+For an independent code review, still inspect what code-review.json assigns (on a first or
+full review every requirement/task/criterion and the whole change; on a follow-up every
+earlier fix and the files changed since) and the actual check evidence. Do not mistake a
+checkpoint's short overview for review coverage.
 
 Important chat-only constraints, established decisions/rationale and unfinished work
 must be saved by the owner through `waicc_context` when no handoff is pending.

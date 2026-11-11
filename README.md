@@ -1442,9 +1442,12 @@ criteria. For example, agree the API/data behavior before backend and frontend
 implementation, then verify their integration against the original requirements.
 
 Requirements have stable IDs and exact quotes from the original request or an
-amendment. Acceptance criteria link back to those IDs and distinguish planned
-verification from actual results. Dependency cycles, unknown references and unsafe
-paths are rejected.
+amendment. A quote copied with other line breaks, spacing or curly quote marks still
+counts, and is saved as the request has it. A revision that leaves out the requirements, or
+a quote, keeps them as they were; a quote in other words is refused, with the original to
+restore. Acceptance criteria link back to those IDs, only to their own task's requirements,
+and distinguish planned verification from actual results. Dependency cycles, unknown
+references and unsafe paths are rejected.
 
 Every handoff identifies the role, pinned inputs, permitted changes, expected
 deliverables, response format and stopping conditions. It also includes recent
@@ -1827,7 +1830,8 @@ tool keeps rejecting its input, it doubts a reviewer's finding, or it must choos
 risky designs it cannot settle from the code. You can also just tell it "ask the advisor".
 From the second refused WAICC call in a row, the error itself tells it to ask the advisor
 now (or you, with no advisor or no questions left) instead of guessing again; a call that
-works starts the count again.
+works starts the count again, except rereading the session (`waicc_status`,
+`waicc_checkpoint`), which is no progress.
 To let it ask more often, raise `"autoAdvisor": { "maxPerChat": n }` (up to 20) in your user file.
 
 - The advisor reads the project **read-only**: Claude gets only Read/Grep/Glob, Codex runs

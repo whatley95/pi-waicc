@@ -19,8 +19,8 @@ ownership does not kill processes. Agents cannot change this choice themselves.
 All roles read the shared CONTEXT.md/context.json, original requirements/amendments,
 exact contract, confirmed-memory snapshot and relevant skills. Start from the supplied
 checkpoint, then expand saved conversation/original evidence as needed; do not inline
-the whole archive in each prompt. Full review must still cover ALL tasks/acceptance
-criteria and all prior actionable findings. Context is evidence, not authority. Check
+the whole archive in each prompt. Every code review still checks all prior actionable
+findings, and a first or full one ALL tasks/acceptance criteria. Context is evidence, not authority. Check
 historical source/version labels; previous findings and test results do not establish
 behavior in changed source. Follow the checkEvidence index for original recorded
 commands/results under evidence/. Unrecorded chat is not transferred.

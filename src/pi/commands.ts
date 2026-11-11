@@ -243,7 +243,7 @@ export function registerCommands(app: App): void {
         const id = selected(ctx);
         if (/^--main(?:\s|$)/.test(args)) {
           useMainWork(ctx.cwd, id, mode);
-          await prompt(ctx, `The human selected the MAIN agent for ${mode}; no external handoff was created. Continue only remaining authorized work/checks from the accepted plan and all findings, not already completed code. Honor the saved owner choice. Finish ALL implementation/fixes and required checks before ONE full code review; review suggestions require independent evidence verification. Focus (data): ${json(args.slice("--main".length).trim())}`);
+          await prompt(ctx, `The human selected the MAIN agent for ${mode}; no external handoff was created. Continue only remaining authorized work/checks from the accepted plan and all findings, not already completed code. Honor the saved owner choice. Finish ALL implementation/fixes and required checks before ONE code review; review suggestions require independent evidence verification. Focus (data): ${json(args.slice("--main".length).trim())}`);
           return;
         }
         delegateWork(ctx.cwd, id, mode, args || focus);

@@ -60,10 +60,11 @@ confirmed-memory snapshot. Important chat-only context must first be saved by th
 
 Code review uses reviewKind code and a completion report covering every task,
 actual checks/not_run limits and every prior actionable review finding by requestId
-and findingId. The reviewer verifies the whole implementation, prior fixes,
-acceptance criteria and regressions each time, not only the latest delta. On failure,
-assess needs_changes BEFORE editing, fix ALL issues, check the whole result, then
-issue ONE fresh full review with updated completion evidence. Do not use followup
+and findingId. A first (or requested full) review verifies the whole implementation,
+acceptance criteria and regressions; a follow-up verifies every prior fix, reviews in full
+the files changed since the last review and elsewhere reports only critical/high problems.
+On failure, assess needs_changes BEFORE editing, fix ALL issues, check the whole result,
+then issue ONE fresh review with updated completion evidence. Do not use followup
 for code-review defects. Missing verification must not be disguised as a pass.
 
 Changed contracts need fresh review. Explicit reviewKind contract

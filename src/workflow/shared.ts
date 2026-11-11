@@ -11,7 +11,7 @@ import { revisionChanges } from "../revision.ts";
 import { reviewContext, type ReviewRequest } from "../review.ts";
 import { contextPacket } from "../context.ts";
 import { requirementsText, roundPhase } from "../state.ts";
-import { ensure, identifier, list, readyContract } from "../validation.ts";
+import { ensure, identifier, list, plainText, readyContract } from "../validation.ts";
 import type { Contract, ContractVersion, Mode, Round, Session } from "../types.ts";
 
 /** Helpers every workflow step uses: open-session checks, contract files and versions, skills and new rounds. */
@@ -83,23 +83,34 @@ export function contractFiles(
   };
 }
 /**
- * A revised contract whose decision leaves out its question (agents send the answer and evidence
- * and forget it) gets the question that decision already had: it may not change anyway.
+ * Text a revision may not change, carried over when the agent leaves it out or only reflows it:
+ * a decision's question (agents send the answer and evidence and forget it) and a requirement's
+ * original quote. Refusing either only costs a retry; a really different text is still refused.
  */
 export function carryQuestions(previous: Contract, value: unknown): unknown {
-  // Tasks left out of a revision are unchanged too: its decisions still name them.
-  if (value && typeof value === "object" && !Array.isArray(value) && (value as { tasks?: unknown }).tasks === undefined && previous.tasks.length)
-    value = { ...value, tasks: previous.tasks };
-  const decisions = (value as { decisions?: unknown } | null)?.decisions;
-  // Left out of a revision, they are unchanged: refusing it as "dropped" only costs a retry.
-  if (decisions === undefined && previous.decisions?.length && value && typeof value === "object" && !Array.isArray(value))
-    return { ...value, decisions: previous.decisions };
-  if (!Array.isArray(decisions)) return value;
-  const asked = new Map((previous.decisions ?? []).map((d) => [d.id, d.question]));
-  const missing = (d: unknown): d is Record<string, unknown> =>
-    !!d && typeof d === "object" && asked.has((d as { id?: unknown }).id as string) && ((d as { question?: unknown }).question ?? "") === "";
-  if (!decisions.some(missing)) return value;
-  return { ...(value as object), decisions: decisions.map((d) => missing(d) ? { ...d, question: asked.get(d.id as string) } : d) };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  // Parts left out of a revision are unchanged: refusing it as "dropped" only costs a retry.
+  // Tasks too, since its decisions still name them.
+  const sent = value as { requirements?: unknown; tasks?: unknown; decisions?: unknown };
+  let next: Record<string, unknown> = { ...value };
+  if (sent.requirements === undefined) next.requirements = previous.requirements;
+  if (sent.tasks === undefined && previous.tasks.length) next.tasks = previous.tasks;
+  if (sent.decisions === undefined && previous.decisions?.length) next.decisions = previous.decisions;
+  const keep = <T extends { id: string }>(entries: unknown, before: T[], field: keyof T & string) => {
+    if (!Array.isArray(entries)) return entries;
+    const old = new Map(before.map((entry) => [entry.id, entry[field] as unknown]));
+    return entries.map((entry) => {
+      const e = entry as Record<string, unknown> | null;
+      const was = e && typeof e === "object" ? old.get(e.id as string) : undefined;
+      if (typeof was !== "string") return entry;
+      const now = e![field] ?? "";
+      // The same words with other spacing or quote marks: how agents reflow what they copy.
+      return now === "" || (typeof now === "string" && now !== was && plainText(now) === plainText(was)) ? { ...e, [field]: was } : entry;
+    });
+  };
+  next = { ...next, requirements: keep(next.requirements, previous.requirements, "sourceQuote") };
+  if (next.decisions !== undefined) next.decisions = keep(next.decisions, previous.decisions ?? [], "question");
+  return next;
 }
 const slimmed = /^Resolved in contract v\d+;/;
 /**
@@ -135,18 +146,19 @@ export function slimDecisions(previous: ContractVersion, value: unknown): unknow
 export const revision = (previous: ContractVersion, value: unknown): unknown =>
   slimDecisions(previous, carryQuestions(previous.contract, value));
 export function stableIds(previous: Contract, next: Contract): void {
-  // Name them: the agent then restores exactly those instead of guessing.
-  const changes = <T extends { id: string }>(before: T[], after: T[], same: (a: T, b: T) => boolean, what: string) => {
+  // Name them, and give a changed text as it was: the agent then restores exactly those instead of guessing.
+  const changes = <T extends { id: string }>(before: T[], after: T[], text: (entry: T) => string, what: string) => {
     const dropped = before.filter((p) => !after.some((n) => n.id === p.id)).map((p) => p.id);
-    const changed = before.filter((p) => after.some((n) => n.id === p.id && !same(p, n))).map((p) => p.id);
-    return `${dropped.length ? ` Dropped: ${dropped.join(", ")}.` : ""}${changed.length ? ` ${what} changed: ${changed.join(", ")}.` : ""}`;
+    const changed = before.filter((p) => after.some((n) => n.id === p.id && text(n) !== text(p)));
+    const was = (entry: T) => `${entry.id} (was ${JSON.stringify(text(entry).length > 300 ? `${text(entry).slice(0, 299)}…` : text(entry))})`;
+    return `${dropped.length ? ` Dropped: ${dropped.join(", ")}.` : ""}${changed.length ? ` ${what} changed: ${changed.map(was).join(", ")}.` : ""}`;
   };
-  const requirements = changes(previous.requirements, next.requirements, (a, b) => a.sourceQuote === b.sourceQuote, "Original quote");
+  const requirements = changes(previous.requirements, next.requirements, (r) => r.sourceQuote, "Original quote");
   ensure(
     !requirements,
     `Preserve requirement IDs and original quotes across revisions; record scope changes as amendments.${requirements}`,
   );
-  const decisions = changes(previous.decisions ?? [], next.decisions ?? [], (a, b) => a.question === b.question, "Question");
+  const decisions = changes(previous.decisions ?? [], next.decisions ?? [], (d) => d.question, "Question");
   ensure(
     !decisions,
     `Preserve decision IDs/questions across revisions; carry answers and evidence forward instead of dropping prior decisions.${decisions}`,
@@ -196,7 +208,7 @@ export function nextRound(
       "Advisor scope uses requirement IDs, not implementation tasks",
     );
     const ids = list(requirementIds ?? [], "Advisor requirement IDs").map(
-      (value) => identifier(value),
+      (value, i) => identifier(value, `requirementIds[${i}]`),
     );
     ensure(
       new Set(ids).size === ids.length &&

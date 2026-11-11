@@ -20,7 +20,7 @@ Node ≥ 22.19 runs the `.ts` sources directly (type stripping), so there is no 
 
 ```sh
 npm install --ignore-scripts
-npm run check          # tsc --noEmit + full node:test suite (~400 tests), ~6 min on Windows
+npm run check          # tsc --noEmit + full node:test suite (~460 tests), ~6 min on Windows
 node --import ./tests/isolate.ts --test tests/X.test.ts   # one file
 ```
 
@@ -140,8 +140,13 @@ pattern is `tests/extension.test.ts`, which uses Pi's own `loadExtensions()`.
 
 ## Finding bugs from real use
 
-Two local sources show what went wrong in the user's own projects. Read them for counts and
+Three local sources show what went wrong in the user's own projects. Read them for counts and
 messages only, and never copy their contents (hosts, project names, people) into this public repo:
+- `<project>/.pi/pi-waicc/activity.jsonl` (since #135): one line per step WAICC took (commands,
+  tools, main-agent turns, dispatches) with its `flow`, duration and `outcome`. The order of a
+  chat's tool calls shows how an agent got stuck, e.g. three refused `waicc_assess` calls in a
+  row. `node src/cli.ts --root <project> activity --summary --since 6h` sums it, and
+  `--flow <id>` follows an error's flow.
 - `<project>/.pi/pi-waicc/errors.jsonl`: every error and warning WAICC showed, with its source,
   and (since #121) errors from WAICC tools the main agent called, under the tool name. Since #125
   each line has `level`, `version` (an older commit than `main` means that Pi window ran old code:
@@ -192,7 +197,7 @@ This path is interactive and needs a configured model, so it is not useful to an
   `WAITING_FOR_REPLY`, `AWAITING_ASSESSMENT` and `PLAN_READY`; others include `READY_FOR_HANDOFF`,
   `NEEDS_CHANGES`, `READY_TO_CLOSE` and `CLOSED`. There is no `ASSESSING`. `verified` is always
   `false` by design.
-- `prepare` requires each `sourceQuote` to occur verbatim in the original request.
+- `prepare` requires each `sourceQuote` to occur in the original request; spacing, line breaks and curly quotes may differ, and the request's own text is saved (`quoteIn` in `src/validation.ts`).
 - Start the reply from the generated `reply.example.json`, because its identity fields must stay unchanged. Then write it as `reply.json` in the same round dir.
 
 ## Troubleshooting
