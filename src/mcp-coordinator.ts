@@ -3,7 +3,7 @@ import { argumentShape, recordError } from "./error-log.ts";
 import { newFlow, recordActivity } from "./activity-log.ts";
 import { checkpointView } from "./checkpoint.ts";
 import { consultAdvisor } from "./consult.ts";
-import { adviceText, advisorContext, advisorTurn, agentText, applyPolicy, assessReply, prepareHandoff, proposeLesson, proposeMemory, refusalNudge, requestHandoff, rereadTools, stepView, type Outcome } from "./coordinator.ts";
+import { adviceText, advisorContext, advisorTurn, agentText, applyPolicy, askForPaths, assessReply, prepareHandoff, proposeLesson, proposeMemory, refusalNudge, requestHandoff, rereadTools, stepView, type Outcome } from "./coordinator.ts";
 import { runAgent, type AgentRunner } from "./dispatch.ts";
 import { listSessions, loadSession } from "./files.ts";
 import { contractOwner, decisionFormat, sourceFirst } from "./instructions.ts";
@@ -12,9 +12,9 @@ import { consultSettings, decisionSettings, policyGuidance, profilesBrief } from
 import { huntTable, reportBugs, triageBugs } from "./hunt.ts";
 import { projectRoot } from "./source.ts";
 import {
-  askAdvisorSpec, applyPolicySpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, reportBugsSpec, requestSpec, statusSpec,
+  askAdvisorSpec, applyPolicySpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, reportBugsSpec, requestPathsSpec, requestSpec, statusSpec,
   type ApplyPolicyParams, type AskAdvisorParams, type AssessParams, type ContextParams, type LearnPatternParams, type MemoryParams,
-  type PrepareParams, type ReportBugsParams, type RequestParams, type SessionParams, type ToolSpec,
+  type PrepareParams, type ReportBugsParams, type RequestParams, type RequestPathsParams, type SessionParams, type ToolSpec,
 } from "./tool-specs.ts";
 import { decodeJsonArguments, ensure } from "./validation.ts";
 import { saveContext, status } from "./workflow.ts";
@@ -29,7 +29,7 @@ import { saveContext, status } from "./workflow.ts";
  * name the WAICC CLI instead (`waicc develop <session>`, typed by the human).
  */
 export const coordinatorSpecs: ToolSpec[] = [
-  askAdvisorSpec, checkpointSpec, contextSpec, statusSpec, prepareSpec, assessSpec, learnPatternSpec, applyPolicySpec, requestSpec, memorySpec,
+  askAdvisorSpec, checkpointSpec, contextSpec, statusSpec, prepareSpec, assessSpec, learnPatternSpec, applyPolicySpec, requestPathsSpec, requestSpec, memorySpec,
   reportBugsSpec,
 ];
 
@@ -104,6 +104,11 @@ export function coordinatorToolset(cwd: string, services: { runAgent?: AgentRunn
         const params = args as unknown as ApplyPolicyParams;
         session(params.sessionId);
         return told(applyPolicy(cwd, params));
+      }
+      case "waicc_request_paths": {
+        const params = args as unknown as RequestPathsParams;
+        session(params.sessionId);
+        return told(askForPaths(cwd, params));
       }
       case "waicc_learn_pattern":
         return told(proposeLesson(cwd, args as unknown as LearnPatternParams));

@@ -27,6 +27,11 @@ The tools reject these, so get them right the first time:
 - A revised contract keeps every requirement's ID and quote and every decision's ID and question
   word for word (leaving `requirements` or `decisions` out keeps them all unchanged); only a
   decision's answer, status and evidence change.
+- While coding or fixing review findings, a change that needs files outside its task's
+  `allowedPaths` asks for them with `waicc_request_paths` (task, paths, reason, finding IDs), all
+  at once: it keeps the accepted plan, so no contract revision or planning round, and the human
+  approves with `/waicc-develop`. Edit nothing until then. New requirements or tasks still need a
+  revision.
 - A reply without findings takes `dispositions: []`. Dispositions name that reply's own finding
   IDs, and assessing it ready or planned needs one for each of its non-info findings.
 - A lesson (`waicc_learn_pattern`, memory) is at most 600 characters: one rule and its reason.

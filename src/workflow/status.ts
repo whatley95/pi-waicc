@@ -9,6 +9,7 @@ import { acceptedFindings, acceptedPlanCurrent, authorizationState, budgetWarnin
 import { ensure } from "../validation.ts";
 import type { Session, RoundPhase } from "../types.ts";
 import { requireOpen, approvalIsCurrent, contract, skillFiles } from "./shared.ts";
+import { pathRequestText } from "./sessions.ts";
 import { resolveDispatch } from "../profiles.ts";
 
 /** Session status and lists, handoff export and round limits. */
@@ -81,6 +82,7 @@ export function status(
   const currentContract = s.contractVersion ? contract(root, s).contract : null;
   const authorization = authorizationState(s, currentContract);
   const planAccepted = acceptedPlanCurrent(root, s);
+  const pathRequest = s.pathRequest?.contractVersion === s.contractVersion ? s.pathRequest : null;
   const gates = currentContract ? decisionSummary(currentContract) : null;
   const staleApproval =
     ["READY_TO_CLOSE", "SPEC_APPROVED"].includes(s.status) &&
@@ -112,6 +114,7 @@ export function status(
     codeReview: reviewState(s, "code", currentSource),
     implementationAuthorized: authorization.authorized,
     implementationAuthorization: authorization,
+    pathRequest,
     executionReady: authorization.authorized && gates?.openGates === 0 && planAccepted,
     openGates: gates?.openGates ?? 0,
     progress: progressState(root, s, currentContract, currentSource),
@@ -253,6 +256,8 @@ export function status(
           ? "The passing review is stale. Request a fresh full-contract review before closing."
           : s.status === "SPEC_APPROVED"
             ? "Specification PASS is not code completion or permission to build. Use /waicc-develop to accept this plan and authorize same-session development (main by default); inspect /waicc-decisions for gates. Planning-only work may instead be explicitly closed."
+          : pathRequest && !authorization.authorized && !r
+            ? `The main agent asked for more files: ${pathRequestText(pathRequest)}. The plan is otherwise unchanged. The human approves them with /waicc-develop, which authorizes development again; until then nothing is edited.`
           : s.objective === "development" && !authorization.authorized && !r
             ? `${authorization.reason} Reconcile/accept amended requirements or the current plan first where needed; do not edit code or create another implementation handoff until authorized.`
           : ["READY_TO_IMPLEMENT", "IMPLEMENTATION_GATED"].includes(s.status)
@@ -281,7 +286,7 @@ export function status(
                           ? "The reviewed artifact is ready for its next human-chosen handoff; delivery remains unverified."
                           : (last?.review?.kind === "code" || last?.wholeWork) &&
                             ["NEEDS_CHANGES", "BLOCKED"].includes(s.status)
-                            ? "The main agent must address ALL code-review findings, implementation gaps or test failures (or delegate one complete fix cycle if implementationOwner is delegate). Finish all planned work/checks before one fresh whole-change review. No per-finding/task/batch handoffs. Preserve genuine blockers."
+                            ? "The main agent must address ALL code-review findings, implementation gaps or test failures (or delegate one complete fix cycle if implementationOwner is delegate). A fix that needs files outside its task's allowedPaths asks for them with waicc_request_paths (the human approves with /waicc-develop), not a contract revision. Finish all planned work/checks before one fresh whole-change review. No per-finding/task/batch handoffs. Preserve genuine blockers."
                             : s.rounds.at(-1)?.mode === "advisor"
                               ? "Resolve the advice blocker or ask /waicc-advisor with a clarified question. Contract changes require a separate explicit human decision."
                               : "Resolve the reported blocker or issue a fresh request.",

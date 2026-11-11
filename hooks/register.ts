@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from "claude-code";
 import { statusTable } from "../src/status-table.ts";
 import { autoPlanningInstructions } from "../src/auto-planning-text.ts";
 import { compactionInstructions } from "../src/compaction-text.ts";
+import { nudgeText, pathsPauseText } from "../src/loop-text.ts";
 import { startPlanningSpec } from "../src/tool-specs.ts";
 import {
   dispatchArgs, humanOnlyCommand, loopPrompt, offeredCommand, sessionArgs, slashCommands, slashFor, statusLine, suggestSpec, waiccSection,
@@ -270,9 +271,21 @@ async function afterLoopTurn($: EngineInterface): Promise<void> {
     return;
   }
   const current = await bound($);
-  return current?.status === "READY_TO_CLOSE"
-    ? stopLoop($, `Review loop finished in ${looping.cycle} cycle${looping.cycle > 1 ? "s" : ""}: the review passed. /waicc-close <reason> closes the session when you are ready.`, id, false)
-    : stopLoop($, `Review loop stopped after cycle ${looping.cycle}: the main agent asked for no fresh review, so something needs you.`, id);
+  if (current?.status === "READY_TO_CLOSE")
+    return stopLoop($, `Review loop finished in ${looping.cycle} cycle${looping.cycle > 1 ? "s" : ""}: the review passed. /waicc-close <reason> closes the session when you are ready.`, id, false);
+  let view: any = null;
+  try {
+    view = await waicc($, ["status", id]);
+  } catch { /* without it, the loop stops as before */ }
+  if (view?.pathRequest) return stopLoop($, pathsPauseText("Review loop", looping.cycle, looping.max, view.pathRequest), id);
+  // A turn can end before the fixes are done with nothing to ask you (a command timed out, say).
+  // Once a cycle, the agent is told to go on before you are told something needs you.
+  if (looping.nudged !== looping.cycle && view?.status === "NEEDS_CHANGES" && view.implementationAuthorized && !view.openGates && view.lastAssessment?.reviewKind === "code") {
+    await update($, loop, () => ({ ...looping, nudged: looping.cycle }));
+    await $.prompt.submit({ text: nudgeText(looping.cycle, looping.max) });
+    return;
+  }
+  return stopLoop($, `Review loop stopped after cycle ${looping.cycle}: the main agent asked for no fresh review, so something needs you.`, id);
 }
 
 /** The picker: the commands the main agent offered, for the human to pick once its turn is over. */

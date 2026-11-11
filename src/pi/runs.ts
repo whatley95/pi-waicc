@@ -12,9 +12,10 @@ import { elapsed, spinner, type ProgressEvent } from "../progress.ts";
 import { showWorking } from "./working-row.ts";
 import { projectRoot, snapshot } from "../source.ts";
 import { beginDevelopment, readContract, ingest, reopenSession, status } from "../workflow.ts";
+import { nudgeText, pathsPauseText } from "../loop-text.ts";
 import { ensure } from "../validation.ts";
 import type { Session } from "../types.ts";
-import { authorizationState } from "../state.ts";
+import { authorizationState, decisionSummary } from "../state.ts";
 import { developInstruction } from "./shared.ts";
 import { shipSession } from "./ship.ts";
 import { reportRun } from "../queue.ts";
@@ -38,7 +39,10 @@ export type Loop = {
   limited?: string[];
   /** --ship: when the code review passes, ship the change (commit, push, merge request, close). */
   ship?: boolean;
+  /** The cycle in which the main agent was told once to go on after a turn that requested nothing. */
+  nudged?: number;
 };
+
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -134,7 +138,7 @@ export function createRuns(app: Core) {
     ? `AUTOMATIC RUN, review ${loop.reviews} of ${loop.reviewMax ?? loop.max}, started by the human with /waicc-dispatch --code-with. After assessing: if the review found actionable defects inside the authorized scope, do NOT fix them yourself. Request ONE implementation handoff with waicc_request that covers ALL of them: WAICC sends it to ${coder(loop)}, and after its fixes you request a fresh whole-change review. If any finding needs a human decision, is disputed, out of scope or blocked, request nothing: explain what the human must decide and stop. If the review passed, stop. Never close the contract, commit, push or deploy.`
     : loop.mode === "planning"
     ? `AUTOMATIC PLANNING LOOP, cycle ${loop.cycle} of ${loop.max}, started by the human with /waicc-dispatch --loop${loop.develop ? " --develop" : ""}. Assess the plan against the source. If it is acceptable, accept it with decision planned${loop.develop ? "; development is then authorized automatically, as the human asked" : ""}. If the planner can fix what is missing or wrong (investigation, tasks, acceptance criteria, evidence), use decision followup with a rationale that says exactly what the next planning round must address: WAICC sends it to the planner automatically. If something only the human can decide blocks the plan, record it as a decision, explain what they must decide and stop. Do not implement anything.`
-    : `AUTOMATIC REVIEW LOOP, cycle ${loop.cycle} of ${loop.max}, started by the human with /waicc-dispatch --loop. After assessing: if the review found actionable defects inside the authorized scope, fix ALL of them, run the relevant checks, then in this same turn request ONE fresh whole-change code review with waicc_request (mode review, reviewKind code, complete completion evidence). WAICC dispatches it automatically. If any finding needs a human decision, is disputed, is out of scope or blocked, or authorization is missing, do NOT request a review: explain what the human must decide and stop. If the review passed, stop. Never close the contract, commit, push or deploy.`;
+    : `AUTOMATIC REVIEW LOOP, cycle ${loop.cycle} of ${loop.max}, started by the human with /waicc-dispatch --loop. After assessing: if the review found actionable defects inside the authorized scope, fix ALL of them, run the relevant checks, then in this same turn request ONE fresh whole-change code review with waicc_request (mode review, reviewKind code, complete completion evidence). WAICC dispatches it automatically. If a fix needs files outside its task's allowed paths, ask for them all with waicc_request_paths, offer /waicc-develop and stop. If any finding needs a human decision, is disputed, is out of scope or blocked, or authorization is missing, do NOT request a review: explain what the human must decide and stop. If the review passed, stop. Never close the contract, commit, push or deploy.`;
   /** Every finding description in a review reply, order-free: the same set means no progress. */
   const findingsOf = (root: string, sessionId: string, requestId: string): string | null => {
     try {
@@ -309,6 +313,16 @@ export function createRuns(app: Core) {
       return null;
     }
   }
+  /** A code review asked for changes and nothing stands in the way of making them: no gate, no lost grant. */
+  function stillFixing(ctx: ExtensionContext, s: Session): boolean {
+    if (s.status !== "NEEDS_CHANGES" || s.rounds.at(-1)?.review?.kind !== "code") return false;
+    try {
+      const c = readContract(ctx.cwd, s.id).contract;
+      return authorizationState(s, c).authorized && !decisionSummary(c).openGates;
+    } catch {
+      return false;
+    }
+  }
   function advanceLoop(ctx: ExtensionContext): void {
     const id = bindings.get(key(ctx))?.sessionId;
     const loop = id ? loops.get(id) : undefined;
@@ -334,8 +348,20 @@ export function createRuns(app: Core) {
       return endLoop(ctx, id, "Run finished after its one review, as you asked with --review-once. The main agent has assessed it: see its findings, then fix them or dispatch the next step yourself.");
     const next = s.rounds.find((round) => round.status === "WAITING");
     const asked = loop.mode === "planning" ? "a revised plan" : "a fresh review";
-    if (!next || next.mode !== loop.mode || next.id === loop.requestId)
+    if (!next || next.mode !== loop.mode || next.id === loop.requestId) {
+      const paths = s.pathRequest?.contractVersion === s.contractVersion ? s.pathRequest : null;
+      if (paths)
+        return endLoop(ctx, id, pathsPauseText(loopName(loop), loop.cycle, loop.max, paths), "warning");
+      // A turn can end before the fixes are done with nothing to ask you (a command timed out, say).
+      // Once a cycle, the agent is told to go on before you are told something needs you.
+      if (loop.mode === "review" && loop.nudged !== loop.cycle && stillFixing(ctx, s)) {
+        loop.nudged = loop.cycle;
+        void prompt(ctx as ExtensionCommandContext, nudgeText(loop.cycle, loop.max))
+          .catch((error) => endLoop(ctx, id, `${loopName(loop)} stopped: ${error instanceof Error ? error.message : String(error)}`, "error"));
+        return;
+      }
       return endLoop(ctx, id, `${loopName(loop)} stopped after cycle ${loop.cycle}/${loop.max}: the main agent did not ask for ${asked}, so something needs you (a decision, blocker or disputed finding). See its last message.`, "warning");
+    }
     if (loop.cycle >= loop.max)
       return endLoop(ctx, id, `${loopName(loop)} reached its limit of ${loop.max} cycles. ${loop.mode === "planning" ? "A revised planning handoff" : "A fresh review"} is waiting: dispatch it yourself if you want another round.`, "warning");
     const over = overBudget(ctx, id);

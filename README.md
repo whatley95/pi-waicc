@@ -1008,14 +1008,25 @@ back to you when:
 
 - the review **passes** (`READY_TO_CLOSE`; it never closes the contract);
 - the main agent **does not request a fresh review**, because a finding needs your decision,
-  is disputed, blocked or out of scope;
+  is disputed, blocked or out of scope. If its turn just ended early (a command timed out, say)
+  with the fixes unfinished and nothing to ask you, it is told once to go on first;
+- a fix **needs files outside the plan's allowed paths**: the main agent asks for them
+  (`waicc_request_paths`), and `/waicc-develop` approves them (see below);
 - **the same findings come back** after the fixes (the reply is still assessed, but no new
   review is sent);
 - the **cycle limit** is reached (a fresh review is left waiting for you);
 - the reviewer submits **no reply**, or you run `/waicc-dispatch --stop`.
 
 The main agent fixes only inside work you already authorized with `/waicc-develop`; the loop
-never starts coding by itself, and never commits, pushes or deploys. It also stays within
+never starts coding by itself, and never commits, pushes or deploys.
+
+**More files for a fix.** A fix often needs a file the plan didn't list (the logout handler
+that must call the new cleanup, say). The main agent asks for it with `waicc_request_paths`:
+the task, the paths, why, and the findings they fix. WAICC adds only those paths, in a new
+contract version that keeps the plan you accepted, and tells you what was asked; `/waicc-status`
+shows it. `/waicc-develop` approves the paths and lets the agent go on, and it names them as it
+does. There is no rewritten contract and no planning round; until you approve, development is
+paused. New requirements or tasks still go through a revised plan. It also stays within
 WAICC's own code-review round budget. Each cycle is a full review plus fixes, so watch the
 first few loops: if they keep hitting the limit, tighten the review focus or the plan.
 `--loop` needs Pi; the CLI refuses it.

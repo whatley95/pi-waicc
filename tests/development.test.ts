@@ -11,7 +11,7 @@ import { checkpointView } from "../src/checkpoint.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
 import { reviewKindLabel } from "../src/state.ts";
 import { amend, assess, beginDevelopment, cancel, closeSession, createSession, decisionsView, delegateWork, exportHandoff,
-  forceCloseSession, ingest, issue, prepare, readContract, reopenSession, resolveDecision, setRoundLimit, status } from "../src/workflow.ts";
+  forceCloseSession, ingest, issue, prepare, readContract, reopenSession, requestPaths, resolveDecision, setRoundLimit, status } from "../src/workflow.ts";
 import type { Contract, Reply, Round, Session, WorkCompletion } from "../src/types.ts";
 import { readyPlan, relativePath, text, validateContract } from "../src/validation.ts";
 import { chatJson, modelLimit, modelView } from "../src/pi/app.ts";
@@ -490,4 +490,41 @@ test("every command that shows a status view shows the table, and keeps the full
   await commands.get("waicc-decisions").handler("", ctx);
   assert.equal(sent.at(-1)!.display, true);
   assert.notEqual(sent.at(-2)!.customType, "waicc-status-table");
+});
+
+test("the main agent asks for more files and the human's /waicc-develop alone approves them, plan kept", (t) => {
+  // A review fix often needs one file more than the plan named. That took a rewritten contract, a
+  // planning round and a new /waicc-develop; now it takes a request and the human's approval.
+  const { root, s: initial } = fixture(t);
+  let s = accept(root, answer(root, initial), "planned");
+  // Before development is authorized there is no plan to widen: a revision is the way.
+  assert.throws(() => requestPaths(root, s.id, [{ taskId: "A", paths: ["auth.txt"] }], "Fix needs it"), /no current development authorization/);
+  s = beginDevelopment(root, s.id);
+  const version = s.contractVersion, accepted = s.planApproval!.requestId;
+  assert.throws(() => requestPaths(root, s.id, [{ taskId: "Z", paths: ["auth.txt"] }], "Fix needs it"), /Unknown task "Z"; the tasks are A, B/);
+  assert.throws(() => requestPaths(root, s.id, [{ taskId: "A", paths: ["app.txt"] }], "Fix needs it"), /already allow every one of those paths/);
+  assert.throws(() => requestPaths(root, s.id, [{ taskId: "A", paths: [".git/config"] }], "Fix needs it"));
+  s = requestPaths(root, s.id, [{ taskId: "a", paths: ["auth.txt", "app.txt"] }], "The logout handler must clear the cache", ["F1"]);
+  assert.equal(s.contractVersion, version + 1);
+  assert.deepEqual(readContract(root, s.id).contract.tasks[0]!.allowedPaths, ["app.txt", "auth.txt"]);
+  assert.deepEqual(readContract(root, s.id).contract.tasks[1], contract.tasks[1], "nothing else in the plan changed");
+  assert.deepEqual(s.planApproval, { ...s.planApproval!, contractVersion: version + 1, requestId: accepted }, "the accepted plan is kept");
+  // Paused until the human approves: the grant no longer matches the paths.
+  const waiting = status(root, s.id) as any;
+  assert.equal(waiting.implementationAuthorized, false);
+  assert.deepEqual(waiting.pathRequest.additions, [{ taskId: "A", paths: ["auth.txt"] }]);
+  assert.match(waiting.nextAction, /^The main agent asked for more files: A: auth\.txt\. Why: The logout handler must clear the cache \(findings F1\)\. The plan is otherwise unchanged\. The human approves them with \/waicc-develop/);
+  // Asking again before approval adds to the same request.
+  s = requestPaths(root, s.id, [{ taskId: "A", paths: ["session.txt"] }, { taskId: "B", paths: ["docs"] }], "The tests and docs cover it too", ["F2"]);
+  assert.deepEqual(s.pathRequest!.additions, [{ taskId: "A", paths: ["auth.txt", "session.txt"] }, { taskId: "B", paths: ["docs"] }]);
+  assert.deepEqual(s.pathRequest!.findingIds, ["F1", "F2"]);
+  // /waicc-develop approves them: no planning round, a new grant that names what it approved.
+  const rounds = s.rounds.length;
+  s = beginDevelopment(root, s.id);
+  assert.equal(s.rounds.length, rounds);
+  assert.equal(s.pathRequest, null);
+  assert.equal((status(root, s.id) as any).implementationAuthorized, true);
+  const grant = JSON.parse(artifact(root, s, s.implementationAuthorization!.artifactPath));
+  assert.deepEqual(grant.approvedPathRequest.additions, [{ taskId: "A", paths: ["auth.txt", "session.txt"] }, { taskId: "B", paths: ["docs"] }]);
+  assert.deepEqual(grant.allowedPaths, [{ taskId: "A", allowedPaths: ["app.txt", "auth.txt", "session.txt"] }, { taskId: "B", allowedPaths: ["other.txt", "docs"] }]);
 });

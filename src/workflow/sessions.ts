@@ -188,6 +188,12 @@ export function beginDevelopment(cwd: string, id: string, owner?: "main" | "dele
       requestId: specPass ? s.reviewApproval!.requestId : acceptedRequestId! };
     const files: Record<string, string> = {};
     grantImplementation(s, v.contract, source.fingerprint, origin, files);
+    // The paths the main agent asked for are approved with it: the grant's record names them.
+    if (s.pathRequest?.contractVersion === s.contractVersion) {
+      const record = JSON.parse(files[s.implementationAuthorization!.artifactPath]!) as object;
+      files[s.implementationAuthorization!.artifactPath] = json({ ...record, approvedPathRequest: s.pathRequest });
+    }
+    s.pathRequest = null;
     s.status = decisionSummary(v.contract).openGates ? "IMPLEMENTATION_GATED" : "READY_TO_IMPLEMENT";
     return commit(root, s, "development.authorized-by-human", files);
   });
@@ -252,6 +258,62 @@ export function resolveDecision(cwd: string, id: string, decisionId: string, ans
     return commit(root, s, by.kind === "human" ? "decision.answered-by-human" : `decision.answered-by-${by.kind}`, files);
   });
 }
+/**
+ * The main agent asks for more files in its authorized tasks. A fix often needs one more file than
+ * the plan named; that once took a rewritten contract, a planning round and a new /waicc-develop.
+ * Now a new version adds only these paths and keeps the accepted plan, so the human's
+ * /waicc-develop alone approves them. Until then development authorization is stale: nothing is
+ * edited. Asking again before that adds to the same request.
+ */
+export function requestPaths(cwd: string, id: string, additions: { taskId: string; paths: string[] }[], reason: string, findingIds: string[] = []): Session {
+  const root = projectRoot(cwd);
+  text(reason, "Reason for the paths");
+  ensure(Array.isArray(additions) && additions.length, "Name each task and the paths to add to it");
+  return withLock(root, () => {
+    const s = loadSession(root, id); requireOpen(s); noPending(s);
+    ensure(s.contractVersion > 0, "Prepare a contract first");
+    const v = contract(root, s), c = structuredClone(v.contract);
+    const pending = s.pathRequest?.contractVersion === s.contractVersion ? s.pathRequest : null;
+    ensure(authorizationState(s, c).authorized || pending,
+      "Paths are added to a plan the human authorized, and this session has no current development authorization: revise the contract as usual (waicc_assess with contract, or waicc_prepare), or have the human /waicc-develop first.");
+    ensure((s.implementationOwner ?? "main") === "main", "The implementation is delegated: the implementer's paths change with a contract revision");
+    const acceptedRequestId = acceptedPlanRequestId(root, s);
+    ensure(acceptedRequestId, "The current contract has no accepted plan to keep: revise it as usual.");
+    const added: { taskId: string; paths: string[] }[] = [];
+    for (const addition of additions) {
+      const task = c.tasks.find((t) => t.id.toLowerCase() === String(addition?.taskId ?? "").toLowerCase());
+      ensure(task, `Unknown task ${JSON.stringify(addition?.taskId)}; the tasks are ${c.tasks.map((t) => t.id).join(", ")}`);
+      ensure(Array.isArray(addition.paths) && addition.paths.length, `Name the paths to add to ${task.id}`);
+      const fresh = [...new Set(addition.paths.map((path) => String(path).trim().replace(/\\/g, "/").replace(/\/+$/, "")))]
+        .filter((path) => !task.allowedPaths.some((scope) => path === scope || path.startsWith(`${scope}/`)));
+      task.allowedPaths.push(...fresh);
+      if (fresh.length) added.push({ taskId: task.id, paths: fresh });
+    }
+    ensure(added.length, "Those tasks already allow every one of those paths: nothing needs approving.");
+    validateContract(c, requirementsText(s));
+    added.flatMap((a) => a.paths).forEach((path) => safePath(root, path));
+    const previousVersion = s.contractVersion;
+    s.contractVersion++;
+    // The plan the human accepted stands: only the paths changed, and the human approves them.
+    s.planApproval = { contractVersion: s.contractVersion, requirementsDigest: digest(requirementsText(s)), requestId: acceptedRequestId };
+    resetReview(s);
+    const merged = [...(pending?.additions ?? [])];
+    for (const a of added) {
+      const same = merged.find((m) => m.taskId === a.taskId);
+      if (same) same.paths = [...same.paths, ...a.paths];
+      else merged.push(a);
+    }
+    const recordId = randomUUID(), artifactPath = `paths/${recordId}.json`;
+    s.pathRequest = { id: recordId, contractVersion: s.contractVersion, additions: merged, reason: reason.trim(),
+      findingIds: [...new Set([...(pending?.findingIds ?? []), ...findingIds.map(String)])], requestedAt: now(), artifactPath };
+    s.status = "PLAN_READY";
+    const files = contractFiles(s, c);
+    files[artifactPath] = json({ ...s.pathRequest, previousVersion, requestedBy: "main-agent", added, approval: "pending: the human's /waicc-develop" });
+    return commit(root, s, "paths.requested", files);
+  });
+}
+export { pathRequestText } from "../loop-text.ts";
+
 /** Explicit human command selects delegation; subsequent agent requests honor that choice. */
 export function delegateWork(cwd: string, id: string, mode: "implementation" | "testing", focus: string): Session {
   const root = projectRoot(cwd);

@@ -8,7 +8,7 @@ import waicc from "../src/index.ts";
 import { loadSession } from "../src/files.ts";
 import type { AgentRunner } from "../src/dispatch.ts";
 import { receiveHandoff, submitRecipientReply } from "../src/recipient.ts";
-import { assess, beginDevelopment, createSession, delegateWork, ingest, issue, prepare } from "../src/workflow.ts";
+import { assess, beginDevelopment, createSession, delegateWork, ingest, issue, prepare, readContract, requestPaths } from "../src/workflow.ts";
 import type { Contract, WorkCompletion } from "../src/types.ts";
 
 const scope: Contract = {
@@ -168,8 +168,29 @@ test("the loop stops when the same findings return, when no fresh review is requ
   await b.turnEnds(); // Another turn ended before the assessment ran: keep waiting.
   assert.equal(b.loopMessages().length, 0);
   assess(stalled.root, stalled.id, { requestId: loadSession(stalled.root, stalled.id).rounds.at(-1)!.id, decision: "needs_changes", rationale: "F1 needs the human", dispositions: [] });
+  // A turn that ended with nothing requested and nothing gating the fixes: told once to go on.
+  await b.turnEnds();
+  await waitFor(() => b.prompts.length === 2, "the nudge");
+  assert.match(b.prompts[1]!, /The review loop \(cycle 1 of 3\) is waiting for your fresh code review, but your last turn ended without requesting it/);
+  assert.equal(b.loopMessages().length, 0);
+  // Still nothing: now something needs the human.
   await b.turnEnds();
   assert.match(b.loopMessages().at(-1)!, /did not ask for a fresh review, so something needs you/);
+  assert.equal(b.prompts.length, 2, "told to go on only once a cycle");
+
+  // A fix that needs more files pauses the loop for /waicc-develop, saying which and why.
+  const widened = reviewWaiting(t);
+  const w = harness(widened.root, [answer([{ id: "F1", description: "Logout never clears the cache" }])]);
+  await w.use(widened.id);
+  await w.dispatch("--via codex --loop");
+  await waitFor(() => w.prompts.length === 1, "assessment");
+  const reviewed = loadSession(widened.root, widened.id);
+  assess(widened.root, widened.id, { requestId: reviewed.rounds.at(-1)!.id, decision: "needs_changes", rationale: "F1 is real", dispositions: [] });
+  const task = readContract(widened.root, widened.id).contract.tasks[0]!.id;
+  requestPaths(widened.root, widened.id, [{ taskId: task, paths: ["logout.ts"] }], "F1's fix is in the logout handler", ["F1"]);
+  await w.turnEnds();
+  assert.match(w.loopMessages().at(-1)!, new RegExp(`paused after cycle 1/3: the main agent asks to change more files\\. ${task}: logout\\.ts\\. Why: F1's fix is in the logout handler \\(findings F1\\)\\. /waicc-develop approves them`));
+  assert.equal(w.prompts.length, 1, "no nudge while the human's approval is pending");
 
   const capped = reviewWaiting(t);
   const c = harness(capped.root, [answer([{ id: "F1", description: "Missing account check" }])]);

@@ -150,7 +150,7 @@ test("everything the mod loads runs without Node: it imports only the engine's t
   };
   visit(resolve("hooks/register.ts"));
   assert.deepEqual(problems, []);
-  assert.deepEqual([...seen].map((file) => basename(file)).sort(), ["auto-planning-text.ts", "commands.ts", "compaction-text.ts", "hunt-text.ts", "register.ts", "status-table.ts", "tool-specs.ts"]);
+  assert.deepEqual([...seen].map((file) => basename(file)).sort(), ["auto-planning-text.ts", "commands.ts", "compaction-text.ts", "hunt-text.ts", "loop-text.ts", "register.ts", "status-table.ts", "tool-specs.ts"]);
   assert.deepEqual(JSON.parse(readFileSync(resolve("hooks/hooks.json"), "utf8")), { modules: ["./register.ts"] });
 });
 
