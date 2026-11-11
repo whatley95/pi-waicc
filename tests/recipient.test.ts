@@ -29,6 +29,8 @@ import {
   receiveHandoff,
   recipientAssignment,
   submitRecipientReply,
+  briefData,
+  briefLimit,
 } from "../src/recipient.ts";
 import {
   amend,
@@ -669,9 +671,10 @@ test("--main returns work to the owner without another handoff and large recipie
   await h.call("waicc_context", { sessionId: id, summary: context }, h.ctx("owner"));
   await h.commands.get("waicc-help-develop")!.handler("", h.ctx("owner"));
   await h.commands.get("waicc-receive")!.handler(`${id} --implement`, h.ctx("worker"));
-  assert.ok(h.prompts.at(-1)!.length < 32_000);
+  // One brief, bounded: past its limit a section becomes the file it came from.
+  assert.ok(h.prompts.at(-1)!.length < briefLimit + 15_000);
   const a = receiveHandoff(root, id, true);
-  const delivered = JSON.parse(h.prompts.at(-1)!.split("Assignment (data):\n")[1]);
+  const delivered = briefData(h.prompts.at(-1)!);
   assert.equal(delivered.inputs.context, a.inputs.context);
   assert.equal(a.context.coordinatorContext.summary, context);
   assert.ok(existsSync(a.inputs.context!));

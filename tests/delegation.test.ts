@@ -7,7 +7,7 @@ import { basename, join, resolve } from "node:path";
 import { artifact, json, loadSession, sessionRelative } from "../src/files.ts";
 import { checkCommand, runRecipientCheck } from "../src/checks.ts";
 import { curate, propose } from "../src/memory.ts";
-import { assertRecipientEdit, receiveHandoff, recipientAssignment, submitRecipientReply } from "../src/recipient.ts";
+import { assertRecipientEdit, assignmentText, briefData, briefLimit, receiveHandoff, recipientAssignment, submitRecipientReply } from "../src/recipient.ts";
 import { roundDirectory } from "../src/render.ts";
 import { snapshot } from "../src/source.ts";
 import { amend, assess, cancel, closeSession, createSession, delegateWork, exportHandoff, forceCloseSession, ingest, issue, prepare, saveContext, status, useMainWork } from "../src/workflow.ts";
@@ -284,4 +284,53 @@ test("CLI supports delegated planning, implementation and optional testing with 
   const testing = run("test", s.id);
   assert.equal(testing.rounds.at(-1).mode, "testing");
   assert.equal(testing.testingOwner, "delegate");
+});
+
+test("one brief holds the handoff's instructions and every input a recipient starts from", (t) => {
+  const { root, s: first } = fixture(t);
+  // A planning round assessed needs_changes, then a fresh one: the brief carries what the coordinator said.
+  let s = decide(root, answer(root, first, { outcome: "needs_changes", findings: [{ id: "F1", severity: "medium", description: "AC1 misses the empty query", evidence: "source.txt:1" }] }), "needs_changes");
+  s = issue(root, s.id, "planning", "Address the empty query");
+  const a = receiveHandoff(root, s.id);
+  const brief = assignmentText(a);
+  assert.ok(brief.includes(a.handoff.trim()), "the handoff's instructions word for word");
+  assert.ok(brief.includes("Add account search"), "the original request");
+  assert.ok(brief.includes(JSON.stringify(a.contract.contract)), "the exact contract");
+  assert.ok(brief.includes(JSON.stringify(a.replyTemplate)), "the reply template");
+  assert.match(brief, /## Saved coordinator context\n\n[^]*Keep existing API shape/);
+  assert.match(brief, /## Latest assessment \(request [^)]+, planning\)\n\n```json\n\{"decision":"needs_changes","rationale":"Source and evidence independently checked"[^]*"id":"F1","severity":"medium"/);
+  assert.match(brief, /## Open only when needed\n\n- Every earlier round in full/);
+  assert.ok(brief.includes(a.inputs.conversation!), "the full history stays one file away");
+  assert.match(brief, /you need not open HANDOFF\.md, STARTER\.txt, request\.json or the contract file/);
+  assert.equal(briefData(brief).pin.requestId, a.pin.requestId);
+  assert.ok(brief.length <= briefLimit);
+});
+
+test("a brief past its limit names the files it leaves out, never the instructions or the request", (t) => {
+  const { root, s } = fixture(t);
+  const a = receiveHandoff(root, s.id);
+  const huge = { ...a, contract: { ...a.contract, contract: { ...a.contract.contract, assumptions: ["x".repeat(briefLimit)] } } };
+  const brief = assignmentText(huge);
+  assert.ok(brief.length <= briefLimit, `${brief.length} characters`);
+  assert.ok(brief.includes(a.handoff.trim()));
+  assert.ok(brief.includes("Add account search"));
+  assert.ok(brief.includes(JSON.stringify(a.replyTemplate)), "the reply template always stays");
+  assert.match(brief, /## Saved coordinator context\n\n[^]*Keep existing API shape/, "only the contract had to give way");
+  assert.match(brief, new RegExp(`## Contract v1\\n\\nRead ${a.inputs.contract!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(left out of this brief to keep it whole\\)\\.`));
+});
+
+test("the saved history keeps the latest proposal whole and names where each earlier one is", (t) => {
+  const { root, s: first } = fixture(t);
+  const proposal = (risk: string) => ({ ...contract, risks: [risk] });
+  let s = decide(root, answer(root, first, { outcome: "needs_changes", proposedContract: proposal("First proposal") }), "needs_changes");
+  s = issue(root, s.id, "planning", "Again");
+  s = decide(root, answer(root, s, { outcome: "needs_changes", proposedContract: proposal("Second proposal") }), "needs_changes");
+  s = issue(root, s.id, "planning", "Once more");
+  const history = receiveHandoff(root, s.id).conversation as { requestId: string; proposedContract: any }[];
+  assert.deepEqual(history.at(-1)!.proposedContract, proposal("Second proposal"));
+  assert.deepEqual(history.at(-2)!.proposedContract, {
+    superseded: `A later round proposed again; this proposal is whole in rounds/${history.at(-2)!.requestId}/received.json.`, title: "Account search", tasks: 1,
+  });
+  // The original is still there, whole.
+  assert.deepEqual(JSON.parse(artifact(root, loadSession(root, s.id), `rounds/${history.at(-2)!.requestId}/received.json`)).proposedContract, proposal("First proposal"));
 });

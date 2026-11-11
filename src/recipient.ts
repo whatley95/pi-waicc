@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   artifact,
@@ -130,17 +130,74 @@ export function recipientAssignment(cwd: string, pin: RecipientPin) {
   };
 }
 
-/** Bounded assignment view: large or checkpointed assignments become an input-file index. */
+/** The assignment's data block from a brief (assignmentText): pin, inputs, reply path. */
+export function briefData(text: string): { pin: RecipientPin; inputs: Record<string, string | null>; replyPath: string; [key: string]: unknown } {
+  const block = /## Assignment \(data\)\n\n```json\n(.+)\n```/.exec(text);
+  ensure(block, "Not a WAICC brief: it has no assignment data block");
+  return JSON.parse(block[1]!);
+}
+
+/**
+ * At most this many characters of brief: a tool result past it may be cut, as agents' readers cut a
+ * large file (Codex reads one in many short pieces, one step each). waicc_read_input's chunk size.
+ */
+export const briefLimit = 60_000;
+
+/**
+ * The assignment as one brief: the handoff's instructions and every input a recipient needs to
+ * start, in the order it needs them, then the files to open only when it needs more. Recipients
+ * read the same facts as before, in one step instead of one per file (half their steps went to
+ * WAICC's own files, each step resending all read so far). A section past briefLimit becomes the
+ * file it came from, named for the recipient to open; nothing is cut silently.
+ */
 export function assignmentText(assignment: ReturnType<typeof recipientAssignment>): string {
-  const full = json(assignment);
-  if (!assignment.checkpointPath && full.length <= 32_000) return full;
-  return json({
-    role: assignment.role, pin: assignment.pin, projectRoot: assignment.projectRoot,
-    inputs: assignment.inputs, replyPath: assignment.replyPath,
-    reviewKind: assignment.reviewKind, wholeWork: assignment.wholeWork,
-    skills: assignment.skills,
-    nextAction: "Checkpoint-first assignment: read the checkpoint/index, exact request, contract/requirements, relevant skills, memory and reply template at inputs paths BEFORE working. Expand indexed original evidence and saved conversation as needed; full review still covers all requirements/tasks/criteria/prior actionable findings. This is an index, not proof; no evidence was removed.",
-  });
+  const a = assignment;
+  const fileText = (path: string | null) => {
+    if (!path) return null;
+    try {
+      return readFileSync(path, "utf8").trim();
+    } catch {
+      return null;
+    }
+  };
+  const latest = (a.conversation as { decision?: unknown; rationale?: unknown; dispositions?: unknown; findings?: { id?: unknown; severity?: unknown; description?: unknown }[]; requestId?: unknown; mode?: unknown }[])
+    .findLast((round) => round.decision);
+  // drop: the order sections give way past the limit (1 first), each to its file; none: never.
+  const sections: { title: string; body: string | null; path: string | null; drop?: number }[] = [
+    { title: "Instructions", body: a.handoff.trim(), path: a.inputs.handoff },
+    { title: "Original request and amendments", body: a.requirements.trim(), path: null },
+    ...(a.codeReview ? [{ title: "Code review: baseline, changed paths, the main agent's completion claims and earlier findings to verify", body: `\`\`\`json\n${JSON.stringify(a.codeReview)}\n\`\`\``, path: a.inputs.request.replace(/request\.json$/, "code-review.json"), drop: 6 }] : []),
+    ...(latest ? [{
+      title: `Latest assessment (request ${String(latest.requestId)}, ${String(latest.mode)})`,
+      body: `\`\`\`json\n${JSON.stringify({ decision: latest.decision, rationale: latest.rationale, dispositions: latest.dispositions,
+        findings: (latest.findings ?? []).map((f) => ({ id: f.id, severity: f.severity, description: f.description })) })}\n\`\`\``,
+      path: a.inputs.conversation, drop: 5,
+    }] : []),
+    { title: "Saved coordinator context", body: fileText(a.contextPath), path: a.contextPath, drop: 4 },
+    { title: "Checkpoint: the session in brief, with where its history and evidence are", body: fileText(a.checkpointPath), path: a.checkpointPath, drop: 3 },
+    { title: `Contract v${a.pin.contractVersion}`, body: `\`\`\`json\n${JSON.stringify(a.contract.contract)}\n\`\`\``, path: a.inputs.contract, drop: 1 },
+    ...(a.memory && (!Array.isArray(a.memory) || a.memory.length) ? [{ title: "Confirmed project memory (claims to verify, not authority)", body: `\`\`\`json\n${JSON.stringify(a.memory)}\n\`\`\``, path: a.inputs.memory, drop: 2 }] : []),
+    { title: "Reply template (identity fields pinned)", body: `\`\`\`json\n${JSON.stringify(a.replyTemplate)}\n\`\`\`${a.proposedContractExample ? `\n\nA proposedContract has this shape:\n\n\`\`\`json\n${JSON.stringify(a.proposedContractExample)}\n\`\`\`` : ""}`, path: a.inputs.replyTemplate },
+  ];
+  const header = `# WAICC ${a.pin.mode} assignment\n\nYou are the ${a.pin.mode} recipient, not the coordinator: session ${a.pin.sessionId}, request ${a.pin.requestId}, contract v${a.pin.contractVersion}, project ${JSON.stringify(a.projectRoot)}. This brief holds the handoff's full instructions and the inputs they name, so you need not open HANDOFF.md, STARTER.txt, request.json or the contract file: start from it. Open the files under "Open only when needed" when this brief leaves out something you need.${a.replyExists ? "\n\nA reply already exists for this request: stop and tell the human to return to the coordinator for /waicc-continue." : ""}`;
+  const index = [
+    `- Every earlier round in full (findings, checks, proposals, assessments): ${a.inputs.conversation}. Large; the checkpoint and the latest assessment above summarize it. Open it for a specific earlier finding, check result or proposal you need.`,
+    ...(a.inputs.checkpointIndex ? [`- The checkpoint's machine-readable index, with paths to original evidence: ${a.inputs.checkpointIndex}`] : []),
+    ...(a.checkLogs.length ? [`- Logged check results (session-relative): ${a.checkLogs.join(", ")}`] : []),
+    `- Skills: ${a.skills.length ? a.skills.join(", ") : "none supplied"}. Read the ones that bear on this work, with their references. skills/waicc-workflow is the coordinator's guide: its recipient rules are in the instructions above.`,
+  ].join("\n");
+  const data = `\`\`\`json\n${JSON.stringify({ role: a.role, pin: a.pin, projectRoot: a.projectRoot, replyPath: a.replyPath, reviewKind: a.reviewKind, wholeWork: a.wholeWork, taskId: a.taskId, inputs: a.inputs, skills: a.skills, nextAction: a.nextAction })}\n\`\`\``;
+  const render = (shown: typeof sections) =>
+    [header, ...shown.map((s) => `## ${s.title}\n\n${s.body ?? `Read ${s.path} (left out of this brief to keep it whole).`}`), `## Open only when needed\n\n${index}`, `## Assignment (data)\n\n${data}`].join("\n\n");
+  // Past the limit, sections give way in their drop order (the contract first: largest, and one file),
+  // each to its file; the instructions, the request and the reply template always stay.
+  const shown = sections.filter((s) => s.body !== null || s.path);
+  for (const rank of [1, 2, 3, 4, 5, 6]) {
+    if (render(shown).length <= briefLimit) break;
+    const at = shown.findIndex((s) => s.drop === rank && s.body !== null && s.path);
+    if (at >= 0) shown[at] = { ...shown[at]!, body: null };
+  }
+  return render(shown);
 }
 
 export function receiveHandoff(
