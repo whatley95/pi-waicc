@@ -7,6 +7,7 @@
   "repository": "https://github.com/whatley95/pi-waicc",
   "license": "MIT",
   "keywords": ["contracts", "handoff", "review", "multi-agent"],
+  "types": "./types/index.d.ts",
   "mcpServers": {
     "waicc": {
       "command": "node",

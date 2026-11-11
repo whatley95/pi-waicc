@@ -1450,29 +1450,37 @@ Answer `y` to add the marketplace, then pick a scope. It needs Node.js 22.19 or 
 - **The `waicc` command line** on Claude Code's Bash PATH.
 - **WAICC's skills.**
 
-**Your commands:** Claude Code has no `/waicc-*` slash commands yet, so you run WAICC's human commands with `!` at the prompt. That runs them directly, without the agent:
+**Your commands:** the plugin's mod adds WAICC's slash commands. Like Pi's, they run without a model turn, and the ones that need the main agent next ask it themselves:
 
-```
-! waicc start "Add customer search with pagination"     # what /waicc-planning does; prints the session ID
-! waicc dispatch <session-id>                            # send the waiting handoff to its role's agent
-! waicc continue <session-id>                            # take the reply in; then ask the agent to assess it
-! waicc develop <session-id>                             # authorize coding the accepted plan
-! waicc decide <session-id> D2 <answer>
-! waicc close <session-id> "Shipped in !42"
-```
+| Command | What it does |
+|---|---|
+| `/waicc-planning <request>` | Starts a session from your words; the agent prepares the planning handoff |
+| `/waicc-use <session-id>`, `/waicc-status [all]` | Pick this chat's session; see where it stands |
+| `/waicc-dispatch [profile]` | Sends the waiting handoff to its role's agent, in the background; you're told when it ends |
+| `/waicc-handoff` | Shows and copies the handoff, to give an agent by hand |
+| `/waicc-continue` | Takes the reply in; the agent assesses it |
+| `/waicc-develop [--delegate]` | Authorizes coding the accepted plan |
+| `/waicc-review [--contract]` | The agent requests one review of all finished work |
+| `/waicc-decisions`, `/waicc-decide <id> <answer>` | The decisions, and your answer to one |
+| `/waicc-amend`, `/waicc-cancel`, `/waicc-limit`, `/waicc-close`, `/waicc-reopen`, `/waicc-memory` | As in Pi |
 
-The agent tells you each line to type, with the real session ID. It can't run them itself.
+A status line under the prompt shows this chat's session and where it stands. The agent's system prompt names the session and tells it to leave your steps to you.
+
+The agent's shell may read WAICC's state (`waicc status`) but not take your steps: a `waicc develop`, `close`, `decide` or any other step in its Bash or PowerShell calls is refused, and the agent is told which slash command you type. The guard looks only at the agent's own tool calls, so a line you run yourself with `!` (for example `! waicc errors --since 6h`) should pass; if one is ever refused, the slash command does the same.
 
 Sessions live in the project's `.pi/pi-waicc/` as with Pi, so one session can move between Pi and Claude Code. Let one main agent work on a session at a time.
+
+The mod uses Claude Code's mod API, which is early access and may change between Claude Code releases. Without it, the WAICC tools still work, and `! waicc <command> <session-id>` does what each slash command does.
 
 **Not yet:**
 
 - automatic planning from your message;
+- the command picker;
 - the bug hunt;
-- the picker and the live panels;
-- background dispatch: `waicc dispatch` runs in the foreground.
+- the review loop;
+- the live dispatch panel (the status line shows the dispatch's time instead).
 
-These need Claude Code's mod API and come in a later release; Pi has all of them today.
+Pi has all of them today.
 
 ## Contracts for complicated work
 

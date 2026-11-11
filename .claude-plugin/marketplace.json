@@ -1,6 +1,7 @@
 {
   "name": "pi-waicc",
   "owner": { "name": "Whatley" },
+  "metadata": { "description": "WAICC: contracts, agent handoffs, independent reviews and an advisor for multi-agent coding" },
   "plugins": [
     {
       "name": "waicc",
