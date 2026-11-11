@@ -14,6 +14,13 @@ pi-waicc is a Pi coding-agent extension (`src/index.ts`) plus a standalone CLI
 
 All paths are relative to the repo root. Verified on native Windows 11 with Node 22.22 (both Git Bash and PowerShell).
 
+Where the code lives: the engine is `src/*.ts` and `src/workflow/`; `src/pi/` is the Pi front end
+(commands, panels, pickers, hooks). The main agent's tools are written once for every host:
+their names, wording and plain JSON Schema arguments in `src/tool-specs.ts`, what they do in
+`src/coordinator.ts`, which returns the agent's result plus what to tell the human. `src/pi/tools.ts`
+only adds Pi's checks and drawing. Keep both shared files free of Pi and TypeBox imports
+(`tests/coordinator.test.ts` checks it), so a second host can run them with Node alone.
+
 ## Prerequisites / build
 
 Node ≥ 22.19 runs the `.ts` sources directly (type stripping), so there is no build step.

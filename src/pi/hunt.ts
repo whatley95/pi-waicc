@@ -1,5 +1,6 @@
-import { Type } from "typebox";
 import { consultSettings } from "../profiles.ts";
+import { reportBugsSpec, type ReportBugsParams } from "../tool-specs.ts";
+import { piTool } from "./shared.ts";
 import { huntLimit, huntRequirements, huntTable, listHunts, markPicked, pickBugs, pickSplitAt, reportBugs, startHunt, triageBugs } from "../hunt.ts";
 import { elapsed } from "../progress.ts";
 import { createSession } from "../workflow.ts";
@@ -17,20 +18,7 @@ export function registerHuntCommands(app: App): void {
     );
     ctx.ui.notify(`Bug hunt started over ${hunt.scope}. The main agent reads it read-only, then your advisor checks what it finds.`, "info");
   });
-  registerTool({
-    name: "waicc_report_bugs",
-    label: "Report a bug hunt's candidates",
-    description: `Coordinator only, after /waicc-bug-hunt: report the candidate bugs you found in that hunt's scope, at most ${huntLimit}, most severe first. Each needs the file, line, the exact trigger, what goes wrong and a severity. Refused if the source changed since the hunt started. The human's advisor then checks every candidate, and the triaged list is returned for the human to pick from.`,
-    parameters: Type.Object({
-      huntId: Type.String({ description: "The hunt ID from the /waicc-bug-hunt instruction" }),
-      bugs: Type.Array(Type.Object({
-        file: Type.String({ description: "Project-relative path" }),
-        line: Type.Integer({ minimum: 1 }),
-        trigger: Type.String({ description: "The exact input or state that triggers it" }),
-        wrong: Type.String({ description: "What goes wrong, against what should happen" }),
-        severity: Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")]),
-      }), { maxItems: huntLimit }),
-    }),
+  registerTool(piTool<ReportBugsParams>(reportBugsSpec, {
     async execute(_id, params, signal, update, ctx) {
       trusted(ctx);
       coordinator(ctx);
@@ -52,7 +40,7 @@ export function registerHuntCommands(app: App): void {
         details: undefined,
       };
     },
-  });
+  }));
   command("waicc-bug-pick", `Plan fixes for bugs from the last bug hunt: all (confirmed), all+plausible, or IDs such as B1 B3; above ${pickSplitAt}, splitting is suggested`, async (args, ctx) => {
     const hunt = listHunts(ctx.cwd).find((h) => h.status === "TRIAGED");
     ensure(hunt, listHunts(ctx.cwd).some((h) => h.status === "SCANNING")

@@ -13,20 +13,19 @@ import { json, listSessions, loadSession } from "../files.ts";
 import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from "../clipboard.ts";
 import type { CheckRunner } from "../checks.ts";
 import type { AgentRunner } from "../dispatch.ts";
-import { alertSettings, consultSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance, profilesBrief } from "../profiles.ts";
+import { alertSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance, profilesBrief } from "../profiles.ts";
 import { statusTable } from "./status-table.ts";
 import { buildOutdated, loadedBuild } from "../build.ts";
 import { newNeeds, projectStatus, publish, recordChat, trackerEnabled, type LiveRun, type Notice, type ProjectStatus } from "../tracker.ts";
 import { notifyDesktop } from "../alerts.ts";
-import { autoDecidable } from "../decisions.ts";
 import { elapsed, spinner, type ProgressEvent } from "../progress.ts";
 import { checkpointView } from "../checkpoint.ts";
 import { recall } from "../memory.ts";
 import { projectRoot, samePath, snapshot } from "../source.ts";
 import type { manualHandoff } from "../render.ts";
-import { resolveDecision, readContract, requirementsText, status } from "../workflow.ts";
+import { requirementsText, status } from "../workflow.ts";
+import { acceptLowRisk, agentText, refusalNudge, rereadTools, type Outcome } from "../coordinator.ts";
 import { decodeJsonArguments, ensure } from "../validation.ts";
-import type { ContractDecision } from "../types.ts";
 import { AutoPlanningRequests } from "../auto-planning.ts";
 import { type ChatBinding, compactionInstructions, recipientReads, guidance } from "./shared.ts";
 import type { Runs } from "./runs.ts";
@@ -156,17 +155,10 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   // ask the advisor: guidelines alone left agents retrying the same call many times. Rereading
   // state between two refused calls is no progress, so it does not end the streak.
   const refusals = new Map<string, number>();
-  const rereads = new Set(["waicc_status", "waicc_checkpoint"]);
-  const nth = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
   const advisorNudge = (ctx: ExtensionContext, streak: number, tool: string): string => {
-    if (streak < 2 || tool === "waicc_ask_advisor") return "";
     try {
-      const settings = consultSettings(ctx.cwd);
       const used = ctx.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "waicc-advisor-consult").length;
-      const left = settings.options ? settings.limit - used : 0;
-      return left > 0
-        ? `\n\nThis is your ${nth(streak)} refused WAICC call in a row. Do not guess again: ask the advisor now with waicc_ask_advisor. Give it this error, what you sent and what you already tried, then verify its answer against the source (${left} question${left > 1 ? "s" : ""} left in this chat).`
-        : `\n\nThis is your ${nth(streak)} refused WAICC call in a row. Do not guess again: if the error does not say exactly what to change, stop and ask the human.`;
+      return refusalNudge(ctx.cwd, streak, tool, used);
     } catch {
       return "";
     }
@@ -181,7 +173,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       let outcome = "ok";
       try {
         const done = await tool.execute(id, decoded, signal, update, ctx);
-        if (!rereads.has(tool.name)) refusals.delete(key(ctx));
+        if (!rereadTools.has(tool.name)) refusals.delete(key(ctx));
         return done;
       } catch (error) {
         outcome = signal?.aborted ? "stopped" : "error";
@@ -466,32 +458,15 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
             ).manualHandoff,
           )
         : undefined;
-    // The agent never gets the prompt itself, so it cannot paste it into the chat; the human has the clipboard and /waicc-handoff.
-    const delivery = (content as { manualHandoff?: ReturnType<typeof manualHandoff> | null } | null)?.manualHandoff;
-    const shown = delivery
-      ? { ...(content as object), manualHandoff: {
-          requestId: delivery.requestId,
-          prompt: "Not shown to you. /waicc-handoff shows and copies it for the human; show nextSteps instead.",
-          afterReply: delivery.afterReply, resumeCoordinatorCommand: delivery.resumeCoordinatorCommand, continueCommand: delivery.continueCommand,
-        } }
-      : content;
-    const serialized = json(
-      clipboard
-        ? { handoffClipboard: clipboard, ...(shown as object) }
-        : shown,
-    );
     return {
-      content: [
-        {
-          type: "text" as const,
-          text:
-            serialized.length <= 32_000
-              ? serialized
-              : `${serialized.slice(0, 32_000)}\n[Preview bounded; inspect the session files for the full artifact.]`,
-        },
-      ],
+      content: [{ type: "text" as const, text: agentText(content, clipboard ? { handoffClipboard: clipboard } : undefined) }],
       details: clipboard ? { clipboard } : {},
     };
+  }
+  /** What a shared coordinator operation says to tell the human: notices as Pi's, messages in the chat. */
+  function tell(ctx: ExtensionContext, outcome: Pick<Outcome, "notices" | "messages">): void {
+    for (const { level, text } of outcome.notices) if (ctx.hasUI) ctx.ui.notify(text, level);
+    for (const message of outcome.messages) pi.sendMessage({ customType: "waicc-auto-decisions", content: message, display: true }, { triggerTurn: false });
   }
   function command(
     name: string,
@@ -569,34 +544,9 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   }
   /** Your autoDecide setting: accept qualifying recommendations, and say so. Returns what it accepted. */
   function autoResolve(ctx: ExtensionContext, id: string): string[] {
-    let enabled = false;
-    try {
-      enabled = decisionSettings(ctx.cwd).autoDecide === "low-risk";
-    } catch {
-      return [];
-    }
-    if (!enabled) return [];
-    let decisions: ContractDecision[] = [];
-    try {
-      decisions = readContract(ctx.cwd, id).contract.decisions ?? [];
-    } catch {
-      return [];
-    }
-    const accepted: string[] = [];
-    for (const decision of decisions.filter((d) => autoDecidable(d).ok)) {
-      try {
-        resolveDecision(ctx.cwd, id, decision.id, decision.recommendation, { kind: "auto-low-risk" });
-        accepted.push(`${decision.id}: ${decision.question} → ${decision.recommendation}`);
-      } catch {
-        break; // For example a pending handoff: the next assessment tries again.
-      }
-    }
-    if (accepted.length) {
-      const message = `Accepted automatically under your autoDecide setting (low risk, reversible, nothing sensitive):\n${accepted.map((line) => `• ${line}`).join("\n")}\nReview with /waicc-decisions. Everything else still waits for you.`;
-      ctx.ui.notify(`${accepted.length} low-risk decision${accepted.length === 1 ? "" : "s"} accepted automatically.`, "info");
-      pi.sendMessage({ customType: "waicc-auto-decisions", content: message, display: true }, { triggerTurn: false });
-    }
-    return accepted;
+    const decided = acceptLowRisk(ctx.cwd, id);
+    tell(ctx, decided);
+    return decided.accepted;
   }
   /** By chat: a compaction WAICC asked Pi for, settled when Pi reports it done or failed. */
   const compactions = new Map<string, Promise<void>>();
@@ -661,7 +611,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       { deliverAs: "followUp" },
     );
   }
-  return { pi, services, bindings, copied, commands, commandDone,compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, logged, activity, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, prompt, compactions, compactChat };
+  return { pi, services, bindings, copied, commands, commandDone,compactedRuns, automaticRequests, registerTool, dispatches, advising, mainTurns, notices, trackTimers, alertDesktop, outdatedWarned, warnOutdated, chatsRecorded, recordMainAgent, doing, mark, stepLine, key, logged, activity, toLive, trackerStatus, track, notice, selected, trusted, bind, unbindSession, coordinator, recipientTools, recipientView, show, copyManual, result, command, policiesFor, autoResolve, tell, prompt, compactions, compactChat };
 }
 export type Core = ReturnType<typeof createApp>;
 export type App = Core & Runs;

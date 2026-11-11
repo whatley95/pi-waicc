@@ -5,79 +5,50 @@ import { json, loadSession } from "../files.ts";
 import { join } from "node:path";
 import { checkCommand, runRecipientCheck, type CheckRunner } from "../checks.ts";
 import { maxCheckMs, runAgent } from "../dispatch.ts";
-import { consultSettings, sandboxSettings, decisionSettings } from "../profiles.ts";
+import { sandboxSettings } from "../profiles.ts";
 import { consultAdvisor } from "../consult.ts";
-import { learnPattern, recurringFindings } from "../learning.ts";
 import { elapsed, spinner, type ProgressEvent } from "../progress.ts";
 import { checkpointView, frozenCheckpointView } from "../checkpoint.ts";
-import { propose, proposeDecision, recall } from "../memory.ts";
+import { recall } from "../memory.ts";
 import { projectRoot, snapshot } from "../source.ts";
-import { assess, decisionsView, resolveDecision, readContract, createAutoPlanningSession, issue, prepare, requirementsText, status, saveContext } from "../workflow.ts";
-import { contractSizeNote, ensure, tidyIds } from "../validation.ts";
-import type { Assessment } from "../workflow.ts";
+import { createAutoPlanningSession, decisionsView, status, saveContext } from "../workflow.ts";
+import { ensure } from "../validation.ts";
+import { adviceText, advisorContext, advisorTurn, applyPolicy, assessReply, prepareHandoff, proposeLesson, proposeMemory, requestHandoff, type Outcome } from "../coordinator.ts";
+import {
+  applyPolicySpec, askAdvisorSpec, assessSpec, checkpointSpec, contextSpec, learnPatternSpec, memorySpec, prepareSpec, requestSpec, startPlanningSpec, statusSpec,
+  type ApplyPolicyParams, type AskAdvisorParams, type AssessParams, type ContextParams, type LearnPatternParams, type MemoryParams,
+  type PrepareParams, type RequestParams, type SessionParams, type StartPlanningParams,
+} from "../tool-specs.ts";
 import { autoPlanningMode } from "../auto-planning.ts";
-import { modeSchema, sessionSchema, guidance } from "./shared.ts";
+import { guidance, piTool } from "./shared.ts";
 import { type App } from "./app.ts";
-
-/** What the agent is told when tidyIds renamed IDs in its contract. */
-const idsTidied = (renamed: [string, string][]): string =>
-  `IDs may use only letters, digits, - and _, so these were renamed everywhere in the contract; use the new IDs from now on: ${renamed.map(([from, to]) => `${JSON.stringify(from)} → ${to}`).join(", ")}`;
 
 /** The main agent's and recipients' WAICC tools. */
 export function registerTools(app: App): void {
-  const { pi, services, bindings, commands, commandDone, automaticRequests, registerTool, advising, dispatches, stepLine, key, logged, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, autoResolve } = app;
+  const { pi, services, bindings, commands, commandDone, automaticRequests, registerTool, advising, dispatches, stepLine, key, logged, toLive, track, notice, selected, trusted, bind, coordinator, recipientView, result, tell } = app;
   const consulting = new Set<string>();
-  // A new handoff that leaves 2 rounds or fewer is told to the human at once, not only to the agent.
-  const budgetNotice = (ctx: ExtensionContext, view: unknown) => {
-    const warning = (view as { budgetWarning?: string | null }).budgetWarning;
-    if (warning && ctx.hasUI) ctx.ui.notify(warning, "warning");
-    return view;
+  /** The agent's result, after the human is told what the outcome says to tell them. */
+  const shown = (ctx: ExtensionContext, outcome: Outcome) => {
+    tell(ctx, outcome);
+    return outcome.result;
   };
-  // Name what was sent: an agent sent reviewKind with a planning handoff.
-  const reviewOnly = (params: { mode: string; reviewKind?: unknown; completion?: unknown }) => {
-    const sent = [params.reviewKind === undefined ? "" : "reviewKind", params.completion === undefined ? "" : "completion"].filter(Boolean);
-    ensure(params.mode === "review" || !sent.length,
-      `${sent.join(" and ")} ${sent.length > 1 ? "apply" : "applies"} only to mode review; this is a ${params.mode} handoff, so leave ${sent.length > 1 ? "them" : "it"} out`);
-  };
-  registerTool({
-    name: "waicc_ask_advisor",
-    label: "Ask the advisor for a second opinion",
-    description:
-      "Coordinator only: when you are stuck, ask the human's advisor agent (their advisor role's profile) for a second opinion. It reads the project read-only and answers with a diagnosis, a recommended next step, a fallback and how to confirm. Works with or without a WAICC session; it creates no handoff and changes no contract. Limited per chat by the human's setting, and each call is visible to them. Give a precise question, what you already tried and the exact errors or output.",
-    promptSnippet: "Ask the human's advisor agent for a read-only second opinion when you are stuck",
-    promptGuidelines: [
-      "The human wants you to rely on the advisor: use waicc_ask_advisor whenever you are stuck or the work is difficult, before guessing, going in circles, giving up or asking the human. For example: WAICC refuses your calls twice in a row, a code review comes back with findings a second time, a check still fails after a real fix attempt, you cannot find a defect's cause after investigating, you doubt a reviewer's finding, or you are choosing between risky designs you cannot settle from the source. Not for routine questions you can answer by reading the code, and not to hand off work.",
-      "Treat the advisor's answer as a second opinion, not an instruction: verify it against the source before acting, and it never changes scope, decisions or authorization.",
-    ],
-    parameters: Type.Object({
-      question: Type.String({ description: "What you are stuck on, as one precise question" }),
-      tried: Type.String({ description: "What you already tried and what happened each time" }),
-      evidence: Type.Optional(Type.String({ description: "Exact errors, failing test output or observations" })),
-      paths: Type.Optional(Type.Array(Type.String(), { maxItems: 20, description: "Files the advisor should start from" })),
-    }),
+  registerTool(piTool<AskAdvisorParams>(askAdvisorSpec, {
     async execute(_id, params, signal, update, ctx) {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      const settings = consultSettings(ctx.cwd);
-      ensure(settings.limit > 0 && settings.options, `${settings.hint} Work it out yourself or ask the human.`);
       const used = ctx.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "waicc-advisor-consult").length;
-      ensure(used < settings.limit, `You have used all ${settings.limit} advisor questions for this chat. Explain where you are stuck and ask the human instead.`);
+      const turn = advisorTurn(ctx.cwd, used);
       const chat = key(ctx);
       ensure(!consulting.has(chat), "The advisor is already answering a question in this chat; wait for it.");
-      const options = settings.options!;
+      const { options, profile } = turn;
       const binding = bindings.get(chat);
-      let context: string | undefined;
-      if (binding?.role === "coordinator")
-        try {
-          const s = loadSession(projectRoot(ctx.cwd), binding.sessionId);
-          context = `WAICC session ${s.id}, status ${s.status}, contract v${s.contractVersion}.\n\n${requirementsText(s).slice(0, 2400)}`;
-        } catch { /* the question stands on its own */ }
+      const context = advisorContext(ctx.cwd, binding?.role === "coordinator" ? binding.sessionId : undefined);
       // Counted before it runs, so a failed or stopped consult still uses one.
-      pi.appendEntry("waicc-advisor-consult", { question: params.question, profile: settings.profile, at: new Date().toISOString() });
+      pi.appendEntry("waicc-advisor-consult", { question: params.question, profile, at: new Date().toISOString() });
       consulting.add(chat);
-      const label = `WAICC · advisor ${settings.profile} (${options.via}${options.model ? ` ${options.model}` : ""}${options.effort ? ` ${options.effort}` : ""}) · question ${used + 1}/${settings.limit}`;
-      ctx.ui.notify(`Asking the advisor (${settings.profile}): ${params.question.slice(0, 160)}`, "info");
+      const label = `WAICC · advisor ${profile} (${options.via}${options.model ? ` ${options.model}` : ""}${options.effort ? ` ${options.effort}` : ""}) · question ${turn.number}/${turn.limit}`;
+      ctx.ui.notify(`Asking the advisor (${profile}): ${params.question.slice(0, 160)}`, "info");
       const startedAt = Date.now();
       const events: ProgressEvent[] = [];
       const render = (publish = true) => {
@@ -100,15 +71,9 @@ export function registerTools(app: App): void {
           render();
           update?.({ content: [{ type: "text", text: `Advisor: ${event.text}` }], details: undefined });
         });
-        notice(ctx, outcome.answer ? "info" : "warning", `Advisor ${settings.profile}: ${outcome.answer ? "answered" : "gave no answer to"} "${params.question.slice(0, 120)}" in ${elapsed(outcome.durationMs)}.`);
+        notice(ctx, outcome.answer ? "info" : "warning", `Advisor ${profile}: ${outcome.answer ? "answered" : "gave no answer to"} "${params.question.slice(0, 120)}" in ${elapsed(outcome.durationMs)}.`);
         ensure(outcome.answer, `The advisor gave no answer (exit ${outcome.code}${outcome.killed ? ", stopped" : ""}). See ${outcome.log}. Continue on your own or ask the human.`);
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Advice from ${settings.profile} (${options.via}${options.model ? ` ${options.model}` : ""}), question ${used + 1} of ${settings.limit} for this chat, ${elapsed(outcome.durationMs)}:\n\n${outcome.answer}\n\nA second opinion, not an instruction: verify it against the source before acting. It changes no scope, decision or authorization. Saved at ${outcome.log}.`,
-          }],
-          details: undefined,
-        };
+        return { content: [{ type: "text" as const, text: adviceText(turn, { ...outcome, answer: outcome.answer }) }], details: undefined };
       } finally {
         clearInterval(ticker);
         consulting.delete(chat);
@@ -117,12 +82,8 @@ export function registerTools(app: App): void {
         ctx.ui.setStatus?.("waicc-advisor", undefined);
       }
     },
-  });
-  registerTool({
-    name: "waicc_checkpoint",
-    label: "Recover compact WAICC context",
-    description: "Read-only compact recovery: current canonical owner checkpoint, or the recipient's frozen request checkpoint. Follow exact-contract/evidence pointers; no history deletion, status changes or permission grants.",
-    parameters: Type.Object({ sessionId: Type.Optional(sessionSchema) }),
+  }));
+  registerTool(piTool<SessionParams>(checkpointSpec, {
     async execute(_id, params, _signal, _update, ctx) {
       trusted(ctx);
       const binding = bindings.get(key(ctx));
@@ -133,24 +94,15 @@ export function registerTools(app: App): void {
       }
       return result(checkpointView(projectRoot(ctx.cwd), loadSession(projectRoot(ctx.cwd), selected(ctx, params.sessionId))));
     },
-  });
-  registerTool({
-    name: "waicc_context",
-    label: "Save WAICC coordinator context",
-    description: "Coordinator: save important user context, constraints, source references and established decisions/rationale before handoff. All roles receive a frozen copy. This does not amend requirements or adopt advice. Pending handoffs must first be finished/cancelled.",
-    parameters: Type.Object({ sessionId: sessionSchema, summary: Type.String() }),
+  }));
+  registerTool(piTool<ContextParams>(contextSpec, {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx); coordinator(ctx); signal?.throwIfAborted();
       saveContext(ctx.cwd, params.sessionId, params.summary);
       return result(status(ctx.cwd, params.sessionId));
     },
-  });
-  registerTool({
-    name: "waicc_status",
-    label: "WAICC status",
-    description:
-      "Read full original requirements, contract and reply. Prefer waicc_checkpoint for compact recovery, then expand exact records as needed.",
-    parameters: Type.Object({ sessionId: Type.Optional(sessionSchema) }),
+  }));
+  registerTool(piTool<SessionParams>(statusSpec, {
     async execute(_id, params, _signal, _update, ctx) {
       const binding = bindings.get(key(ctx));
       if (binding?.role === "recipient") {
@@ -162,12 +114,8 @@ export function registerTools(app: App): void {
       }
       return result(status(ctx.cwd, selected(ctx, params.sessionId)));
     },
-  });
-  registerTool({
-    name: "waicc_start_planning",
-    label: "Start automatic WAICC planning",
-    description: "Coordinator only; auto-planning defaults on: capture the current human work request exactly in a planning-only session when tracked steps, dependencies or completion checks would keep work on track, even for small tasks. Not for trivial one-step edits, questions or skip-planning requests. Requires a live requestId from auto-planning guidance. Never launches agents, changes scope, accepts plans or authorizes coding. Existing selected sessions are returned unchanged, never replaced.",
-    parameters: Type.Object({ requestId: Type.String(), reason: Type.String({ description: "Concrete reason tracked steps/source-backed planning would help keep this work on track; complexity is not required" }) }),
+  }));
+  registerTool(piTool<StartPlanningParams>(startPlanningSpec, {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx); coordinator(ctx); signal?.throwIfAborted();
       ensure(autoPlanningMode(ctx) === "on", "Automatic planning is off. The human can /waicc-auto-planning on, or use /waicc-planning.");
@@ -186,189 +134,47 @@ export function registerTools(app: App): void {
           ? "Existing session UNCHANGED. Recover waicc_status, compare exact scope and follow its current next action. Do not amend scope, duplicate a pending handoff or replay the initial brief sequence. Unrelated/ambiguous work needs an explicit human selection/new planning command."
           : `Planning-only startup. Save important prior chat constraints/decisions/source references with waicc_context, then waicc_prepare expectedVersion 0 mode planning with a faithful requirements brief; tasks may be []. The independent planner forms the detailed source-backed plan. ${guidance}` });
     },
-  });
-  registerTool({
-    name: "waicc_prepare",
-    label: "Prepare WAICC handoff",
-    description:
-      "Save a versioned contract and planning/review handoff. Code review (default for review) requires completion evidence for ALL tasks/checks/prior findings; reviewKind contract is specification-only. Never edits application source.",
-    parameters: Type.Object({
-      sessionId: sessionSchema,
-      expectedVersion: Type.Integer({ minimum: 0 }),
-      mode: modeSchema,
-      focus: Type.String(),
-      contract: Type.Unknown(),
-      reviewKind: Type.Optional(Type.Union([Type.Literal("code"), Type.Literal("contract")])),
-      fullReview: Type.Optional(Type.Boolean({ description: "Code review only: review the whole change again instead of a follow-up review. Set it ONLY when the human asks for a full review." })),
-      completion: Type.Optional(Type.Unknown({ description: "Whole-work report: {summary,tasks:[{taskId,evidence}],checks:[{description,outcome:passed|not_run,evidence}],findings:[{requestId,findingId,disposition:resolved|disputed,evidence}]}. ALL tasks and prior actionable code findings exactly once; with none (first review), findings may be [] or left out." })),
-    }),
+  }));
+  registerTool(piTool<PrepareParams>(prepareSpec, {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      reviewOnly(params);
-      ensure(!params.fullReview || (params.mode === "review" && (params.reviewKind ?? "code") === "code"), "fullReview applies only to a code review");
-      const tidy = tidyIds(params.contract);
-      prepare(
-        ctx.cwd,
-        params.sessionId,
-        tidy.value,
-        params.mode,
-        params.focus,
-        params.expectedVersion,
-        params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
-      );
-      const view = budgetNotice(ctx, status(ctx.cwd, params.sessionId)) as object;
-      const contractSize = contractSizeNote(readContract(ctx.cwd, params.sessionId).contract);
-      return result({
-        ...(tidy.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}),
-        ...(contractSize ? { contractSize } : {}), ...view,
-      }, ctx, true);
+      return result(shown(ctx, prepareHandoff(ctx.cwd, params)), ctx, true);
     },
-  });
-  registerTool({
-    name: "waicc_assess",
-    label: "Assess WAICC reply",
-    description:
-      "Owner: validate/adopt planning with planned -> PLAN_READY; then implement ALL work if authorized. Code-review defects: needs_changes/blocked BEFORE editing, fix ALL issues, then ONE fresh whole-change review; not followup/per-task handoffs. Review ready assesses its pinned kind (code vs contract), never automatic closure or delivery certification. Advisor uses noted. Ready planning is the legacy external implementation handoff.",
-    parameters: Type.Object({
-      sessionId: sessionSchema,
-      requestId: Type.String(),
-      decision: Type.Union([
-        Type.Literal("ready"),
-        Type.Literal("planned"),
-        Type.Literal("noted"),
-        Type.Literal("followup"),
-        Type.Literal("needs_changes"),
-        Type.Literal("blocked"),
-      ]),
-      rationale: Type.String(),
-      contract: Type.Optional(Type.Unknown()),
-      dispositions: Type.Array(
-        Type.Object({
-          findingId: Type.String(),
-          disposition: Type.Union([
-            Type.Literal("resolved"),
-            Type.Literal("disputed"),
-            Type.Literal("accepted"),
-          ], { description: "resolved: fixed (say where); disputed: not a real problem (the proof); accepted: a real medium/low finding knowingly not fixed now (the reason). Code-review findings cannot be accepted." }),
-          evidence: Type.String(),
-        }),
-      ),
-    }),
+  }));
+  registerTool(piTool<AssessParams>(assessSpec, {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      // A contract adopted here is tidied as waicc_prepare tidies one.
-      const tidy = params.contract === undefined ? null : tidyIds(params.contract);
-      const assessed = assess(ctx.cwd, params.sessionId, (tidy ? { ...params, contract: tidy.value } : params) as Assessment);
-      const kept = assessed.rounds.find((round) => round.id === params.requestId)?.dispositions?.length ?? 0;
-      const dispositionsIgnored = params.dispositions.length > kept
-        ? `This reply has no findings, so your ${params.dispositions.length} finding disposition(s) (${params.dispositions.map((d) => d.findingId).join(", ")}) were left out. Next time send dispositions: [] for a reply without findings.`
-        : null;
-      const autoDecided = autoResolve(ctx, params.sessionId);
-      let recurring: ReturnType<typeof recurringFindings> = null;
-      try {
-        recurring = recurringFindings(ctx.cwd, params.sessionId, params.requestId);
-      } catch { /* learning is a bonus; the assessment stands */ }
-      const contractSize = params.contract === undefined ? null : contractSizeNote(readContract(ctx.cwd, params.sessionId).contract);
-      return result({
-        ...(tidy?.renamed.length ? { idsTidied: idsTidied(tidy.renamed) } : {}),
-        ...(dispositionsIgnored ? { dispositionsIgnored } : {}), ...(contractSize ? { contractSize } : {}),
-        ...(autoDecided.length ? { autoDecided } : {}), ...(recurring ? { recurringFindings: recurring } : {}), ...(status(ctx.cwd, params.sessionId) as object),
-      }, ctx, true);
+      return result(shown(ctx, assessReply(ctx.cwd, params)), ctx, true);
     },
-  });
-  registerTool({
-    name: "waicc_learn_pattern",
-    label: "Propose a lesson from findings that recur across sessions",
-    description:
-      "Coordinator only: when review findings in two or more sessions of this project are the same kind of problem, propose one lesson for future plans. Cite the findings (sessionId, requestId, findingId) from waicc_assess's recurringFindings. WAICC checks each is an assessed, undisputed review finding and that no other lesson uses it. When an existing lesson already covers the pattern, pass its lessonId and only the new findings: that adds support instead of a second lesson. A lesson stays a candidate until the human confirms it with /waicc-memory confirm, or until findings from 3 sessions back it if the human turned on their corroboration rule; once confirmed it reaches every planning handoff.",
-    parameters: Type.Object({
-      lesson: Type.Optional(Type.String({ description: "Advice for future plans: what to plan or check up front, at most 600 characters (not needed with lessonId)" })),
-      findings: Type.Array(Type.Object({ sessionId: Type.String(), requestId: Type.String(), findingId: Type.String() }), { minItems: 1, maxItems: 10 }),
-      lessonId: Type.Optional(Type.String({ description: "An existing lesson that already covers this pattern: the findings are added to it as more support" })),
-    }),
+  }));
+  registerTool(piTool<LearnPatternParams>(learnPatternSpec, {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      const entry = learnPattern(ctx.cwd, params.lesson, params.findings, params.lessonId);
-      ctx.ui.notify(params.lessonId
-        ? `Lesson strengthened by recurring review findings: ${entry.text.slice(0, 160)} (${entry.source})`
-        : `Lesson candidate from recurring review findings: ${entry.text.slice(0, 160)} (/waicc-memory to confirm)`, "info");
-      return result({
-        proposed: entry,
-        nextAction: "Tell the human you proposed this lesson and why. It is a candidate only: they review it with /waicc-memory and confirm it with /waicc-memory confirm. Never confirm it yourself.",
-      });
+      return result(shown(ctx, proposeLesson(ctx.cwd, params)));
     },
-  });
-  registerTool({
-    name: "waicc_apply_policy",
-    label: "Answer a decision by the human's standing policy",
-    description:
-      "Coordinator only: record the answer to an OPEN human-owned decision that one of the human's standing policies (listed in your instructions) clearly and fully answers. Cite the policy by number; the answer must follow the policy exactly; explain why it applies. Never for external or agent-owned decisions, and never stretched beyond what the policy says: if it only partly fits, ask the human. The answer is announced to the human.",
-    parameters: Type.Object({
-      sessionId: sessionSchema,
-      decisionId: Type.String(),
-      policy: Type.Integer({ minimum: 1, description: "Policy number, as listed" }),
-      answer: Type.String(),
-      rationale: Type.String({ description: "Why this policy answers this decision" }),
-    }),
+  }));
+  registerTool(piTool<ApplyPolicyParams>(applyPolicySpec, {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      const { policies } = decisionSettings(ctx.cwd);
-      const policy = policies[params.policy - 1];
-      ensure(policy, policies.length ? `There is no policy ${params.policy}; the human has ${policies.length}.` : "The human has no standing policies; ask them to decide.");
-      const decision = (readContract(ctx.cwd, params.sessionId).contract.decisions ?? []).find((d) => d.id.toLowerCase() === params.decisionId.toLowerCase());
-      ensure(decision && decision.status !== "resolved", `No open decision ${JSON.stringify(params.decisionId)}.`);
-      ensure(decision.owner === "human", decision.owner === "external"
-        ? "External decisions need the person who owns them; a policy cannot answer them."
-        : "Agent-owned decisions are resolved by investigation, not by policies.");
-      ensure(params.answer.trim() && params.rationale.trim(), "Give the answer and why the policy applies");
-      resolveDecision(ctx.cwd, params.sessionId, decision.id, params.answer.trim(), { kind: "policy", policy, rationale: params.rationale.trim() });
-      const message = `${decision.id} answered by your policy ${params.policy} ("${policy}"): ${params.answer.trim()}\nWhy: ${params.rationale.trim()}\nReview with /waicc-decisions.`;
-      ctx.ui.notify(`${decision.id} answered by your standing policy ${params.policy}.`, "info");
-      pi.sendMessage({ customType: "waicc-auto-decisions", content: message, display: true }, { triggerTurn: false });
-      return result({ ...decisionsView(ctx.cwd, params.sessionId), session: status(ctx.cwd, params.sessionId) });
+      return result(shown(ctx, applyPolicy(ctx.cwd, params)));
     },
-  });
-  registerTool({
-    name: "waicc_request",
-    label: "WAICC follow-up",
-    description:
-      "Issue a request without revising scope. Review defaults to code with completion evidence for ALL work/prior findings; no task/batch reviews. Contract-only review is explicit. Implementation/testing require the human's saved delegation choice and accepted current plan. Advisor requirementIds default [] (question only).",
-    parameters: Type.Object({
-      sessionId: sessionSchema,
-      mode: Type.Union([modeSchema, Type.Literal("advisor"), Type.Literal("implementation"), Type.Literal("testing")]),
-      focus: Type.String(),
-      taskId: Type.Optional(Type.String()),
-      requirementIds: Type.Optional(Type.Array(Type.String())),
-      reviewKind: Type.Optional(Type.Union([Type.Literal("code"), Type.Literal("contract")])),
-      fullReview: Type.Optional(Type.Boolean({ description: "Code review only: review the whole change again instead of a follow-up review. Set it ONLY when the human asks for a full review." })),
-      completion: Type.Optional(Type.Unknown({ description: "{summary,tasks:[{taskId,evidence}],checks:[{description,outcome:passed|not_run,evidence}],findings:[{requestId,findingId,disposition:resolved|disputed,evidence}]}; every task and previous actionable code-review finding exactly once." })),
-    }),
+  }));
+  registerTool(piTool<RequestParams>(requestSpec, {
     async execute(_id, params, signal, _update, ctx) {
       trusted(ctx);
       coordinator(ctx);
       signal?.throwIfAborted();
-      reviewOnly(params);
-      ensure(!params.fullReview || (params.mode === "review" && (params.reviewKind ?? "code") === "code"), "fullReview applies only to a code review");
-      issue(
-        ctx.cwd,
-        params.sessionId,
-        params.mode,
-        params.focus,
-        params.taskId,
-        params.requirementIds,
-        params.mode === "review" ? { kind: params.reviewKind ?? "code", completion: params.completion, full: params.fullReview } : undefined,
-      );
-      return result(budgetNotice(ctx, status(ctx.cwd, params.sessionId)), ctx, true);
+      return result(shown(ctx, requestHandoff(ctx.cwd, params)), ctx, true);
     },
-  });
+  }));
   registerTool({
     name: "waicc_check",
     label: "Run confirmed WAICC check",
@@ -431,45 +237,16 @@ export function registerTools(app: App): void {
       return result(submitted);
     },
   });
-  registerTool({
-    name: "waicc_memory",
-    label: "WAICC project memory",
-    description:
-      "Recall confirmed project knowledge or propose a source-linked candidate. Candidates are recalled only once confirmed: by the human, or by WAICC's corroboration rule if the human turned it on. For a fact, quote the exact source lines it rests on: an entry without a quote is never confirmed automatically, and one whose quote is still in the file stays current when the rest of the file changes. Proposing the same claim about the same file in a later session supports the earlier entry. To remember a decision the human answered with /waicc-decide, pass kind decision and its decisionId (no claim or source): WAICC records the question and the human's exact answer.",
-    parameters: Type.Object({
-      action: Type.Union([Type.Literal("recall"), Type.Literal("propose")]),
-      query: Type.Optional(Type.String()),
-      claim: Type.Optional(Type.String()),
-      source: Type.Optional(Type.String()),
-      quote: Type.Optional(Type.String({ description: "The exact lines of the source file the claim rests on, copied from the file" })),
-      decisionId: Type.Optional(Type.String({ description: "With kind decision: a decision in the bound session that the human answered with /waicc-decide" })),
-      kind: Type.Optional(
-        Type.Union([
-          Type.Literal("fact"),
-          Type.Literal("decision"),
-          Type.Literal("lesson"),
-        ]),
-      ),
-    }),
+  registerTool(piTool<MemoryParams>(memorySpec, {
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
       if (params.action === "recall")
         return result(recall(ctx.cwd, params.query));
       trusted(ctx);
       coordinator(ctx);
-      const by = { sessionId: bindings.get(key(ctx))?.sessionId ?? null, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null };
-      if (params.decisionId) {
-        ensure(by.sessionId, "Bind the session the decision belongs to with /waicc-use first");
-        return result(proposeDecision(ctx.cwd, by.sessionId, params.decisionId, by));
-      }
-      ensure(
-        params.claim && params.source,
-        // Name the argument: agents sent the file as "evidence".
-        `Proposing memory needs ${[params.claim ? "" : "claim", params.source ? "" : "source"].filter(Boolean).join(" and ")}: claim is the fact, source the project-relative file it rests on`,
-      );
-      return result(propose(ctx.cwd, params.claim, params.source, params.kind, params.quote, by));
+      return result(proposeMemory(ctx.cwd, params, { sessionId: bindings.get(key(ctx))?.sessionId ?? null, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null }));
     },
-  });
+  }));
   // Per chat: the commands the agent last offered, and the picker once it is open.
   type Offer = { title: string; offered: { line: string; name: string; args: string; label: string; fill: boolean }[]; each: boolean; picker?: AbortController };
   const offers = new Map<string, Offer>();
