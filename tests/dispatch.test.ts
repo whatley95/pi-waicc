@@ -9,7 +9,7 @@ import waicc from "../src/index.ts";
 import { loadSession } from "../src/files.ts";
 import { agyRegistry, dispatch, dispatchOptions, prepareDispatch, runAgent, runDispatch, windowsCommand, type AgentRunner } from "../src/dispatch.ts";
 import { mcpServer } from "../src/mcp.ts";
-import { receiveHandoff, submitRecipientReply, validateRecipientReply } from "../src/recipient.ts";
+import { briefData, receiveHandoff, submitRecipientReply, validateRecipientReply } from "../src/recipient.ts";
 import { assess, createSession, delegateWork, ingest, prepare } from "../src/workflow.ts";
 import type { Contract } from "../src/types.ts";
 
@@ -92,7 +92,7 @@ test("MCP server speaks JSON-RPC over stdio, pins one request and validates befo
   assert.match(wrong.content[0].text, /different request/);
   const received = await call("waicc_receive", { sessionId: id, requestId });
   assert.equal(received.isError, undefined);
-  assert.equal(JSON.parse(received.content[0].text).pin.requestId, requestId);
+  assert.equal(briefData(received.content[0].text).pin.requestId, requestId);
 
   const incomplete = await call("waicc_validate_reply", { reply: { ...body(), coverage: [] } });
   assert.equal(incomplete.isError, true);

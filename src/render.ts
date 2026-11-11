@@ -82,6 +82,13 @@ export function conversation(s: Session, current: Round): unknown[] {
   const previous = s.rounds.filter(
     (r) => r.id !== current.id && r.status !== "WAITING",
   );
+  // The latest proposal stays whole: the next planner builds on it, adopted or not. An earlier one was
+  // superseded by a later round's: it stays in its round's received.json, named here, not copied again (one
+  // session's conversation reached 269 KB, eleven proposals of 35 KB each).
+  const newest = previous.findLast((r) => r.reply?.proposedContract)?.id;
+  const proposal = (r: Round) =>
+    !r.reply?.proposedContract || r.id === newest ? r.reply?.proposedContract
+      : { superseded: `A later round proposed again; this proposal is whole in ${roundDirectory(r)}/received.json.`, title: r.reply.proposedContract.title, tasks: r.reply.proposedContract.tasks.length };
   return previous
     .map((r) => ({
       requestId: r.id,
@@ -99,7 +106,7 @@ export function conversation(s: Session, current: Round): unknown[] {
       reviewKind: r.review?.kind,
       completion: r.review?.kind === "code" ? r.review.completion : undefined,
       workCompletion: r.reply?.completion,
-      proposedContract: r.reply?.proposedContract,
+      proposedContract: proposal(r),
       advice: r.reply?.advice,
       decision: r.decision,
       rationale: r.rationale,

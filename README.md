@@ -1420,7 +1420,7 @@ registered path picks up the new version automatically.
 
 | Tool                   | Purpose                                                                 |
 | ---------------------- | ----------------------------------------------------------------------- |
-| `waicc_receive`        | Pin the session's single waiting request (session and request IDs required) |
+| `waicc_receive`        | Pin the session's single waiting request (session and request IDs required) and return its brief: the handoff's instructions with the request, contract, review scope, latest assessment, saved context and reply template, plus the files to open only when needed |
 | `waicc_assignment`     | Re-read the pinned contract, requirements, context, history and inputs  |
 | `waicc_read_input`     | Read one listed input file in chunks, for agents working outside the project |
 | `waicc_run_check`      | Run one check the human pre-approved at dispatch, by number; logged in the round |
