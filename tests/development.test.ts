@@ -398,7 +398,7 @@ test("plan errors name the tasks and requirements to fix, and text limits say th
   const plan = structuredClone(contract);
   plan.requirements.push({ id: "R2", text: "Export", sourceQuote: "Add account search" });
   plan.tasks[1].allowedPaths = [];
-  assert.throws(() => readyPlan(plan), /^Error: Every implementation task needs explicit allowed paths: B$/);
+  assert.throws(() => readyPlan(plan), /^Error: Every implementation task needs explicit allowed paths: B\. A step that changes no tracked file \(a build, a Git step, a verification run\) is not a task of its own/);
   plan.tasks[1].allowedPaths = ["other.txt"];
   assert.throws(() => readyPlan(plan), /Some requirements have no acceptance criteria: R2 \(reference each/);
   plan.tasks[0].acceptance = [];

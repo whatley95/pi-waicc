@@ -533,7 +533,7 @@ test("default Pi review waits for whole-work evidence; main-agent fix continuati
   assert.equal(h.prompts.length, 2);
   assert.deepEqual(loadSession(root, id), before); // Command asks main agent to establish completion first.
   assert.equal(h.clipboard.length, 0);
-  await assert.rejects(() => h.call("waicc_request", { sessionId: id, mode: "review", focus: "Too early" }, h.ctx("owner")), /completion report/);
+  await assert.rejects(() => h.call("waicc_request", { sessionId: id, mode: "review", focus: "Too early" }, h.ctx("owner")), /A code review needs completion/);
   assert.deepEqual(loadSession(root, id), before);
   const report = {
     summary: "All search implementation and relevant checks complete",
@@ -723,8 +723,15 @@ test("cancel defaults to the selection, preserves reason-only syntax and never r
   assert.equal(loadSession(root, id).rounds[0].status, "CANCELLED");
   issue(root, id, "planning", "New plan");
   await h.commands.get("waicc-cancel")!.handler("Pause for advice", h.ctx());
+  // A request's ID cancels that request of the selected session; a finished one says why not.
+  const cancelled = loadSession(root, id).rounds.at(-1)!.id;
+  await h.commands.get("waicc-cancel")!.handler(cancelled, h.ctx());
+  assert.match(h.notices.at(-1)!, new RegExp(`${cancelled} is a request of session ${id}, and it is CANCELLED, so there is nothing to cancel`));
+  issue(root, id, "planning", "Newer plan");
+  await h.commands.get("waicc-cancel")!.handler(`${loadSession(root, id).rounds.at(-1)!.id} By request ID`, h.ctx());
   const after = loadSession(root, id);
-  assert.equal(after.rounds.at(-1)!.rationale, "Pause for advice");
+  assert.equal(after.rounds.at(-1)!.status, "CANCELLED");
+  assert.equal(after.rounds.at(-1)!.rationale, "By request ID");
   await h.commands.get("waicc-cancel")!.handler("", h.ctx());
   assert.match(h.notices.at(-1)!, /no pending handoff to cancel/i);
   assert.deepEqual(loadSession(root, id), after);

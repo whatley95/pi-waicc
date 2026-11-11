@@ -52,6 +52,10 @@ export function reviewContext(
     "Code review covers ALL planned work, not a selected task or batch",
   );
   readyContract(c);
+  ensure(
+    request.completion !== undefined,
+    `A code review needs completion: { summary, tasks: every planned task once as {taskId, evidence} (${c.tasks.map((task) => task.id).join(", ")}), checks: [{description, outcome, evidence}], findings: every prior actionable code-review finding as {requestId, findingId, disposition, evidence} }`,
+  );
   const report = record(request.completion, "Whole-work completion report");
   ensure(
     JSON.stringify(report).length <= 256_000,
@@ -114,6 +118,10 @@ export function reviewContext(
       ["resolved", "disputed"].includes(finding.disposition as string),
       "Invalid completion finding disposition",
     );
+    ensure(
+      finding.findingId !== undefined,
+      `completion.findings[${i}] needs the requestId and findingId of the prior finding it answers. ${required.length ? `Prior actionable findings: ${required.join(", ")}` : "There are no prior actionable code-review findings, so leave findings out"}`,
+    );
     const findingId = identifier(finding.findingId, `completion.findings[${i}].findingId`);
     // Agents leave out the requestId: one prior finding with this ID says which.
     const rounds = required.filter((key) => key.endsWith(`:${findingId}`)).map((key) => key.slice(0, -findingId.length - 1));
@@ -139,7 +147,11 @@ export function reviewContext(
   // Agents list the plan reviews' findings too: say that those are not wanted, not just unknown.
   const planReviews = new Set(s.rounds.filter((round) => round.review?.kind !== "code").map((round) => round.id));
   const fromPlan = unknown.filter((key) => planReviews.has(key.slice(0, key.indexOf(":"))));
-  const other = unknown.filter((key) => !fromPlan.includes(key));
+  // A mistyped requestId: the one missing key with the same finding ID is what was meant.
+  const other = unknown.filter((key) => !fromPlan.includes(key)).map((key) => {
+    const meant = missing.filter((m) => m.slice(m.indexOf(":")) === key.slice(key.indexOf(":")));
+    return meant.length === 1 ? `${key} (did you mean ${meant[0]}?)` : key;
+  });
   ensure(
     !missing.length && !unknown.length && !repeated.length,
     `Finish ALL review fixes before re-review; record every prior actionable finding exactly once (requestId + findingId), with fix or dispute evidence.${missing.length ? ` Missing: ${keys(missing)}.` : ""}${fromPlan.length ? ` From a planning or specification-review round, settled when it was assessed, so leave them out: ${keys(fromPlan)}.` : ""}${other.length ? ` Not a prior actionable finding: ${keys(other)}.` : ""}${repeated.length ? ` Given more than once: ${keys(repeated)}.` : ""}`,
