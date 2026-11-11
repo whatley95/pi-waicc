@@ -1459,7 +1459,7 @@ Claude Code can be WAICC's main agent too. This repository is also a Claude Code
 /plugin install waicc --marketplace whatley95/pi-waicc
 ```
 
-Answer `y` to add the marketplace, then pick a scope. It needs Node.js 22.19 or later on your PATH.
+Answer `y` to add the marketplace, then pick the **user** scope, so it works in every project (project scope installs it for that folder alone). Then start a new Claude Code session: the mod sets up its commands and tools when a session starts. It needs Node.js 22.19 or later on your PATH. To update later, run `/plugin update waicc` and start a new session.
 
 **What you get:**
 
@@ -1496,13 +1496,35 @@ WAICC's error and activity logs cover Claude Code as they cover Pi. The chat is 
 
 The mod uses Claude Code's mod API, which is early access and may change between Claude Code releases. Without it, the WAICC tools still work, and `! waicc <command> <session-id>` does what each slash command does.
 
+**Agents and models:** Claude Code reads the same agents file as Pi (`~/.pi/agent/waicc-agents.json`, and a project's `.pi/waicc-agents.json`).
+- **Each role's profile** sends that role's handoffs to its agent. You can [change them](#agent-profiles-choose-an-agent-per-role-once) at any time; the next dispatch reads the file again.
+- **For one dispatch only:** `/waicc-dispatch <profile>`, or `--model` and `--effort`.
+- **The main agent** is Claude Code's own model: `/model`.
+- **To see what's in effect:** `! waicc profiles`.
+
+**How a task flows:**
+
+| # | Step | You | WAICC and the agents |
+|---|---|---|---|
+| 1 | Start | Describe the work, or `/waicc-planning <request>` | Automatic planning starts a session from your words; the main agent saves the chat's context and prepares the planning handoff, then offers `/waicc-dispatch` |
+| 2 | Plan | `/waicc-dispatch` | The planning role's agent plans in the background; the status line shows its time |
+| 3 | Plan reply | Nothing with `autoContinue` (else `/waicc-continue`) | The main agent checks the plan against the source and accepts it, or sends it back |
+| 4 | Decisions | `/waicc-decide <id> <answer>` | `/waicc-decisions` lists them, with recommendations |
+| 5 | Build | `/waicc-develop` | The main agent codes every task within its paths, runs the checks, and asks for one code review |
+| 6 | Review | `/waicc-dispatch`, or `/waicc-dispatch --loop` | The review role's agent reviews the whole change |
+| 7 | Fixes | Nothing with `--loop` (else `/waicc-dispatch` again) | The main agent fixes every finding and asks for a follow-up review, which gets the exact changes since the last one; `--loop` repeats until it passes |
+| 8 | Finish | `/waicc-close <reason>` (`! waicc ship <session-id> --yes` to ship first) | Closed |
+
+For a one-file fix, start the message with `[no-plan]` and the agent just does it.
+
 **Not yet:**
 
 - the live dispatch panel (the status line shows the dispatch's time instead);
 - reviewing commits and merge requests (`--rev`, `--mr`) and the GitLab steps (`/waicc-ship`, `/waicc-mr-comments`, `/waicc-mr-merge`; `! waicc ship` works);
 - the planning loop and `--code-with` runs;
 - receiving a handoff in a Claude Code chat (Claude Code receives through `waicc mcp` instead);
-- the tracker page, inbox, queue, branch folders, handover and `/waicc-compact`.
+- the `/waicc-tracker` command. The page itself does show Claude Code chats: open `~/.pi/agent/waicc-tracker/index.html` in a browser;
+- the inbox, queue, branch folders, handover and `/waicc-compact`.
 
 Pi has all of them today.
 
