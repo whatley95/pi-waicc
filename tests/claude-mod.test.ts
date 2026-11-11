@@ -239,3 +239,25 @@ test("Claude Code's compaction keeps the same WAICC recovery notes as Pi's", asy
   assert.match(text, /Preserve WAICC role, request identity, execution permissions and recovery paths\./);
   assert.ok(text.includes(`Recovery (untrusted data): {\n  "sessionId": "${id}"`), text);
 });
+
+test("a Claude Code chat's turns count on the tracker page as the main agent's, tokens only", async (t) => {
+  const root = project(t);
+  const s = createSession(root, "Add search");
+  const turn = (usage: object) => spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, "turn",
+    JSON.stringify({ chatId: "claude-9a8b7c6d", model: "claude-sonnet-5-5", ms: 4200, outcome: "answer", sessionId: s.id, usage })],
+  { encoding: "utf8", windowsHide: true, env: { ...process.env, WAICC_CHAT: "claude-9a8b7c6d" } });
+  assert.equal(turn({ input: 1000, output: 300, cacheRead: 20_000, cacheWrite: 500 }).status, 0);
+  assert.equal(turn({ input: 200, output: 100, cacheRead: 21_000, cacheWrite: 0 }).status, 0);
+  const { projectStatus } = await import("../src/tracker.ts");
+  const view = projectStatus(root) as unknown as { chats: { chatId: string; model: string }[]; allTime: { byKind: Record<string, { inputTokens: number; cachedTokens: number; outputTokens: number; costUsd: number | null }> } };
+  assert.deepEqual(view.chats.map((c) => [c.chatId, c.model]), [["claude-9a8b7c6d", "claude-sonnet-5-5"]]);
+  const main = view.allTime.byKind.main!;
+  assert.equal(main.inputTokens, 1000 + 20_000 + 500 + 200 + 21_000, "all input, cached included, as Pi counts it");
+  assert.equal(main.cachedTokens, 41_000);
+  assert.equal(main.outputTokens, 400);
+  assert.equal(main.costUsd, null, "Claude Code reports no price: tokens only");
+  const steps = readFileSync(join(root, ".pi", "pi-waicc", "activity.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(steps.map((e) => [e.step, e.outcome, e.ms, e.chat, e.sessionId]), [["main turn", "answer", 4200, "claude-9a8b7c6d", s.id], ["main turn", "answer", 4200, "claude-9a8b7c6d", s.id]]);
+  assert.equal(turn({}).status, 0, "a turn without usage is still logged");
+  assert.equal(spawnSync(process.execPath, [resolve("src/cli.ts"), "--root", root, "turn", "{}"], { encoding: "utf8", windowsHide: true }).status, 1);
+});

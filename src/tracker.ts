@@ -103,6 +103,29 @@ export function recordChat(root: string, chatId: string, name: string | null, mo
   const record: ChatRecord = { schemaVersion: 1, chatId, name: clip(name, 120), model, updatedAt: new Date().toISOString(), hours: chatUsage(entries) };
   atomicWrite(join(chatFolder(root), `${chatId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80)}.json`), json(record));
 }
+/**
+ * One turn of a main agent whose host reports usage per turn, not saved entries (Claude Code's mod):
+ * added to that chat's hour for the model, so the page counts it as it counts a Pi chat. A host that
+ * reports no price leaves the cost unknown, and the turn counts as one reply without a price.
+ */
+export function recordTurn(root: string, chatId: string, model: string, at: Date, usage: { inputTokens: number; cachedTokens: number; outputTokens: number }): void {
+  const path = join(chatFolder(root), `${chatId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80)}.json`);
+  let record: ChatRecord = { schemaVersion: 1, chatId, name: null, model, updatedAt: "", hours: [] };
+  try {
+    const saved = JSON.parse(readFileSync(path, "utf8")) as ChatRecord;
+    if (saved.schemaVersion === 1 && Array.isArray(saved.hours)) record = saved;
+  } catch { /* the chat's first turn */ }
+  const hour = new Date(at);
+  hour.setUTCMinutes(0, 0, 0);
+  let bucket = record.hours.find((h) => h.at === hour.toISOString() && h.model === model);
+  if (!bucket) record.hours.push((bucket = { at: hour.toISOString(), model, messages: 0, usage: { inputTokens: 0, cachedTokens: 0, outputTokens: 0, costUsd: null }, unpriced: 0 }));
+  bucket.messages++;
+  bucket.unpriced = (bucket.unpriced ?? 0) + 1;
+  bucket.usage.inputTokens += usage.inputTokens;
+  bucket.usage.cachedTokens += usage.cachedTokens;
+  bucket.usage.outputTokens += usage.outputTokens;
+  atomicWrite(path, json({ ...record, model, updatedAt: new Date().toISOString() }));
+}
 const chatCache = new Map<string, { mtimeMs: number; record: ChatRecord | null }>();
 function chats(root: string): ChatRecord[] {
   const folder = chatFolder(root);

@@ -8,6 +8,7 @@ import { projectRoot, snapshot } from "../source.ts";
 import { recall } from "../memory.ts";
 import { decisionBrief } from "../decisions.ts";
 import { revisionChanges } from "../revision.ts";
+import { changesSinceReview, reviewedCopies } from "../review-copies.ts";
 import { reviewContext, type ReviewRequest } from "../review.ts";
 import { contextPacket } from "../context.ts";
 import { requirementsText, roundPhase } from "../state.ts";
@@ -274,16 +275,30 @@ export function nextRound(
   const previous = reviewData?.kind === "code" && review?.kind === "code" && !review.full
     ? s.rounds.findLast((round) => round.review?.kind === "code" && round.status === "ASSESSED")
     : undefined;
-  if (previous && reviewData?.kind === "code")
+  let sinceReview: ReturnType<typeof changesSinceReview> | null = null;
+  if (previous && reviewData?.kind === "code") {
+    const changedSinceReview = [...new Set([...Object.keys(previous.source.files), ...Object.keys(source.files)])]
+      .filter((path) => previous.source.files[path] !== source.files[path]).sort();
+    // The exact changes, from the copies the earlier review kept (reviews before these copies kept none).
+    const kept = `${roundDirectory(previous)}/reviewed/`;
+    if (Object.keys(s.artifacts).some((path) => path.startsWith(kept)))
+      sinceReview = changesSinceReview(s.projectRoot, changedSinceReview, (path) => {
+        try {
+          return artifact(s.projectRoot, s, `${kept}${path}`);
+        } catch {
+          return undefined;
+        }
+      }, (path) => path in previous.source.files);
     reviewData = {
       ...reviewData,
       followUp: {
         previousRequestId: previous.id,
         cycle: s.rounds.filter((round) => round.review?.kind === "code" && round.status === "ASSESSED").length + 1,
-        changedSinceReview: [...new Set([...Object.keys(previous.source.files), ...Object.keys(source.files)])]
-          .filter((path) => previous.source.files[path] !== source.files[path]).sort(),
+        changedSinceReview,
+        ...(sinceReview ? { patch: { paths: sinceReview.paths, unavailable: sinceReview.unavailable, truncated: sinceReview.truncated } } : {}),
       },
     };
+  }
   // A review of an existing change carries that change, and any fixes made since, every round.
   const revision = reviewData?.kind === "code" && s.revisionReview ? revisionChanges(s.projectRoot, s.revisionReview) : undefined;
   if (revision && reviewData?.kind === "code")
@@ -336,6 +351,11 @@ export function nextRound(
       ...(reviewData?.kind === "code"
         ? { [`${dir}/code-review.json`]: storedJson(s.projectRoot, s.id, reviewData) }
         : {}),
+      // What this review sees of the changed files, for the next review's changes-since-review.patch.
+      ...(reviewData?.kind === "code"
+        ? Object.fromEntries(Object.entries(reviewedCopies(s.projectRoot, reviewData.changedPaths)).map(([path, text]) => [`${dir}/reviewed/${path}`, text]))
+        : {}),
+      ...(sinceReview?.paths ? { [`${dir}/changes-since-review.patch`]: sinceReview.patch } : {}),
       ...(revision ? { [`${dir}/changes.patch`]: revision.patch, [`${dir}/commits.txt`]: revision.commits } : {}),
       ...Object.fromEntries((revision?.parts ?? []).map((part) => [`${dir}/changes/${part.file}`, part.patch])),
       ...skillFiles([...v.contract.skills, ...(["implementation", "testing"].includes(mode) ? ["wai-testing"] : [])], dir),

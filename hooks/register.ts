@@ -409,7 +409,15 @@ export const register: Register = (on) => {
     if (e.agentId === undefined) busy = false;
     if (e.agentId === undefined) {
       const current = await read($, session);
-      await log($, { kind: "activity", step: "main turn", outcome: e.reason, ms: e.durationMs, ...(current ? { sessionId: current } : {}) });
+      // The turn's line in the activity log and its tokens on the tracker page, as Pi's chats are counted.
+      try {
+        const u = e.usage;
+        await waicc($, ["turn", JSON.stringify({
+          chatId: `claude-${await $.session.id()}`, model: u?.model ?? (await $.session.model()), ms: e.durationMs, outcome: e.reason,
+          ...(current ? { sessionId: current } : {}),
+          ...(u ? { usage: { input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens } } : {}),
+        })]);
+      } catch { /* the log never stands in the way of the turn */ }
       await update($, request, () => null);
       // After the turn has ended, not inside it.
       $.clock.after(0, () => void openPicker($).then(() => afterLoopTurn($)));
