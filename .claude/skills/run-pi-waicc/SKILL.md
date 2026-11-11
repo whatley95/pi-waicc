@@ -27,9 +27,28 @@ user's project, `bin/waicc` puts the CLI on Claude Code's Bash PATH, and `skills
 skills. After changing any of them, check with Claude Code itself; neither calls a model:
 
 ```sh
-claude plugin validate .                     # "passed with warnings": only the missing store icon
+claude plugin validate .                     # "passed with warnings": the store icon and version only
 claude --plugin-dir . mcp list               # plugin:waicc:waicc … ✔ Connected
 ```
+
+The mod (`hooks/register.ts`, its state contract `types/index.d.ts`) gives Claude Code the
+`/waicc-*` commands, the status line, the agent's WAICC prompt section and the shell guard. It has
+no Node: it runs the CLI through `$.process.run` and reads `.pi/pi-waicc/` JSON through `$.fs`, and
+imports only `src/claude/commands.ts` (the command table, tested in `tests/claude-mod.test.ts`) and
+`src/status-table.ts`. Keep both free of imports; that test checks it. The repo's `tsc` does not
+read `hooks/`: type-check it against the engine's declarations, which the plugin-authoring skill
+writes (`types/claude-code.d.ts` in its folder), with a tsconfig kept outside the repo whose
+`files` are that declaration file, `types/index.d.ts` and `hooks/register.ts` (options from that
+file's header, plus `allowImportingTsExtensions`). A command the mod answers itself calls no
+model, so it can be checked headless from PowerShell (Git Bash rewrites the leading `/`, and
+with `MSYS_NO_PATHCONV=1` it also stops converting `--plugin-dir`, so the plugin never loads):
+
+```powershell
+claude -p "/waicc-status all" --plugin-dir C:\dev\wtly\pi-waicc   # waicc: **1 all session** …
+```
+
+Never test `/waicc-planning`, `/waicc-continue`, `/waicc-develop` or `/waicc-review` headless:
+they hand the agent a prompt, which calls the model.
 
 ## Prerequisites / build
 

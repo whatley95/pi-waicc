@@ -15,7 +15,7 @@ import { amend, assess, beginDevelopment, cancel, closeSession, createSession, d
 import type { Contract, Reply, Round, Session, WorkCompletion } from "../src/types.ts";
 import { readyPlan, relativePath, text, validateContract } from "../src/validation.ts";
 import { chatJson, modelLimit, modelView } from "../src/pi/app.ts";
-import { statusTable } from "../src/pi/status-table.ts";
+import { statusTable } from "../src/status-table.ts";
 
 const contract: Contract = {
   title: "Account search", requirements: [{ id: "R1", text: "Account search", sourceQuote: "Add account search" }],

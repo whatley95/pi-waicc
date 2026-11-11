@@ -14,7 +14,7 @@ import { copyHandoffPrompt, type ClipboardWriter, type ClipboardResult } from ".
 import type { CheckRunner } from "../checks.ts";
 import type { AgentRunner } from "../dispatch.ts";
 import { alertSettings, decisionSettings, loadAgentConfig, sessionBudget, policyGuidance, profilesBrief } from "../profiles.ts";
-import { statusTable } from "./status-table.ts";
+import { statusTable } from "../status-table.ts";
 import { buildOutdated, loadedBuild } from "../build.ts";
 import { newNeeds, projectStatus, publish, recordChat, trackerEnabled, type LiveRun, type Notice, type ProjectStatus } from "../tracker.ts";
 import { notifyDesktop } from "../alerts.ts";

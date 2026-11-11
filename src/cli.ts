@@ -42,6 +42,7 @@ import { githubIssue, gitlabIssue, issueNote, issueNumber, issueRequirements } f
 import { canonicalProject, gitlabClient, gitlabProject } from "./gitlab.ts";
 import { chooseRemote } from "./revision.ts";
 import { serveMcp } from "./mcp.ts";
+import { finishBackgroundRun, startBackgroundDispatch } from "./background.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
 import type { ReviewRequest } from "./review.ts";
@@ -102,20 +103,37 @@ try {
       process.exit(0);
     }
     case "dispatch": {
-      ensure(id, "Usage: waicc dispatch <session> [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check '<command>']... [--confirm-checks]");
-      const resolved = resolveDispatch(cwd, id, rest.filter((word) => word !== "--confirm-checks"));
+      ensure(id, "Usage: waicc dispatch <session> [profile] [--via claude|codex|pi|agy] [--model <model>] [--effort <level>] [--timeout <minutes>] [--implement] [--check '<command>']... [--confirm-checks] [--detach]");
+      // --detach: the same dispatch in a process of its own (see background.ts); --background-run is that process.
+      const detach = rest.includes("--detach"), background = rest.includes("--background-run");
+      const options = rest.filter((word) => !["--detach", "--background-run"].includes(word));
+      const resolved = resolveDispatch(cwd, id, options.filter((word) => word !== "--confirm-checks"));
       // A terminal has no dialog: checks from the repository's own file need this explicit flag.
       ensure(
-        !resolved.confirmChecks || rest.includes("--confirm-checks"),
+        !resolved.confirmChecks || options.includes("--confirm-checks"),
         `These checks come from the project's agent config: ${resolved.options.checks?.map(commandText).join("; ")}. Review them, then add --confirm-checks to run them.`,
       );
       // The loop needs a main agent to assess and fix between reviews, which only Pi has.
       ensure(!resolved.options.loop, "--loop needs the main agent in Pi to assess and fix between reviews; use /waicc-dispatch --loop there.");
-      // Live steps go to stderr; stdout keeps the one JSON result.
-      const outcome = await runDispatch(prepareDispatch(cwd, id, resolved.options), runAgent, undefined, (event) =>
-        process.stderr.write(`[${elapsed(event.at)}] ${event.kind === "rejected" ? "✗ " : event.kind === "note" ? "says: " : ""}${event.text}\n`));
-      // Without a main agent, continuing means validating the reply into AWAITING_ASSESSMENT.
-      output = resolved.options.continue && outcome.replySubmitted ? { ...outcome, continued: ingest(cwd, id).status } : outcome;
+      if (detach) {
+        // The options were checked above, so a mistake in them shows now; one in the handoff ends the run with its error.
+        output = startBackgroundDispatch(cwd, id, options);
+        break;
+      }
+      try {
+        // Live steps go to stderr; stdout keeps the one JSON result.
+        const outcome = await runDispatch(prepareDispatch(cwd, id, resolved.options), runAgent, undefined, (event) =>
+          process.stderr.write(`[${elapsed(event.at)}] ${event.kind === "rejected" ? "✗ " : event.kind === "note" ? "says: " : ""}${event.text}\n`));
+        // Without a main agent, continuing means validating the reply into AWAITING_ASSESSMENT.
+        output = resolved.options.continue && outcome.replySubmitted ? { ...outcome, continued: ingest(cwd, id).status } : outcome;
+        if (background)
+          finishBackgroundRun(cwd, id, outcome.replySubmitted
+            ? { outcome: "reply", message: `${resolved.options.via} replied. /waicc-continue takes the reply in for the main agent to assess.` }
+            : { outcome: "no-reply", message: `${resolved.options.via} ended without a reply${outcome.limit ? ` (${outcome.limit.text})` : ""}. Its log: ${outcome.log}` });
+      } catch (error) {
+        if (background) finishBackgroundRun(cwd, id, { outcome: "error", message: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
       break;
     }
     case "init":
