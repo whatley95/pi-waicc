@@ -271,6 +271,8 @@ export function validateContract(
     "Contract",
   ));
   v.check("title", () => text(c.title, "Title", 300));
+  // Quotes found once spacing and curly quotes are set aside, by index: saved as the request has them.
+  const exactQuotes = new Map<number, string>();
   const reqs = each(v, c.requirements, "requirements", "Requirements");
   reqs.forEach((entry, i) => v.check(`requirements[${i}]`, () => {
     const r = record(entry, "Requirement");
@@ -279,11 +281,13 @@ export function validateContract(
     w.check("id", () => identifier(r.id));
     w.check("text", () => text(r.text, "Requirement"));
     w.check("sourceQuote", () => {
-      text(r.sourceQuote, "Original requirement quote");
+      const quote = text(r.sourceQuote, "Original requirement quote");
+      const exact = requirements.includes(quote) ? quote : quoteIn(requirements, quote);
       ensure(
-        requirements.includes(r.sourceQuote as string),
+        exact,
         `Requirement ${r.id} needs an exact quote from the original request or amendment`,
       );
+      if (exact !== quote) exactQuotes.set(i, exact);
     });
     w.done();
   }));
@@ -352,13 +356,17 @@ export function validateContract(
           "Acceptance requirement IDs",
         );
         unique(criteriaRefs, "acceptance requirement IDs");
-        // Only judged against the task's own references once those are valid.
-        if (refs)
+        // Only judged against the task's own references once those are valid. Named, so the
+        // agent fixes them in one try: the bare rule left agents guessing which ID was wrong.
+        if (refs) {
+          const foreign = criteriaRefs.filter((id) => !refs.includes(id));
           ensure(
-            criteriaRefs.length > 0 &&
-              criteriaRefs.every((id) => refs.includes(id)),
-            "Acceptance criterion must reference its task's requirements",
+            criteriaRefs.length > 0 && !foreign.length,
+            `Acceptance criterion ${typeof ac.id === "string" ? `${ac.id} ` : ""}must cite only requirements of its task ${String(task.id)} (${refs.join(", ")})${foreign.length
+              ? `, not ${foreign.join(", ")}: add ${foreign.length > 1 ? "them" : "it"} to the task's requirementIds, or move the criterion to the task that covers ${foreign.length > 1 ? "them" : "it"}`
+              : ": cite at least one"}`,
           );
+        }
       });
       x.done();
     }));
@@ -452,11 +460,36 @@ export function validateContract(
   v.check("decisions", () => unique(decisions.map(idOf).filter((id): id is string => id !== null), "decision IDs"));
   // Most quotes missing: the agent quoted what the human said in the chat, not the saved request.
   const quoted = Array.isArray(c.requirements) ? c.requirements.map((r) => (r as { sourceQuote?: unknown } | null)?.sourceQuote) : [];
-  const unquoted = quoted.filter((q) => typeof q === "string" && q.trim() && !requirements.includes(q)).length;
+  const unquoted = quoted.filter((q) => typeof q === "string" && q.trim() && !requirements.includes(q) && !quoteIn(requirements, q)).length;
   v.done(unquoted >= 2 && unquoted * 2 >= quoted.length
     ? `\n${unquoted} of ${quoted.length} quotes are not in the session's request, which is ${requirements.length.toLocaleString("en")} characters${requirements.length <= 300 ? `: ${JSON.stringify(requirements.trim())}` : ""}. Quote only the request and its amendments. If the human gave these requirements in the chat, offer them /waicc-amend <that text> through waicc_suggest_command, then quote the amendment.`
     : "");
-  return structuredClone(c) as unknown as Contract;
+  const valid = structuredClone(c) as unknown as Contract;
+  for (const [i, exact] of exactQuotes) valid.requirements[i].sourceQuote = exact;
+  return valid;
+}
+/** Agents copy a quote with its line breaks reflowed or its quote marks curled; straight and curly count the same. */
+const plainChar = (ch: string) => (/\s/.test(ch) ? " " : /[\u2018\u2019]/.test(ch) ? "'" : /[\u201C\u201D]/.test(ch) ? '"' : ch);
+/** Text with each run of spacing as one space and straight quote marks: equal for a reflowed copy. */
+export const plainText = (s: string): string => [...s].map(plainChar).join("").replace(/ +/g, " ").trim();
+/**
+ * The text of `source` that `quote` copies, when the two differ only in spacing, line breaks or
+ * curly quotes; null when it is not there. The result is the source's own text, kept as the quote.
+ */
+export function quoteIn(source: string, quote: string): string | null {
+  const wanted = plainText(quote);
+  if (!wanted) return null;
+  // The source with each run of spaces as one, and where each kept character came from.
+  let flat = "";
+  const from: number[] = [];
+  for (let i = 0; i < source.length; i++) {
+    const ch = plainChar(source[i]);
+    if (ch === " " && flat.endsWith(" ")) continue;
+    flat += ch;
+    from.push(i);
+  }
+  const at = flat.indexOf(wanted);
+  return at < 0 ? null : source.slice(from[at], from[at + wanted.length - 1] + 1);
 }
 /** A complete specification can gate execution on documented human/external decisions. */
 export function readyPlan(contract: Contract): void {

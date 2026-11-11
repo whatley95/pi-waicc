@@ -27,7 +27,7 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
   return withLock(root, () => {
     const s = loadSession(root, id);
     requireOpen(s);
-    identifier(a.requestId);
+    identifier(a.requestId, "requestId");
     const r = s.rounds.find((round) => round.id === a.requestId);
     // Say why not and what to do: agents otherwise retry the same call.
     const waiting = s.rounds.find((round) => round.status === "RECEIVED" && round.reply);
@@ -97,9 +97,9 @@ export function assess(cwd: string, id: string, a: Assessment): Session {
     // earlier review) are left out rather than refusing the assessment. waicc_assess says so.
     if (!r.reply.findings.length && Array.isArray(a.dispositions) && a.dispositions.length) a = { ...a, dispositions: [] };
     const seen = new Set<string>();
-    for (const item of list(a.dispositions, "Finding dispositions")) {
+    for (const [i, item] of list(a.dispositions, "Finding dispositions").entries()) {
       const d = record(item, "Disposition");
-      identifier(d.findingId);
+      identifier(d.findingId, `dispositions[${i}].findingId`);
       text(d.evidence, "Disposition evidence");
       const id = String(d.findingId);
       ensure(

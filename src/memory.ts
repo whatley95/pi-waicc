@@ -259,7 +259,7 @@ export function curate(
   action: "confirm" | "revoke",
 ): MemoryEntry {
   const root = projectRoot(cwd);
-  identifier(id);
+  identifier(id, "Memory ID");
   return withLock(root, () => {
     const entries = load(root);
     const entry = entries.find((row) => row.id === id);

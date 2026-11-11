@@ -1,5 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -8,6 +9,7 @@ import waicc from "../src/index.ts";
 import { consultAdvisor } from "../src/consult.ts";
 import type { AgentRunner } from "../src/dispatch.ts";
 import { consultSettings, loadAgentConfig } from "../src/profiles.ts";
+import { createSession } from "../src/workflow.ts";
 
 const profiles = { sonnet: { via: "claude", model: "sonnet", effort: "medium" }, sol: { via: "codex", model: "gpt-6.1-sol" } };
 
@@ -104,7 +106,7 @@ function harness(root: string, answers: string[]) {
   const ask = (question = "Why does the build fail on Windows only?") =>
     tools.get("waicc_ask_advisor").execute("call", { question, tried: "Re-ran it; same error." }, undefined, undefined, ctx);
   const call = (name: string, params: object = {}) => tools.get(name).execute("call", params, undefined, undefined, ctx);
-  return { tool: tools.get("waicc_ask_advisor"), ask, call, asked, notices, widgets, entries };
+  return { root, tool: tools.get("waicc_ask_advisor"), ask, call, asked, notices, widgets, entries };
 }
 
 test("the main agent asks the advisor on its own: answered, announced, and limited per chat", async (t) => {
@@ -147,6 +149,10 @@ test("from the second refused WAICC call in a row, the error tells the agent to 
   assert.match(await refused(), /your 3rd refused WAICC call/);
   await h.ask();
   assert.doesNotMatch(await refused(), /waicc_ask_advisor/, "a call that works starts the count again");
+  // Rereading state between two refused calls is no progress: the count goes on.
+  execFileSync("git", ["init", "--quiet"], { cwd: h.root, windowsHide: true });
+  const s = createSession(h.root, "Add search");
+  await h.call("waicc_status", { sessionId: s.id });
   assert.match(await refused(), /your 2nd refused.*\(1 question left in this chat\)/s);
 
   // No advisor to ask: the human is.

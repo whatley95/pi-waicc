@@ -182,7 +182,9 @@ form is already used is left as it is, for validation to report. A task's allowe
 ```
 
 This example requires the exact quote `Add customer search` to occur in the original
-request or an amendment. Quote validation preserves provenance but cannot establish
+request or an amendment; line breaks, runs of spacing and curly quote marks may differ, and
+the request's own text is then saved as the quote. A revision may leave out `requirements`
+(or a requirement's `sourceQuote`) to keep them unchanged. Quote validation preserves provenance but cannot establish
 that a paraphrase includes every nuance; Pi must assess semantic coverage. Empty
 tasks/acceptance are permitted in unresolved planning drafts, but not in a ready
 implementation contract. All referenced IDs must exist; dependency cycles and unsafe
@@ -1226,7 +1228,7 @@ The reviewer checks the entire implementation, requirements/acceptance, integrat
 regressions, check evidence and all prior fixes, returning one consolidated reply.
 Main-agent assessment precedes source edits so the original review remains assessable.
 Code-review followup is rejected: use needs_changes/blocked, finish ALL fixes/checks,
-then request a fresh full review with a new completion report. Evidence-backed false
+then request a fresh review with a new completion report (after the first, a follow-up review). Evidence-backed false
 positives may be disputed; other actionable findings require fixes and a fresh review,
 even if severity is low/medium. Source/version changes invalidate pending/pass review.
 No automatic handoffs per finding, external processes or closure are introduced.

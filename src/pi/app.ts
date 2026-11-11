@@ -153,8 +153,10 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
   // stuck: you are told once, since only the agent sees tool errors.
   const toolErrors = new Map<string, number>();
   // Refused WAICC calls in a row, by chat. From the second, the error itself tells the agent to
-  // ask the advisor: guidelines alone left agents retrying the same call many times.
+  // ask the advisor: guidelines alone left agents retrying the same call many times. Rereading
+  // state between two refused calls is no progress, so it does not end the streak.
   const refusals = new Map<string, number>();
+  const rereads = new Set(["waicc_status", "waicc_checkpoint"]);
   const nth = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
   const advisorNudge = (ctx: ExtensionContext, streak: number, tool: string): string => {
     if (streak < 2 || tool === "waicc_ask_advisor") return "";
@@ -179,7 +181,7 @@ export function createApp(pi: ExtensionAPI, services: Services = {}) {
       let outcome = "ok";
       try {
         const done = await tool.execute(id, decoded, signal, update, ctx);
-        refusals.delete(key(ctx));
+        if (!rereads.has(tool.name)) refusals.delete(key(ctx));
         return done;
       } catch (error) {
         outcome = signal?.aborted ? "stopped" : "error";
