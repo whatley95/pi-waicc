@@ -444,7 +444,9 @@ try {
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 }
-if (command && known && !["activity", "errors", "mcp", "log", "turn"].includes(command))
+// Reading the settings (the Claude Code mod checks autoContinue every 30 s) is not activity either.
+const readsProfiles = command === "profiles" && args.length === 1;
+if (command && known && !readsProfiles && !["activity", "errors", "mcp", "log", "turn"].includes(command))
   try {
     // Which options were used and which session, never what was typed with them.
     const flags = [...new Set(args.filter((word) => /^--[a-z][a-z-]*$/.test(word)))].join(" ");

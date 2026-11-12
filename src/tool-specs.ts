@@ -98,7 +98,7 @@ export const prepareSpec: ToolSpec = {
     expectedVersion: integer(0),
     mode: oneOf(["planning", "review"]),
     focus: text(),
-    contract: anything(),
+    contract: anything("{title, requirements:[{id,text,sourceQuote}], exclusions:[], assumptions:[], questions:[], risks:[], skills:[], tasks:[{id,title,requirementIds,dependsOn,allowedPaths,acceptance:[{id,text,requirementIds,verification}]}], decisions?}. Lists other than requirements and tasks hold strings; sourceQuote is exact text from the human's request. A planning draft may have tasks: []."),
     reviewKind,
     fullReview,
     completion: anything("Whole-work report: {summary,tasks:[{taskId,evidence}],checks:[{description,outcome:passed|not_run,evidence}],findings:[{requestId,findingId,disposition:resolved|disputed,evidence}]}. ALL tasks and prior actionable code findings exactly once; with none (first review), findings may be [] or left out."),
