@@ -33,9 +33,9 @@ async function chatName($: EngineInterface): Promise<string> {
   return `claude-${(await $.session.id()).slice(0, 8)}`;
 }
 /** Runs the waicc command line in this project and reads its JSON answer; its error message on failure. */
-async function waicc($: EngineInterface, argv: string[]): Promise<any> {
+async function waicc($: EngineInterface, argv: string[], timeoutMs = 120_000): Promise<any> {
   const cwd = await $.session.cwd();
-  const ran = await $.process.run(["node", `${$.plugin.root}/src/cli.ts`, "--root", cwd, ...argv], { timeoutMs: 120_000, env: { WAICC_CHAT: await chatName($) } });
+  const ran = await $.process.run(["node", `${$.plugin.root}/src/cli.ts`, "--root", cwd, ...argv], { timeoutMs, env: { WAICC_CHAT: await chatName($) } });
   if (ran.exitCode !== 0) throw new Error(ran.stderr.trim() || `waicc ${argv[0]} exited with ${ran.exitCode}`);
   return JSON.parse(ran.stdout);
 }
@@ -84,6 +84,7 @@ function shown(command: SlashCommand, value: any): string {
     return value.decisions.length
       ? value.decisions.map((d: any) => `- ${d.id} (${d.owner}, ${d.status}): ${d.question}${d.answer ? ` → ${d.answer}` : d.recommendation ? ` (recommended: ${d.recommendation})` : ""}`).join("\n")
       : "This session has no decisions.";
+  if (command.name === "waicc-selftest" && typeof value?.text === "string") return value.text;
   const table = statusTable(value);
   if (table) return table;
   const text = JSON.stringify(value, null, 2);
@@ -120,7 +121,8 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
   let value: any;
   try {
     const argv = command.cli(id, rest);
-    if (argv) value = await waicc($, argv);
+    // The self-test asks every role's model a question: minutes, not seconds.
+    if (argv) value = await waicc($, argv, command.name === "waicc-selftest" ? 600_000 : undefined);
   } catch (error) {
     return refused(error instanceof Error ? error.message : String(error));
   }
@@ -141,7 +143,7 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
       text = `${copied.isCopied ? "Copied. " : ""}Give this to the agent, which needs access to the project, hidden .pi files included; then /waicc-continue:\n\n${prompt}`;
     }
   } else if (value === undefined) text = "Asked the main agent.";
-  else if (["waicc-status", "waicc-use", "waicc-decisions", "waicc-memory", "waicc-list", "waicc-export"].includes(command.name) || !target) text = shown(command, value);
+  else if (["waicc-status", "waicc-use", "waicc-decisions", "waicc-memory", "waicc-list", "waicc-export", "waicc-selftest"].includes(command.name) || !target) text = shown(command, value);
   else {
     // A step that changed the session: show where it stands now.
     let view: any = value;

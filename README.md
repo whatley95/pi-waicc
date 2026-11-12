@@ -102,7 +102,32 @@ WAICC also runs with Claude Code as the main agent (preview). At Claude Code's p
 
 Answer `y` to add the marketplace and pick the **user** scope, then start a new session. It
 needs Node.js 22.19+ on your PATH. To update: `/plugin update waicc`, then a new session.
+To check that everything works, run `/waicc-selftest` (see [Check the setup](#check-the-setup)).
 What you get and how a task flows there: [Claude Code (preview)](#claude-code-preview).
+
+### Check the setup
+
+After installing, or on a new computer, run:
+
+```
+/waicc-selftest
+```
+
+It checks, one line each:
+
+- **Node.js** is 22.19 or later.
+- **The project folder** is found and WAICC's state can be written there.
+- **Your agent settings** can be read, and each role names a profile that exists. Planning and
+  review must be set; the advisor, coding and testing roles are optional and only warned about.
+- **Each role's agent program** (`claude`, `codex`, `pi`, `agy`) is on your PATH.
+- **The tool server** the main agent uses in Claude Code starts and lists its tools.
+- **Planning and review** work end to end: a throwaway session in a temporary folder is planned,
+  developed, code-reviewed and closed, with no model asked.
+- **Each role's model answers**: it is asked one short question, with the profile's model and
+  effort. This costs a few tokens per profile; `/waicc-selftest --no-model` skips it.
+
+When any check fails, the command fails with every line and the error, and the error log keeps it.
+On the command line: `waicc selftest [--no-model]` (exit code 1 when a check fails).
 
 ## Start a conversation
 
@@ -1509,6 +1534,7 @@ Answer `y` to add the marketplace, then pick the **user** scope, so it works in 
 | `/waicc-decisions`, `/waicc-decide <id> <answer>` | The decisions, and your answer to one |
 | `/waicc-bug-hunt <scope>`, `/waicc-bug-pick all` | The agent reads a scope read-only and lists possible bugs, your advisor checks them, and the ones you pick become a planning session |
 | `/waicc-advisor <question>` | Asks a contract advisor, as a handoff |
+| `/waicc-selftest [--no-model]` | Checks everything WAICC needs and asks each role's model one short question; see [Check the setup](#check-the-setup) |
 | `/waicc-auto-planning [on\|off]` | Whether the agent may start a planning session from your request (on by default; `[no-plan]` at the start of a message skips it once) |
 | `/waicc-list`, `/waicc-amend`, `/waicc-cancel`, `/waicc-limit`, `/waicc-close`, `/waicc-force-close`, `/waicc-reopen`, `/waicc-delete`, `/waicc-restore`, `/waicc-export`, `/waicc-memory` | As in Pi |
 
@@ -1635,6 +1661,7 @@ model assessment is not proof of tested delivery.
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | `/waicc-planning <requirements>`                 | Start a new durable task/session and ask Pi to prepare its contract                                   |
 | `/waicc-planning --issue <n> [--remote r] [more]` | Start from a GitLab or GitHub issue, after you read it; shipping then closes the issue |
+| `/waicc-selftest [--no-model]`                    | Check the setup: Node, the project, the tool server, a throwaway planning-and-review run, each role's model |
 | `/waicc-auto-planning [on\|off]`                  | Plan when tracked steps help, even for small work; default on. Legacy complex aliases on |
 | `/waicc-develop [--main\|--delegate]`             | Explicitly accept/authorize the current plan in this session; no handoff or round consumed |
 | `/waicc-decisions [session-id]`                 | Show the consolidated gate brief, recommendations, evidence and affected tasks |

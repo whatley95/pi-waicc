@@ -6,6 +6,7 @@ import { autoDecidable } from "../decisions.ts";
 import { checkpointView, frozenCheckpointView, refreshCheckpoint } from "../checkpoint.ts";
 import { deleteSession, restoreSession } from "../lifecycle.ts";
 import { initProject, projectRoot } from "../source.ts";
+import { selfTest, selfTestText } from "../selftest.ts";
 import { manualHandoffMessage } from "../render.ts";
 import type { manualHandoff } from "../render.ts";
 import { beginDevelopment, decisionsView, pathRequestText, openDecisionsText, resolveDecision, readContract, createSession, createRevisionReview, refreshRevisionReview, delegateWork, issue, status, saveContext, useMainWork } from "../workflow.ts";
@@ -162,6 +163,13 @@ export function registerCommands(app: App): void {
   command("waicc-init", "Make the current folder its own WAICC project, for example one service in a monorepo", async (_args, ctx) => {
     // From now on this chat resolves to the new project; its old selection stays with the old one.
     show(ctx, initProject(ctx.cwd, initialize));
+  });
+  command("waicc-selftest", "Check everything WAICC needs: Node, the project, the tool server, a throwaway planning-and-review run, and one short question to each role's model: [--no-model]", async (args, ctx) => {
+    ensure(!args || args === "--no-model", "Usage: /waicc-selftest [--no-model]");
+    const report = await selfTest(ctx.cwd, { models: args !== "--no-model", runner: services.runAgent });
+    // A failed check fails the command, so it is logged and shown as an error.
+    ensure(report.ok, selfTestText(report));
+    ctx.ui.notify(selfTestText(report), "info");
   });
   command("waicc-decisions", "Show a consolidated decision brief, recommendations and affected tasks: [session-id]", async (args, ctx) => {
     ensure(!args || !/\s/.test(args), "Usage: /waicc-decisions [session-id]");
