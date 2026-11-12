@@ -30,7 +30,12 @@ pi install git:github.com/whatley95/pi-waicc      # once, in a terminal
 Or `/waicc-dispatch --auto --ship` after `/waicc-planning` to plan, build, review and open the merge request on its own.
 `/waicc-tracker` shows every project on one page, and `/waicc-inbox` lists what needs you in all of them.
 
+**Using Claude Code instead of Pi?** At Claude Code's prompt run
+`/plugin install waicc --marketplace whatley95/pi-waicc` (user scope), then start a new
+session: see [Install in Claude Code](#install-in-claude-code).
+
 **This README is the full reference.** Contents: [Install](#install) ·
+[Claude Code](#claude-code-preview) ·
 [Start a conversation](#start-a-conversation) ·
 [Coding and testing handoffs](#optional-coding-and-testing-handoffs) ·
 [Manual handoff](#manual-handoff-exactly-what-to-give) ·
@@ -86,6 +91,18 @@ as **updated · type /reload**, with `/reload` under Needs you.
 
 WAICC is independent of pi-yoowai. If both packages are enabled, select one copy
 of each shared WAI skill in Pi's resource configuration to avoid duplicate names.
+
+### Install in Claude Code
+
+WAICC also runs with Claude Code as the main agent (preview). At Claude Code's prompt:
+
+```
+/plugin install waicc --marketplace whatley95/pi-waicc
+```
+
+Answer `y` to add the marketplace and pick the **user** scope, then start a new session. It
+needs Node.js 22.19+ on your PATH. To update: `/plugin update waicc`, then a new session.
+What you get and how a task flows there: [Claude Code (preview)](#claude-code-preview).
 
 ## Start a conversation
 
