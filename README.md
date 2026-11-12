@@ -1487,7 +1487,7 @@ Answer `y` to add the marketplace, then pick the **user** scope, so it works in 
 | `/waicc-dispatch [profile] [--loop [n]]` | Sends the waiting handoff to its role's agent, in the background; you're told when it ends. With `--loop`, a waiting code review repeats review and fixes until it passes, at most n cycles (3 by default) |
 | `/waicc-handoff` | Shows and copies the handoff, to give an agent by hand |
 | `/waicc-continue` | Takes the reply in; the agent assesses it |
-| `/waicc-develop [--delegate]` | Authorizes coding the accepted plan |
+| `/waicc-develop [--delegate]` | Authorizes coding the accepted plan, or the extra files the agent asked for to finish a fix |
 | `/waicc-review [--contract]` | The agent requests one review of all finished work |
 | `/waicc-decisions`, `/waicc-decide <id> <answer>` | The decisions, and your answer to one |
 | `/waicc-bug-hunt <scope>`, `/waicc-bug-pick all` | The agent reads a scope read-only and lists possible bugs, your advisor checks them, and the ones you pick become a planning session |
@@ -1523,7 +1523,7 @@ The mod uses Claude Code's mod API, which is early access and may change between
 | 4 | Decisions | `/waicc-decide <id> <answer>` | `/waicc-decisions` lists them, with recommendations |
 | 5 | Build | `/waicc-develop` | The main agent codes every task within its paths, runs the checks, and asks for one code review |
 | 6 | Review | `/waicc-dispatch`, or `/waicc-dispatch --loop` | The review role's agent reviews the whole change |
-| 7 | Fixes | Nothing with `--loop` (else `/waicc-dispatch` again) | The main agent fixes every finding and asks for a follow-up review, which gets the exact changes since the last one; `--loop` repeats until it passes |
+| 7 | Fixes | Nothing with `--loop` (else `/waicc-dispatch` again); `/waicc-develop` if it asks for more files | The main agent fixes every finding and asks for a follow-up review, which gets the exact changes since the last one; `--loop` repeats until it passes. A fix that needs files outside the plan's paths waits for your `/waicc-develop` (see "More files for a fix" under [Dispatch to a headless agent](#dispatch-to-a-headless-agent)) |
 | 8 | Finish | `/waicc-close <reason>` (`! waicc ship <session-id> --yes` to ship first) | Closed |
 
 For a one-file fix, start the message with `[no-plan]` and the agent just does it.
