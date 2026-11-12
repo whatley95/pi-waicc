@@ -54,6 +54,12 @@ test("the coordinator server offers the main agent's tools, and says the human r
   assert.match(init.instructions, /\/waicc-develop is "waicc develop <session-id>"/);
   assert.match(init.instructions, /! waicc develop/);
   assert.match(init.instructions, /contract OWNER\/coordinator/, "the main agent's own instructions, as Pi gives them");
+  // Claude Code keeps 4,096 characters of them: with its mod, the rules are in the system prompt instead.
+  const short = (await client(project(t), { rulesInPrompt: true }).rpc("initialize", { protocolVersion: "2025-06-18" })).instructions as string;
+  assert.ok(short.length <= 4096, `${short.length} characters`);
+  assert.match(short, /WAICC rules section/);
+  assert.match(short, /\/waicc-develop is "waicc develop <session-id>"/);
+  assert.doesNotMatch(short, /contract OWNER\/coordinator/);
   const { tools } = await rpc("tools/list");
   assert.deepEqual(tools.map((tool: { name: string }) => tool.name), coordinatorSpecs.map((spec) => spec.name));
   assert.ok(!tools.some((tool: { name: string }) => ["waicc_receive", "waicc_submit_reply", "waicc_start_planning"].includes(tool.name)),

@@ -11,7 +11,7 @@
   "mcpServers": {
     "waicc": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "--root", "${CLAUDE_PROJECT_DIR}", "mcp", "--coordinator"]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "--root", "${CLAUDE_PROJECT_DIR}", "mcp", "--coordinator", "--rules-in-prompt"]
     }
   }
 }

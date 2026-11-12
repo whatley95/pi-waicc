@@ -31,6 +31,8 @@ export interface McpOptions {
   checkCwd?: string;
   /** The main agent's tools for a host other than Pi, instead of a recipient's (src/mcp-coordinator.ts). */
   coordinator?: boolean;
+  /** Claude Code's mod puts the owner's rules in the system prompt: the instructions only point there. */
+  rulesInPrompt?: boolean;
   /** Tests: what the advisor tool runs. */
   runAgent?: AgentRunner;
 }
@@ -106,7 +108,7 @@ const tools = [
 type Message = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 
 export function mcpServer(cwd: string, options: McpOptions = {}) {
-  const coordinating = options.coordinator ? coordinatorToolset(cwd, { runAgent: options.runAgent }) : null;
+  const coordinating = options.coordinator ? coordinatorToolset(cwd, { runAgent: options.runAgent, rulesInPrompt: options.rulesInPrompt }) : null;
   let pin: RecipientPin | undefined;
   const pinned = (): RecipientPin => {
     ensure(pin, "Call waicc_receive with the handoff's sessionId and requestId first");
