@@ -39,6 +39,11 @@ async function waicc($: EngineInterface, argv: string[]): Promise<any> {
   if (ran.exitCode !== 0) throw new Error(ran.stderr.trim() || `waicc ${argv[0]} exited with ${ran.exitCode}`);
   return JSON.parse(ran.stdout);
 }
+/** Why a hook failed, in one line for the human and the error log. */
+function failure(error: { kind: string; message?: string }): string {
+  if (error.kind === "timeout") return "it took too long";
+  return (error.message ?? "unknown error").replace(/\s+/g, " ").trim().slice(0, 500);
+}
 type LogEntry =
   | { kind: "error"; step: string; message: string; level?: "warning"; sessionId?: string }
   | { kind: "activity"; step: string; outcome: string; ms?: number; sessionId?: string; detail?: Record<string, string | number | boolean | null> };
@@ -370,15 +375,20 @@ export const register: Register = (on) => {
   });
   for (const command of slashCommands)
     on("command.run", { command: command.name }, ($, e) => run($, command, e.args))
-      .catch(async ($) => {
-        await log($, { kind: "error", step: `/${command.name}`, message: "The mod's command failed" });
-        return { text: `/${command.name} failed inside WAICC's Claude Code mod; the waicc command line does the same: ! waicc --help` };
+      .catch(async ($, e, next) => {
+        const why = failure(next.error);
+        await log($, { kind: "error", step: `/${command.name}`, message: `The mod's command failed: ${why}` });
+        return { text: `/${command.name} failed inside WAICC's Claude Code mod (${why}); the waicc command line does the same: ! waicc --help` };
       });
 
   on("tool.call", { tool: startTool }, ($, e) => startPlanning($, e as { requestId?: unknown; reason?: unknown }))
-    .catch(() => ({ deny: "waicc_start_planning failed inside WAICC's mod; ask the human to use /waicc-planning." }));
+    .catch(async ($, e, next) => {
+      const why = failure(next.error);
+      await log($, { kind: "error", step: "waicc_start_planning", message: why });
+      return { deny: `waicc_start_planning failed inside WAICC's mod (${why}); show the human this error and ask them to use /waicc-planning.` };
+    });
   on("tool.call", { tool: suggestTool }, ($, e) => suggest($, e as { commands?: unknown; question?: unknown }))
-    .catch(() => ({ deny: "waicc_suggest_command failed inside WAICC's mod; write the command in your reply instead." }));
+    .catch(($, e, next) => ({ deny: `waicc_suggest_command failed inside WAICC's mod (${failure(next.error)}); write the command in your reply instead.` }));
 
   on("tool.call", { tool: "Bash" }, guard);
   on("tool.call", { tool: "PowerShell" }, guard);
