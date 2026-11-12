@@ -44,6 +44,7 @@ import { chooseRemote } from "./revision.ts";
 import { serveMcp } from "./mcp.ts";
 import { finishBackgroundRun, startBackgroundDispatch } from "./background.ts";
 import { selfTest, selfTestText } from "./selftest.ts";
+import { ownerRules } from "./mcp-coordinator.ts";
 import { huntRequirements, listHunts, markPicked, pickBugs, pickSplitAt, startHunt } from "./hunt.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
@@ -91,8 +92,8 @@ try {
       const implement = args.includes("--implement");
       // The main agent's tools, for a host other than Pi (Claude Code's plugin starts it so).
       if (args[1] === "--coordinator") {
-        ensure(args.length === 2, "Usage: waicc mcp --coordinator");
-        await serveMcp(cwd, { coordinator: true });
+        ensure(args.length === 2 || (args.length === 3 && args[2] === "--rules-in-prompt"), "Usage: waicc mcp --coordinator [--rules-in-prompt]");
+        await serveMcp(cwd, { coordinator: true, rulesInPrompt: args[2] === "--rules-in-prompt" });
         process.exit(0);
       }
       const options = args.slice(1).filter((word) => word !== "--implement");
@@ -425,6 +426,10 @@ try {
       recoverLock(projectRoot(cwd));
       output = { recovered: true };
       break;
+    case "rules":
+      // The owner's rules, for Claude Code's mod to put in the system prompt.
+      output = { text: ownerRules(cwd) };
+      break;
     case "selftest": {
       // Any failed check fails the command, with every check's line as its error.
       ensure(!id || id === "--no-model", "Usage: waicc selftest [--no-model]");
@@ -440,7 +445,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp --coordinator | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | errors [--since <ISO time or 30m|6h|2d>] [--all] | activity [--since <ISO time or 30m|6h|2d>] [--flow <id>] [--summary] | selftest [--no-model] | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp --coordinator [--rules-in-prompt] | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | errors [--since <ISO time or 30m|6h|2d>] [--all] | activity [--since <ISO time or 30m|6h|2d>] [--flow <id>] [--summary] | selftest [--no-model] | recover-lock",
       };
   }
   process.stdout.write(json(output));
@@ -455,7 +460,7 @@ try {
 }
 // Reading the settings (the Claude Code mod checks autoContinue every 30 s) is not activity either.
 const readsProfiles = command === "profiles" && args.length === 1;
-if (command && known && !readsProfiles && !["activity", "errors", "mcp", "log", "turn"].includes(command))
+if (command && known && !readsProfiles && !["activity", "errors", "mcp", "log", "turn", "rules"].includes(command))
   try {
     // Which options were used and which session, never what was typed with them.
     const flags = [...new Set(args.filter((word) => /^--[a-z][a-z-]*$/.test(word)))].join(" ");

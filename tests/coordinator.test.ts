@@ -45,7 +45,7 @@ test("Claude Code's plugin starts the coordinator server from the plugin, in the
   const manifest = JSON.parse(readFileSync(resolve(".claude-plugin/plugin.json"), "utf8"));
   const server = manifest.mcpServers.waicc;
   assert.equal(server.command, "node");
-  assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "--root", "${CLAUDE_PROJECT_DIR}", "mcp", "--coordinator"]);
+  assert.deepEqual(server.args, ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "--root", "${CLAUDE_PROJECT_DIR}", "mcp", "--coordinator", "--rules-in-prompt"]);
   const marketplace = JSON.parse(readFileSync(resolve(".claude-plugin/marketplace.json"), "utf8"));
   assert.deepEqual(marketplace.plugins.map((p: { name: string; source: string }) => [p.name, p.source]), [[manifest.name, "./"]]);
   // The launcher runs the same CLI; it is a shell script, as Claude Code's Bash tool runs it on every platform.

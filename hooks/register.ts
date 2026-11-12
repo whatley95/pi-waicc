@@ -157,6 +157,19 @@ async function run($: EngineInterface, command: SlashCommand, args: string): Pro
   return { text };
 }
 
+/**
+ * The owner's rules, with the human's policies and profiles, for the system prompt: the tool server's
+ * instructions only point here, as Claude Code keeps 4,096 of their characters. Read when the
+ * session starts and after a compaction (a changed settings file shows from then on).
+ */
+let rules: string | null = null;
+async function loadRules($: EngineInterface): Promise<void> {
+  try {
+    const text = (await waicc($, ["rules"]))?.text;
+    if (typeof text === "string" && text) rules = text;
+  } catch { /* the section is left out; the instructions say to read the skill instead */ }
+}
+
 /** Whether the main agent's turn is running: a reply is taken in only between turns, as Pi waits for idle. */
 let busy = false;
 /** The human's autoContinue setting, read from the command line at most every 30 s. */
@@ -373,6 +386,7 @@ export const register: Register = (on) => {
     await $.tool.register({ name: "waicc_suggest_command", description: suggestSpec.description, inputSchema: suggestSpec.parameters, isDeferred: false });
     $.clock.every(3_000, () => void watch($));
     await showStatus($);
+    await loadRules($);
     return next(e);
   });
   for (const command of slashCommands)
@@ -418,6 +432,7 @@ export const register: Register = (on) => {
   });
   // WAICC's recovery notes in the summary of a compacted chat, as Pi asks of its own compaction.
   on("session.compact", async ($, e, next) => {
+    await loadRules($);
     const id = e.agentId === undefined ? await read($, session) : null;
     if (!id) return next(e);
     let recovery: unknown;
@@ -452,6 +467,11 @@ export const register: Register = (on) => {
 
   on("prompt.compose", async ($, e, next) => {
     const composed = await next(e);
-    return { sections: [...composed.sections, { id: "waicc:session", text: waiccSection(await bound($)), scope: "session" as const }] };
+    if (!rules) await loadRules($);
+    return { sections: [
+      ...composed.sections,
+      ...(rules ? [{ id: "waicc:rules", text: `WAICC rules (you are the contract owner when you use WAICC's tools):\n\n${rules}`, scope: "session" as const }] : []),
+      { id: "waicc:session", text: waiccSection(await bound($)), scope: "session" as const },
+    ] };
   });
 };

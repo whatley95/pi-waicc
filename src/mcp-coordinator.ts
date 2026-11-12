@@ -36,15 +36,25 @@ export const coordinatorSpecs: ToolSpec[] = [
 /** How the agent tells the human to run a WAICC command, in a host without WAICC's slash commands. */
 export const humanCommands = `You cannot run WAICC's human commands. Where your system prompt has a WAICC section saying the human has WAICC's /waicc-* slash commands (Claude Code's WAICC mod), tell them the slash command to type. Otherwise there are no /waicc-* slash commands here: where these instructions or a WAICC result name one, the human runs the WAICC command line instead, with the session ID after the command name: /waicc-develop is "waicc develop <session-id>", /waicc-decide D2 <answer> is "waicc decide <session-id> D2 <answer>", /waicc-close <reason> is "waicc close <session-id> <reason>", /waicc-continue is "waicc continue <session-id>", /waicc-dispatch is "waicc dispatch <session-id> [profile]", /waicc-handoff is "waicc export <session-id>", and /waicc-planning <request> is "waicc start <request>" (it prints the new session's ID). In Claude Code the human types such a line after "!" at the prompt (for example: ! waicc develop 1f0c…), which runs it without you. Give them the exact line, with the real session ID, and end your turn. Never run waicc commands yourself through a shell: they are the human's decisions. After the human ran "waicc continue", assess the reply with waicc_assess.`;
 
-export function coordinatorInstructions(cwd: string): string {
+/** The owner's rules, with the human's policies and agent profiles: the bulk of the instructions. */
+export function ownerRules(cwd: string): string {
   let policies = "";
   try {
     policies = policyGuidance(decisionSettings(cwd).policies);
   } catch { /* a broken settings file is reported by the profiles line */ }
-  return [
-    "WAICC coordinator tools: you are the owner of this project's WAICC contracts, handoffs and reviews. Read the waicc-workflow skill before using them.",
-    humanCommands, contractOwner, sourceFirst, decisionFormat, policies, profilesBrief(cwd),
-  ].filter(Boolean).join("\n\n");
+  return [contractOwner, sourceFirst, decisionFormat, policies, profilesBrief(cwd)].filter(Boolean).join("\n\n");
+}
+
+const intro = "WAICC coordinator tools: you are the owner of this project's WAICC contracts, handoffs and reviews. Read the waicc-workflow skill before using them.";
+
+/**
+ * The server's instructions. Claude Code keeps only their first 4,096 characters, so where its
+ * WAICC mod puts the owner's rules in the system prompt (rulesInPrompt), they only point there.
+ */
+export function coordinatorInstructions(cwd: string, rulesInPrompt = false): string {
+  return rulesInPrompt
+    ? [intro, "The owner's rules are in your system prompt's WAICC rules section, from Claude Code's WAICC mod: follow them. If that section is missing, read the waicc-workflow skill and call waicc_status before acting.", humanCommands].join("\n\n")
+    : [intro, humanCommands, ownerRules(cwd)].join("\n\n");
 }
 
 export interface CoordinatorToolset {
@@ -53,7 +63,7 @@ export interface CoordinatorToolset {
   call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }>;
 }
 
-export function coordinatorToolset(cwd: string, services: { runAgent?: AgentRunner } = {}): CoordinatorToolset {
+export function coordinatorToolset(cwd: string, services: { runAgent?: AgentRunner; rulesInPrompt?: boolean } = {}): CoordinatorToolset {
   const root = projectRoot(cwd);
   // This server's host session, as the logs name a chat.
   const chat = `mcp-${randomBytes(4).toString("hex")}`;
@@ -147,7 +157,7 @@ export function coordinatorToolset(cwd: string, services: { runAgent?: AgentRunn
   };
   return {
     tools: coordinatorSpecs.map((spec) => ({ name: spec.name, description: spec.description, inputSchema: spec.parameters })),
-    instructions: coordinatorInstructions(cwd),
+    instructions: coordinatorInstructions(cwd, services.rulesInPrompt),
     async call(name, raw) {
       const spec = coordinatorSpecs.find((tool) => tool.name === name);
       ensure(spec, `Unknown tool ${name}`);
