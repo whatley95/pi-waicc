@@ -172,6 +172,13 @@ export const slashCommands: SlashCommand[] = [
     },
   },
   {
+    name: "waicc-selftest", description: "Check everything WAICC needs: Node, the project, the tool server, a throwaway planning-and-review run, and one short question to each role's model",
+    argumentHint: "[--no-model]", session: "none", cli: (_id, rest) => {
+      if (rest && rest !== "--no-model") throw new Error("Usage: /waicc-selftest [--no-model]");
+      return ["selftest", ...(rest ? [rest] : [])];
+    },
+  },
+  {
     name: "waicc-auto-planning", description: "Whether the main agent may start a planning session from your request: on (default) or off", argumentHint: "[on|off]",
     session: "none", cli: () => null,
   },

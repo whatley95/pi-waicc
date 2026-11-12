@@ -43,6 +43,7 @@ import { canonicalProject, gitlabClient, gitlabProject } from "./gitlab.ts";
 import { chooseRemote } from "./revision.ts";
 import { serveMcp } from "./mcp.ts";
 import { finishBackgroundRun, startBackgroundDispatch } from "./background.ts";
+import { selfTest, selfTestText } from "./selftest.ts";
 import { huntRequirements, listHunts, markPicked, pickBugs, pickSplitAt, startHunt } from "./hunt.ts";
 import type { Assessment, SessionListFilter } from "./workflow.ts";
 import type { Mode, RoundPhase } from "./types.ts";
@@ -424,6 +425,14 @@ try {
       recoverLock(projectRoot(cwd));
       output = { recovered: true };
       break;
+    case "selftest": {
+      // Any failed check fails the command, with every check's line as its error.
+      ensure(!id || id === "--no-model", "Usage: waicc selftest [--no-model]");
+      const report = await selfTest(cwd, { models: id !== "--no-model" });
+      if (!report.ok) throw new Error(selfTestText(report));
+      output = { ...report, text: selfTestText(report) };
+      break;
+    }
     default:
       // Not a command: not logged either, since the word typed could be anything.
       known = false;
@@ -431,7 +440,7 @@ try {
         process.exitCode = 2;
       output = {
         usage:
-          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp --coordinator | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | errors [--since <ISO time or 30m|6h|2d>] [--all] | activity [--since <ISO time or 30m|6h|2d>] [--flow <id>] [--summary] | recover-lock",
+          "waicc [--root project] start [--delegate] <requirements> | start [--delegate] --issue <number> [--remote <remote>] [more requirements] | dispatch <session> [profile] [--via claude|codex|pi|agy] [--confirm-checks] [--model <model>] [--timeout <minutes>] [--implement] [--check '<command>']... [--check-timeout <minutes>] | init | profiles [init] | mcp --coordinator | mcp [--session <id> --request <id>] | develop <session> [--main|--delegate] | decisions <session> | decide <session> <decision-id> <answer> | help-develop <session> [--main] [focus] | implement <session> [--main] [focus] (alias of help-develop) | test <session> [--main] [focus] | context <session> <summary> | compact <session> | checkpoint <session> | status [session|open|all|closed|deleted] | list [open|all|closed|deleted] | delete <session> | restore <session> | prepare <session> <contract.json> [planning|review] [--completion report.json|--contract for review] [focus] | continue <session> | assess <session> <assessment.json> | request <session> planning|review|advisor|implementation|testing [--completion report.json|--contract for review] <focus> | advisor <session> [--requirements REQ-001,REQ-002] <question> | close <session> <reason> | ship <session> [--into <branch>] [--branch <name>] [--remote <remote>] [--draft] --dry-run|--yes | close <session> --force [reason] | reopen <session> <reason> | cancel <session> [reason] | amend <session> <requirements> | export <session> | limit <session> [phase] <2-20> | memory [confirm|revoke <id>|audit] | learn <source-path> <lesson> | errors [--since <ISO time or 30m|6h|2d>] [--all] | activity [--since <ISO time or 30m|6h|2d>] [--flow <id>] [--summary] | selftest [--no-model] | recover-lock",
       };
   }
   process.stdout.write(json(output));
